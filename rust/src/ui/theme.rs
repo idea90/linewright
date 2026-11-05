@@ -30,6 +30,8 @@ pub const ERROR: Color32 = Color32::from_rgb(0xf0, 0x7a, 0x6a);
 pub const GRIP: Color32 = Color32::from_rgb(0x2f, 0x6b, 0xff);
 pub const GRIP_HOT: Color32 = Color32::from_rgb(0xff, 0x45, 0x45);
 pub const CLOSE_HOVER: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
+/// Small section labels, as the website's: its warm orange.
+pub const LABEL: Color32 = Color32::from_rgb(0xf0, 0x8a, 0x5d);
 pub const OVERLAY: Color32 = Color32::from_rgba_premultiplied(17, 21, 23, 204); // the canvas at 80%
 
 fn font_data(file: &FontFile) -> Option<FontData> {
@@ -44,8 +46,25 @@ pub fn drawing_family(font: &str) -> FontFamily {
     FontFamily::Name(format!("drawing:{}", font.to_lowercase()).into())
 }
 
-/// Use the system's fonts: its interface and monospace fonts first, then fonts for the scripts those lack, then
-/// egui's own for anything left. Each font a drawing asks for gets a family of its own, which falls back the same way.
+/// The website's typefaces, built in: Public Sans for the interface and its headings, Martian Mono for the command
+/// line and labels. Both are under the SIL Open Font License (see assets/fonts).
+const INTERFACE_FONT: &[u8] = include_bytes!("../../assets/fonts/PublicSans-Regular.ttf");
+const HEADING_FONT: &[u8] = include_bytes!("../../assets/fonts/PublicSans-SemiBold.ttf");
+const MONO_FONT: &[u8] = include_bytes!("../../assets/fonts/MartianMono.ttf");
+
+/// The family dialog titles and other headings are set in.
+pub fn heading() -> FontFamily {
+    FontFamily::Name("heading".into())
+}
+
+/// A small section label as the website sets them: uppercase, in the monospace face, spaced out.
+pub fn label(text: &str, color: Color32) -> egui::RichText {
+    egui::RichText::new(text.to_uppercase()).family(FontFamily::Monospace).size(9.5).extra_letter_spacing(1.2).color(color)
+}
+
+/// The interface in the built-in faces, then the system's interface and monospace fonts, then fonts for the scripts
+/// those lack, then egui's own for anything left. Each font a drawing asks for gets a family of its own, which falls
+/// back to the system's fonts, so drawings look as they do elsewhere.
 pub fn install_fonts(ctx: &egui::Context, drawing_fonts: &[(String, FontFile)]) {
     let catalog = fonts::catalog();
     let mut definitions = FontDefinitions::default();
@@ -60,15 +79,21 @@ pub fn install_fonts(ctx: &egui::Context, drawing_fonts: &[(String, FontFile)]) 
         catalog.fallbacks().iter().enumerate().filter_map(|(i, f)| add(&mut definitions, format!("fallback-{i}"), f)).collect();
     let egui_proportional = definitions.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let egui_mono = definitions.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    let proportional: Vec<String> = ui.into_iter().chain(fallbacks.iter().cloned()).chain(egui_proportional).collect();
-    let monospace: Vec<String> = mono.into_iter().chain(egui_mono).chain(fallbacks.iter().cloned()).collect();
+    let system: Vec<String> = ui.into_iter().chain(fallbacks.iter().cloned()).chain(egui_proportional).collect();
+    for (key, bytes) in [("interface", INTERFACE_FONT), ("heading", HEADING_FONT), ("mono", MONO_FONT)] {
+        definitions.font_data.insert(key.into(), Arc::new(FontData::from_static(bytes)));
+    }
+    let proportional: Vec<String> = std::iter::once("interface".to_string()).chain(system.iter().cloned()).collect();
+    let headings: Vec<String> = std::iter::once("heading".to_string()).chain(proportional.iter().cloned()).collect();
+    let monospace: Vec<String> = ["mono".to_string()].into_iter().chain(mono).chain(egui_mono).chain(fallbacks.iter().cloned()).collect();
     for (font, file) in drawing_fonts {
         if let Some(key) = add(&mut definitions, format!("drawing:{}", font.to_lowercase()), file) {
-            let family = std::iter::once(key).chain(proportional.iter().cloned()).collect();
+            let family = std::iter::once(key).chain(system.iter().cloned()).collect();
             definitions.families.insert(drawing_family(font), family);
         }
     }
     definitions.families.insert(FontFamily::Proportional, proportional);
+    definitions.families.insert(heading(), headings);
     definitions.families.insert(FontFamily::Monospace, monospace);
     ctx.set_fonts(definitions);
 }
@@ -81,8 +106,8 @@ pub fn apply(ctx: &egui::Context) {
     visuals.extreme_bg_color = CANVAS;
     visuals.faint_bg_color = PANEL;
     visuals.window_stroke = Stroke::new(1.0_f32, BORDER_STRONG);
-    visuals.window_corner_radius = CornerRadius::same(10);
-    visuals.menu_corner_radius = CornerRadius::same(6);
+    visuals.window_corner_radius = CornerRadius::same(6);
+    visuals.menu_corner_radius = CornerRadius::same(4);
     visuals.override_text_color = Some(TEXT);
     visuals.hyperlink_color = ACCENT;
     // Selected items: the dark accent, which white labels read well on.
@@ -103,7 +128,7 @@ pub fn apply(ctx: &egui::Context) {
         state.weak_bg_fill = fill;
         state.bg_stroke = Stroke::new(1.0_f32, edge);
         state.fg_stroke = Stroke::new(1.0_f32, TEXT);
-        state.corner_radius = CornerRadius::same(6);
+        state.corner_radius = CornerRadius::same(3);
     }
     ctx.set_visuals(visuals);
     ctx.style_mut(|style| {
@@ -112,6 +137,7 @@ pub fn apply(ctx: &egui::Context) {
         style.text_styles.insert(TextStyle::Body, FontId::new(13.5, FontFamily::Proportional));
         style.text_styles.insert(TextStyle::Button, FontId::new(13.5, FontFamily::Proportional));
         style.text_styles.insert(TextStyle::Small, FontId::new(11.5, FontFamily::Proportional));
-        style.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        style.text_styles.insert(TextStyle::Monospace, FontId::new(11.0, FontFamily::Monospace));
+        style.text_styles.insert(TextStyle::Heading, FontId::new(17.0, heading()));
     });
 }

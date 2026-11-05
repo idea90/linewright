@@ -523,7 +523,10 @@ impl LinewrightApp {
     /// An app with an empty drawing and no window, for tests that draw its dialogs into a bare egui context.
     #[cfg(test)]
     pub(crate) fn for_tests() -> LinewrightApp {
-        let mut app = LinewrightApp::without_window(egui::Context::default(), false);
+        let ctx = egui::Context::default();
+        // The window's fonts and colors, as start-up installs them, so dialogs find their heading face.
+        theme::apply(&ctx);
+        let mut app = LinewrightApp::without_window(ctx, false);
         app.set_document(Document::new());
         app.announce_new();
         app

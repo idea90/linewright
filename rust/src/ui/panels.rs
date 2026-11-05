@@ -165,21 +165,25 @@ pub fn header(app: &mut LinewrightApp, ctx: &egui::Context) {
         }
         ui.horizontal_centered(|ui| {
             let menu_icon = logo::image().fit_to_exact_size(vec2(QUICK_ICON, QUICK_ICON));
-            ui.menu_image_text_button(menu_icon, RichText::new(WINDOW_NAME).color(theme::ACCENT).strong().size(15.0), |ui| {
-                ui.set_min_width(220.0);
-                for (text, shortcut, action) in [
-                    ("New", "Ctrl+N", Action::New),
-                    ("Open...", "Ctrl+O", Action::Open),
-                    ("Save", "Ctrl+S", Action::Save),
-                    ("Save As...", "Ctrl+Shift+S", Action::SaveAs),
-                    ("Export PDF...", "Ctrl+P", Action::ExportPdf),
-                ] {
-                    if ui.add(egui::Button::new(text).shortcut_text(shortcut)).clicked() {
-                        app.actions.push(action);
-                        ui.close_menu();
+            ui.menu_image_text_button(
+                menu_icon,
+                RichText::new(WINDOW_NAME).color(theme::ACCENT).family(theme::heading()).size(16.0),
+                |ui| {
+                    ui.set_min_width(220.0);
+                    for (text, shortcut, action) in [
+                        ("New", "Ctrl+N", Action::New),
+                        ("Open...", "Ctrl+O", Action::Open),
+                        ("Save", "Ctrl+S", Action::Save),
+                        ("Save As...", "Ctrl+Shift+S", Action::SaveAs),
+                        ("Export PDF...", "Ctrl+P", Action::ExportPdf),
+                    ] {
+                        if ui.add(egui::Button::new(text).shortcut_text(shortcut)).clicked() {
+                            app.actions.push(action);
+                            ui.close_menu();
+                        }
                     }
-                }
-            });
+                },
+            );
             divider(ui, 18.0);
             let can_undo = app.controller.drawing.undo.can_undo();
             let can_redo = app.controller.drawing.undo.can_redo();
@@ -257,7 +261,7 @@ fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) ->
             .width();
         ui.allocate_ui_with_layout(vec2(width, 16.0), Layout::top_down(Align::Center), |ui| {
             // The title keeps one line even when the group has room for fewer buttons than its name.
-            ui.add(egui::Label::new(RichText::new(title).color(theme::TEXT_DIM).size(11.5)).wrap_mode(egui::TextWrapMode::Extend));
+            ui.add(egui::Label::new(theme::label(title, theme::TEXT_DIM)).wrap_mode(egui::TextWrapMode::Extend));
         });
     })
     .response
@@ -369,7 +373,14 @@ impl RibbonGroup {
         GroupSize {
             large_width: self.large.iter().map(|name| large_button_width(ui, name)).sum(),
             large_count: self.large.len(),
-            title_width: ui.fonts(|f| f.layout_no_wrap(self.title.to_string(), FontId::proportional(11.5), theme::TEXT_DIM)).size().x,
+            title_width: {
+                let job = egui::WidgetText::from(theme::label(self.title, theme::TEXT_DIM)).into_layout_job(
+                    ui.style(),
+                    egui::FontSelection::Default,
+                    Align::Center,
+                );
+                ui.fonts(|f| f.layout_job(job)).size().x
+            },
             columns: self.small.len().div_ceil(self.rows),
         }
     }
@@ -719,17 +730,12 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
             rows: 2,
         },
         RibbonGroup {
-            title: "Annotate and measure",
+            title: "Annotation",
             large: &["MTEXT", "DIMLINEAR"],
             small: &["QLEADER", "DIMALIGNED", "DIMRADIUS", "DIMDIAMETER", "DIMANGULAR", "DIMSTYLE", "DISTANCE", "AREA"],
             rows: 2,
         },
-        RibbonGroup {
-            title: "Blocks & Groups",
-            large: &[],
-            small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"],
-            rows: 2,
-        },
+        RibbonGroup { title: "Blocks", large: &[], small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"], rows: 2 },
     ];
     // Buttons inside a group sit GROUP_SPACING apart (see `group`); the groups and dividers use the ribbon's spacing.
     let spacing = GROUP_SPACING;
@@ -1444,7 +1450,7 @@ fn welcome_title(ui: &mut egui::Ui) {
         ui.add_space(10.0);
         ui.vertical(|ui| {
             ui.add_space(2.0);
-            ui.label(RichText::new(WINDOW_NAME).size(30.0).strong());
+            ui.label(RichText::new(WINDOW_NAME).family(theme::heading()).size(30.0));
             ui.label(RichText::new("2D drafting for DXF and DWG drawings, the AutoCAD way").color(theme::TEXT_DIM));
         });
     });
@@ -1457,12 +1463,12 @@ fn welcome_card(ui: &mut egui::Ui, icon: &str, title: &str, detail: &str, enable
     let fill = if hovered { theme::PANEL_RAISED } else { theme::PANEL };
     let edge = if hovered { theme::ACCENT_EDGE } else { theme::BORDER };
     let painter = ui.painter();
-    painter.rect(rect, CornerRadius::same(10), fill, Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+    painter.rect(rect, CornerRadius::same(4), fill, Stroke::new(1.0_f32, edge), StrokeKind::Inside);
     let badge = Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), vec2(44.0, 44.0));
-    painter.rect_filled(badge, CornerRadius::same(9), if hovered { theme::BORDER_STRONG } else { theme::PANEL_RAISED });
+    painter.rect_filled(badge, CornerRadius::same(4), if hovered { theme::BORDER_STRONG } else { theme::PANEL_RAISED });
     icons::paint(ui, icon, badge, 22.0, if enabled { theme::TEXT } else { theme::TEXT_DIM });
     let text_left = badge.right() + 14.0;
-    painter.text(pos2(text_left, rect.center().y - 11.0), Align2::LEFT_CENTER, title, FontId::proportional(16.0), theme::TEXT);
+    painter.text(pos2(text_left, rect.center().y - 11.0), Align2::LEFT_CENTER, title, FontId::new(16.0, theme::heading()), theme::TEXT);
     painter.text(pos2(text_left, rect.center().y + 12.0), Align2::LEFT_CENTER, detail, FontId::proportional(12.5), theme::TEXT_DIM);
     response.on_hover_cursor(if enabled { CursorIcon::PointingHand } else { CursorIcon::Default })
 }
@@ -1472,13 +1478,13 @@ fn welcome_panel(ui: &mut egui::Ui, title: &str, height: f32, content: impl FnOn
     Frame::new()
         .fill(theme::PANEL)
         .stroke(Stroke::new(1.0_f32, theme::BORDER))
-        .corner_radius(10)
-        .inner_margin(14)
+        .corner_radius(4)
+        .inner_margin(16)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             let top = ui.cursor().top();
-            ui.label(RichText::new(title).strong().size(14.5));
-            ui.add_space(6.0);
+            ui.label(theme::label(title, theme::LABEL));
+            ui.add_space(8.0);
             content(ui);
             let used = ui.cursor().top() - top;
             if height > used {
@@ -1506,7 +1512,7 @@ fn welcome_recent(app: &mut LinewrightApp, ui: &mut egui::Ui, height: f32, rows:
                 ui.allocate_exact_size(vec2(ui.available_width(), RECENT_ROW), if enabled { Sense::click() } else { Sense::hover() });
             let painter = ui.painter_at(rect);
             if response.hovered() && enabled {
-                painter.rect_filled(rect, CornerRadius::same(7), theme::PANEL_RAISED);
+                painter.rect_filled(rect, CornerRadius::same(3), theme::PANEL_RAISED);
             }
             icons::paint(
                 ui,
@@ -1536,12 +1542,12 @@ fn welcome_recent(app: &mut LinewrightApp, ui: &mut egui::Ui, height: f32, rows:
 
 fn welcome_chip(ui: &mut egui::Ui, text: &str) {
     Frame::new()
-        .fill(theme::PANEL_RAISED)
+        .fill(theme::PANEL_DARK)
         .stroke(Stroke::new(1.0_f32, theme::BORDER_STRONG))
-        .corner_radius(5)
-        .inner_margin(Margin::symmetric(6, 1))
+        .corner_radius(2)
+        .inner_margin(Margin::symmetric(7, 3))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).monospace().size(12.0));
+            ui.label(RichText::new(text).monospace().size(10.5));
         });
 }
 
@@ -2027,7 +2033,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let message = message.clone();
             let modal = egui::Modal::new(Id::new("message")).show(ctx, |ui| {
                 ui.set_max_width(420.0);
-                ui.label(RichText::new(WINDOW_NAME).strong().size(15.0));
+                ui.label(RichText::new(WINDOW_NAME).family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.label(message);
                 ui.add_space(12.0);
@@ -2041,7 +2047,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let then = *then;
             let name = app.file_name();
             let modal = egui::Modal::new(Id::new("discard")).show(ctx, |ui| {
-                ui.label(RichText::new(WINDOW_NAME).strong().size(15.0));
+                ui.label(RichText::new(WINDOW_NAME).family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.label(format!("Save changes to {name}?"));
                 ui.add_space(12.0);
@@ -2071,7 +2077,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let mut choice = None;
             let modal = egui::Modal::new(Id::new("recovery")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.label(RichText::new("Drawing Recovery").strong().size(15.0));
+                ui.label(RichText::new("Drawing Recovery").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 if copies.is_empty() {
                     ui.label("No drawings need recovering.");
@@ -2127,7 +2133,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let mut cancelled = false;
             let modal = egui::Modal::new(Id::new("plot")).show(ctx, |ui| {
                 ui.set_width(360.0);
-                ui.label(RichText::new(if form.layout { "Plot Layout to PDF" } else { "Export PDF" }).strong().size(15.0));
+                ui.label(RichText::new(if form.layout { "Plot Layout to PDF" } else { "Export PDF" }).family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 egui::Grid::new("plot_form").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
                     ui.label("Plot style table");
@@ -2203,7 +2209,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut open, mut cancel) = (None, false);
             let modal = egui::Modal::new(Id::new("edit_block")).show(ctx, |ui| {
                 ui.set_width(320.0);
-                ui.label(RichText::new("Edit Block Definition").strong().size(15.0));
+                ui.label(RichText::new("Edit Block Definition").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.add(TextEdit::singleline(typed).hint_text("Block to create or edit").desired_width(290.0));
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
@@ -2236,7 +2242,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let name = app.controller.document().editing_block().map(|b| b.0.name.clone()).unwrap_or_default();
             let mut choice = None;
             let modal = egui::Modal::new(Id::new("close_block")).show(ctx, |ui| {
-                ui.label(RichText::new("Block Editor").strong().size(15.0));
+                ui.label(RichText::new("Block Editor").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.label(format!("Save the changes to {name}?"));
                 ui.add_space(12.0);
@@ -2270,7 +2276,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut action, mut attach, mut close) = (None, false, false);
             let modal = egui::Modal::new(Id::new("xrefs")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.label(RichText::new("External References").strong().size(15.0));
+                ui.label(RichText::new("External References").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 if xrefs.is_empty() {
                     ui.label(RichText::new("No drawings are attached.").color(theme::TEXT_DIM));
@@ -2322,7 +2328,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut apply, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("quick_select")).show(ctx, |ui| {
                 ui.set_width(360.0);
-                ui.label(RichText::new("Quick Select").strong().size(15.0));
+                ui.label(RichText::new("Quick Select").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 egui::Grid::new("quick_select_form").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
                     ui.label("Object type");
@@ -2375,7 +2381,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut select, mut replace, mut close) = (false, false, false);
             let modal = egui::Modal::new(Id::new("find_replace")).show(ctx, |ui| {
                 ui.set_width(380.0);
-                ui.label(RichText::new("Find and Replace").strong().size(15.0));
+                ui.label(RichText::new("Find and Replace").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 egui::Grid::new("find_form").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
                     ui.label("Find what");
@@ -2409,7 +2415,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut purge, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("purge")).show(ctx, |ui| {
                 ui.set_width(380.0);
-                ui.label(RichText::new("Purge").strong().size(15.0));
+                ui.label(RichText::new("Purge").family(theme::heading()).size(16.0));
                 ui.label(RichText::new("Items nothing in the drawing uses.").color(theme::TEXT_DIM));
                 ui.add_space(8.0);
                 let empty = form.layers.is_empty() && form.styles.is_empty() && form.blocks.is_empty();
@@ -2446,7 +2452,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("units")).show(ctx, |ui| {
                 ui.set_width(320.0);
-                ui.label(RichText::new("Drawing Units").strong().size(15.0));
+                ui.label(RichText::new("Drawing Units").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 egui::Grid::new("units_form").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
                     ui.label("Insertion scale");
@@ -2484,7 +2490,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("text_styles")).show(ctx, |ui| {
                 ui.set_width(520.0);
-                ui.label(RichText::new("Text Style").strong().size(15.0));
+                ui.label(RichText::new("Text Style").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
@@ -2558,7 +2564,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("mtext_editor")).show(ctx, |ui| {
                 ui.set_width(640.0);
-                ui.label(RichText::new("Text Editor").strong().size(15.0));
+                ui.label(RichText::new("Text Editor").family(theme::heading()).size(16.0));
                 ui.add_space(6.0);
                 // What the toolbar shows: the look at the selection's start, or of what is typed next.
                 let shown = if form.selection.0 < form.selection.1 {
@@ -2675,7 +2681,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("mleader_styles")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.label(RichText::new("Multileader Style Manager").strong().size(15.0));
+                ui.label(RichText::new("Multileader Style Manager").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
@@ -2740,7 +2746,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("mline_styles")).show(ctx, |ui| {
                 ui.set_width(620.0);
-                ui.label(RichText::new("Multiline Style").strong().size(15.0));
+                ui.label(RichText::new("Multiline Style").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
@@ -2815,7 +2821,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("lineweight_settings")).show(ctx, |ui| {
                 ui.set_width(420.0);
-                ui.label(RichText::new("Lineweight Settings").strong().size(15.0));
+                ui.label(RichText::new("Lineweight Settings").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
@@ -2872,7 +2878,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (mut accept, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("delete_duplicates")).show(ctx, |ui| {
                 ui.set_width(400.0);
-                ui.label(RichText::new("Delete Duplicate Objects").strong().size(15.0));
+                ui.label(RichText::new("Delete Duplicate Objects").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.label("Tolerance");
@@ -2918,7 +2924,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let mut close = false;
             let modal = egui::Modal::new(Id::new("drafting_settings")).show(ctx, |ui| {
                 ui.set_width(380.0);
-                ui.label(RichText::new("Drafting Settings").strong().size(15.0));
+                ui.label(RichText::new("Drafting Settings").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 ui.checkbox(&mut snap.osnap, "Object Snap On (F3)");
                 ui.checkbox(&mut snap.tracking, "Object Snap Tracking On (F11)");
@@ -2977,7 +2983,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             let (index, mut accepted, mut cancelled) = (*index, false, false);
             let modal = egui::Modal::new(Id::new("rename_layout")).show(ctx, |ui| {
                 ui.set_width(320.0);
-                ui.label(RichText::new("Rename Layout").strong().size(15.0));
+                ui.label(RichText::new("Rename Layout").family(theme::heading()).size(16.0));
                 ui.add_space(8.0);
                 let field = ui.add(TextEdit::singleline(name).desired_width(280.0));
                 field.request_focus();
@@ -3022,7 +3028,7 @@ fn dimension_style_manager(ctx: &egui::Context, form: &mut StyleForm) -> (bool, 
     let mut cancelled = false;
     let modal = egui::Modal::new(Id::new("dimension_styles")).show(ctx, |ui| {
         ui.set_width(560.0);
-        ui.label(RichText::new("Dimension Style Manager").strong().size(15.0));
+        ui.label(RichText::new("Dimension Style Manager").family(theme::heading()).size(16.0));
         ui.label(RichText::new(format!("Current dimension style: {}", form.current)).color(theme::TEXT_DIM));
         ui.add_space(8.0);
         ui.horizontal_top(|ui| {
@@ -3192,7 +3198,7 @@ fn select_color(ctx: &egui::Context, form: &mut ColorForm) -> (bool, bool, bool)
     let before = form.color;
     let modal = egui::Modal::new(Id::new("select_color")).show(ctx, |ui| {
         ui.set_width(24.0 * SWATCH + 8.0);
-        ui.label(RichText::new("Select Color").strong().size(15.0));
+        ui.label(RichText::new("Select Color").family(theme::heading()).size(16.0));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.selectable_value(&mut form.true_color_tab, false, "Index Color");

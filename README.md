@@ -15,4 +15,5 @@ written in Python with Qt; that version is in the git history up to 1.0 Alpha 3.
 
 What comes next is in the [roadmap](ROADMAP.md).
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](LICENSE). The built-in typefaces, Public Sans and Martian Mono, are under the SIL Open Font License; their
+licenses are in [`rust/assets/fonts`](rust/assets/fonts).
