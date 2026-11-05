@@ -838,3 +838,81 @@ fn new_and_changed_multiline_styles_are_saved_and_removed_ones_go() {
     let again = round_trip(&changed);
     assert_eq!(again.mline_styles.len(), 1);
 }
+
+/// The lines of a drawing of two lines and a circle, as its DXF file.
+fn saved_lines() -> Vec<String> {
+    let document =
+        Document::with_entities(vec![line(pt(0.0, 0.0), pt(10.0, 0.0)), line(pt(0.0, 5.0), pt(10.0, 5.0)), circle(pt(3.0, 3.0), 1.0)]);
+    String::from_utf8(dxf_from_document(&document).to_bytes()).unwrap().lines().map(str::to_string).collect()
+}
+
+/// The index of the value line of a group code, in the first object of this kind.
+fn value_of(lines: &[String], kind: &str, code: &str) -> usize {
+    let start = lines.iter().position(|l| l.trim() == kind).unwrap();
+    (start..lines.len()).find(|&i| lines[i].trim() == code).unwrap() + 1
+}
+
+fn recovered(lines: &[String]) -> (Document, Vec<String>) {
+    let (file, notes) = DxfFile::parse_recovering(lines.join("\n").as_bytes()).unwrap();
+    (document_from_dxf(file), notes)
+}
+
+#[test]
+fn a_line_missing_a_value_takes_out_only_its_own_object() {
+    let mut lines = saved_lines();
+    let x = value_of(&lines, "LINE", "10");
+    lines.remove(x);
+    assert!(DxfFile::parse(lines.join("\n").as_bytes()).is_err(), "the normal reader refuses it");
+    let (document, notes) = recovered(&lines);
+    assert_eq!(document.len(), 2, "the other line and the circle are kept");
+    assert!(notes.iter().any(|note| note.contains("should hold a group code")), "{notes:?}");
+}
+
+#[test]
+fn a_group_code_that_is_not_a_code_takes_out_only_its_own_object() {
+    let mut lines = saved_lines();
+    let code = value_of(&lines, "LINE", "10") - 1;
+    lines[code] = "1O".into();
+    let (document, notes) = recovered(&lines);
+    assert_eq!(document.len(), 2);
+    assert!(notes.iter().any(|note| note.contains("1O")), "{notes:?}");
+}
+
+#[test]
+fn a_number_that_is_not_one_takes_out_its_object() {
+    let mut lines = saved_lines();
+    let radius = value_of(&lines, "CIRCLE", "40");
+    lines[radius] = "big".into();
+    let (document, notes) = recovered(&lines);
+    assert_eq!(document.len(), 2, "the circle goes, the lines stay");
+    assert!(notes.iter().any(|note| note.contains("needs a number")), "{notes:?}");
+}
+
+#[test]
+fn a_file_without_its_end_reads_as_it_did() {
+    let mut lines = saved_lines();
+    lines.truncate(lines.len() - 2);
+    assert!(DxfFile::parse(lines.join("\n").as_bytes()).is_ok());
+    let (document, notes) = recovered(&lines);
+    assert_eq!(document.len(), 3);
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn a_file_cut_off_in_the_middle_of_a_value_keeps_what_came_before() {
+    let mut lines = saved_lines();
+    lines.pop();
+    assert!(DxfFile::parse(lines.join("\n").as_bytes()).is_err());
+    let (document, notes) = recovered(&lines);
+    assert_eq!(document.len(), 3);
+    assert!(notes.iter().any(|note| note.contains("ends in the middle")), "{notes:?}");
+}
+
+#[test]
+fn a_file_cut_off_inside_an_object_keeps_the_objects_before_it() {
+    let mut lines = saved_lines();
+    let circle = lines.iter().position(|l| l.trim() == "CIRCLE").unwrap();
+    lines.truncate(circle + 3);
+    let (document, _) = recovered(&lines);
+    assert_eq!(document.len(), 2, "the circle, cut short, is not drawn");
+}

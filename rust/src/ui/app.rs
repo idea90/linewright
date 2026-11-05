@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Pos2, Rect};
 
 use super::controller::Controller;
-use super::undo::Change;
+use super::undo::{Change, LayerState};
 use super::{frame, layers, panels, settings, theme};
 use crate::canvas::plot::{FIT, PAPER_SIZES, export_layout_pdf, export_pdf, format_scale, parse_scale};
 use crate::canvas::view::{Camera, ZOOM_STEP, viewport_camera, viewport_view};
@@ -18,9 +18,10 @@ use crate::fonts::{self, FontFile};
 use crate::io::dxf::dxf_from_document;
 use crate::io::dxf::unit_names;
 use crate::io::files::{
-    Autosave, Autosaver, DXF_SUFFIX, FileError, autosave_due, autosave_note, leftover_autosaves, new_autosave_path, open_drawing,
-    save_drawing, unix_now,
+    Autosave, Autosaver, DXF_SUFFIX, FileError, Recovery, autosave_due, autosave_note, leftover_autosaves, new_autosave_path, open_drawing,
+    recover_drawing, save_drawing, unix_now,
 };
+use crate::model::audit::{Finding, Place, Repairs, audit, repairs};
 use crate::model::dimension::DimensionStyle;
 use crate::model::document::{Document, PlotSettings, TextStyleDef};
 use crate::model::entities::{BlockDef, BlockRef, Entity, EntityId, HAlign, Shape, TextAlign, VAlign};
@@ -42,12 +43,16 @@ pub const PLOT_SCALE_INPUT: &str = "plot_scale";
 const MAX_PREVIOUS_VIEWS: usize = 20;
 /// ZOOM Window frames the window exactly, undoing the margin zoom extents leaves.
 const EXTENTS_MARGIN: f64 = 0.9;
+/// How many lines of an AUDIT or RECOVER report the command line shows before counting the rest.
+const MAX_REPORT_LINES: usize = 20;
 
 /// Something a button, menu or key asks for. Panels collect them while they are drawn; the window runs them after.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     New,
     Open,
+    /// RECOVER: open a damaged drawing, reading what can be read and repairing what the audit finds.
+    Recover,
     Save,
     SaveAs,
     ExportPdf,
@@ -135,9 +140,10 @@ pub struct ContextMenu {
 pub enum Then {
     New,
     Open,
+    Recover,
     Close,
     /// Open the autosave copy Drawing Recovery picked.
-    Recover,
+    OpenAutosave,
 }
 
 pub struct PlotForm {
@@ -363,9 +369,10 @@ pub enum Dialog {
     Recovery(Vec<Autosave>),
 }
 
+/// A drawing being read in the background, with the lines to report once it is shown (what RECOVER skipped and fixed).
 struct Opening {
     name: String,
-    receiver: Receiver<Result<Document, FileError>>,
+    receiver: Receiver<Result<(Document, Vec<String>), FileError>>,
     /// The autosave copy being opened, when it is a recovery rather than a drawing the user chose.
     recovery: Option<Autosave>,
 }
@@ -405,6 +412,8 @@ pub struct LinewrightApp {
     pub renaming: Option<(String, String)>,
     pub dialog: Option<Dialog>,
     pub actions: Vec<Action>,
+    /// AUDIT found errors and asks on the command line whether to fix them; the next line typed answers.
+    audit_question: bool,
     opening: Option<Opening>,
     zoom_extents_pending: bool,
     pub canvas_rect: Rect,
@@ -484,6 +493,7 @@ impl LinewrightApp {
             renaming: None,
             dialog: None,
             actions: vec![],
+            audit_question: false,
             opening: None,
             zoom_extents_pending: true,
             canvas_rect: Rect::NOTHING,
@@ -549,6 +559,7 @@ impl LinewrightApp {
         self.clear_autosaves();
         self.recovered_title = None;
         self.saved_at = Instant::now();
+        self.audit_question = false; // an answer to AUDIT's question is for the drawing it was asked about
         self.space_cameras.clear();
         self.shown_space = None;
         self.shown_layouts = document.layouts.len();
@@ -661,16 +672,21 @@ impl LinewrightApp {
 
     /// Open a drawing without freezing the window. Everything is held still until it arrives or fails.
     pub fn open_in_background(&mut self, path: PathBuf) {
-        self.start_opening(path, None);
+        self.read_in_background(path, false, None);
     }
 
     /// Open an autosave copy as a new drawing with no file yet, shown as "<name> (recovered)".
     fn open_recovery_in_background(&mut self, copy: Autosave) {
         let path = copy.dxf.clone();
-        self.start_opening(path, Some(copy));
+        self.read_in_background(path, false, Some(copy));
     }
 
-    fn start_opening(&mut self, path: PathBuf, recovery: Option<Autosave>) {
+    /// RECOVER: read a damaged drawing in the background, then report what was skipped and fixed.
+    fn recover_in_background(&mut self, path: PathBuf) {
+        self.read_in_background(path, true, None);
+    }
+
+    fn read_in_background(&mut self, path: PathBuf, recover: bool, recovery: Option<Autosave>) {
         if self.opening.is_some() {
             return;
         }
@@ -680,9 +696,10 @@ impl LinewrightApp {
         };
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let opened = open_drawing(&path);
+            let opened =
+                if recover { recover_drawing(&path).map(recovery_report) } else { open_drawing(&path).map(|document| (document, vec![])) };
             // Finding the drawing's fonts among the system's reads every font's names: do it here, not in the window.
-            if let Ok(document) = &opened {
+            if let Ok((document, _)) = &opened {
                 if let Some(folder) = path.parent() {
                     crate::shx::add_drawing_folder(folder);
                 }
@@ -709,26 +726,32 @@ impl LinewrightApp {
             Ok(result) => {
                 let recovery = self.opening.take().and_then(|o| o.recovery);
                 match result {
-                    Ok(mut document) => match recovery {
-                        Some(copy) => {
-                            // A recovered drawing has no file yet, so Save asks where to put it.
-                            document.path = None;
-                            self.welcome = false;
-                            self.set_document(document);
-                            let stem = Path::new(&copy.title).file_stem().map_or(copy.title.clone(), |s| s.to_string_lossy().into_owned());
-                            self.recovered_title = Some(format!("{stem} (recovered)"));
-                            self.recovered_from = Some(copy.dxf);
-                            // Nothing is saved yet, so the drawing counts as changed until it is.
-                            self.controller.drawing.note_change();
-                        }
-                        None => {
-                            if let Some(path) = &document.path {
-                                self.recent = super::recent::remember(path);
+                    Ok((mut document, report)) => {
+                        match recovery {
+                            Some(copy) => {
+                                // A recovered drawing has no file yet, so Save asks where to put it.
+                                document.path = None;
+                                self.welcome = false;
+                                self.set_document(document);
+                                let stem =
+                                    Path::new(&copy.title).file_stem().map_or(copy.title.clone(), |s| s.to_string_lossy().into_owned());
+                                self.recovered_title = Some(format!("{stem} (recovered)"));
+                                self.recovered_from = Some(copy.dxf);
+                                // Nothing is saved yet, so the drawing counts as changed until it is.
+                                self.controller.drawing.note_change();
                             }
-                            self.welcome = false;
-                            self.set_document(document);
+                            None => {
+                                if let Some(path) = &document.path {
+                                    self.recent = super::recent::remember(path);
+                                }
+                                self.welcome = false;
+                                self.set_document(document);
+                            }
                         }
-                    },
+                        for line in report {
+                            self.print(line);
+                        }
+                    }
                     Err(error) => self.dialog = Some(Dialog::Message(error.0)),
                 }
             }
@@ -776,6 +799,12 @@ impl LinewrightApp {
         }
     }
 
+    fn choose_and_recover(&mut self) {
+        if let Some(path) = drawing_filters(rfd::FileDialog::new().set_title("Recover drawing")).pick_file() {
+            self.recover_in_background(path);
+        }
+    }
+
     /// Ask about unsaved changes first, unless there are none.
     fn confirm_discard(&mut self, then: Then, ctx: &egui::Context) {
         if self.modified() {
@@ -792,12 +821,13 @@ impl LinewrightApp {
                 self.announce_new();
             }
             Then::Open => self.choose_and_open(),
+            Then::Recover => self.choose_and_recover(),
             Then::Close => {
                 self.clear_autosaves();
                 self.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Then::Recover => {
+            Then::OpenAutosave => {
                 if let Some(copy) = self.pending_recovery.take() {
                     self.open_recovery_in_background(copy);
                 }
@@ -887,7 +917,7 @@ impl LinewrightApp {
     /// Open an autosave copy as a new drawing. Unsaved changes to the drawing shown are answered first.
     pub fn recover(&mut self, copy: Autosave, ctx: &egui::Context) {
         self.pending_recovery = Some(copy);
-        self.confirm_discard(Then::Recover, ctx);
+        self.confirm_discard(Then::OpenAutosave, ctx);
     }
 
     /// Delete an autosave copy the user chose to throw away in Drawing Recovery.
@@ -1091,6 +1121,73 @@ impl LinewrightApp {
             self.controller.drawing.note_change();
         }
         self.print(format!("Purged {} layer(s), {} dimension style(s), {} block(s).", layers.len(), styles.len(), blocks.len()));
+    }
+
+    /// AUDIT: list what is wrong with the drawing, and ask on the command line whether to fix it.
+    fn audit_drawing(&mut self) {
+        if self.document().editing_block().is_some() {
+            self.print("AUDIT works on the drawing. Close the block editor first.");
+            return;
+        }
+        let findings = audit(self.document());
+        if findings.is_empty() {
+            self.print(auditing_summary(0, 0));
+            return;
+        }
+        self.print(format!("Auditing entities... {}.", errors_found(findings.len())));
+        for line in report_lines(findings.iter().map(finding_line).collect()) {
+            self.print(line);
+        }
+        self.print("Fix any errors detected? [Yes/No] <N>:");
+        self.audit_question = true;
+    }
+
+    /// The answer to AUDIT's question. With Yes the errors in the open space and in the drawing's tables are fixed, as
+    /// one undo step; errors in other layouts wait until those are open.
+    fn fix_audit(&mut self, fix: bool) {
+        let findings = audit(self.document());
+        let open = self.document().active_layout();
+        let reachable: Vec<Finding> =
+            findings.iter().filter(|f| f.place == Place::Space(open) || f.place == Place::Drawing).cloned().collect();
+        let fixed = if fix { reachable.iter().filter(|f| f.fix.is_some()).count() } else { 0 };
+        if fix {
+            let repair = repairs(self.document(), &reachable);
+            self.push_repairs(repair);
+        }
+        self.print(auditing_summary(findings.len(), fixed));
+        if findings.iter().any(|f| matches!(f.place, Place::Space(space) if space != open)) {
+            self.print("Errors in other layouts are not fixed here. Open each layout and run AUDIT there.");
+        }
+    }
+
+    /// Make the repairs as one undo step: the objects deleted and changed, then the layers and the groups.
+    fn push_repairs(&mut self, repair: Repairs) {
+        let changes = {
+            let document = self.document();
+            let mut changes = vec![];
+            if !repair.removed.is_empty() {
+                changes.push(Change::remove(repair.removed.clone()));
+            }
+            if !repair.changed.is_empty() {
+                changes.push(Change::modify(document, repair.changed.clone()));
+            }
+            if repair.layers.is_some() || repair.current_layer.is_some() {
+                let before = LayerState { layers: document.layers.clone(), current: document.current_layer.clone(), entity_layers: vec![] };
+                let after = LayerState {
+                    layers: repair.layers.clone().unwrap_or_else(|| before.layers.clone()),
+                    current: repair.current_layer.clone().unwrap_or_else(|| before.current.clone()),
+                    entity_layers: vec![],
+                };
+                changes.push(Change::Layers { before, after });
+            }
+            if let Some(groups) = &repair.groups {
+                changes.push(Change::Groups { before: document.groups.clone(), after: groups.clone() });
+            }
+            changes
+        };
+        if !changes.is_empty() {
+            self.controller.push(Change::Group(changes));
+        }
     }
 
     /// OK in Drawing Units.
@@ -1490,6 +1587,7 @@ impl LinewrightApp {
         match action {
             Action::New => self.confirm_discard(Then::New, ctx),
             Action::Open => self.confirm_discard(Then::Open, ctx),
+            Action::Recover => self.confirm_discard(Then::Recover, ctx),
             Action::Save => {
                 self.save();
             }
@@ -1679,7 +1777,18 @@ impl LinewrightApp {
                 self.previous_views.clear();
                 self.controller.start_command(name);
             }
+            Action::Command("AUDIT") => self.audit_drawing(),
             Action::Command(name) => self.controller.start_command(name),
+            // The answer to AUDIT's question: Y fixes, N or Enter leaves things, and anything else is a command.
+            Action::Input(text) if self.audit_question => {
+                self.audit_question = false;
+                let answer = text.trim().to_uppercase();
+                let fix = matches!(answer.as_str(), "Y" | "YES");
+                self.fix_audit(fix);
+                if !fix && !matches!(answer.as_str(), "" | "N" | "NO") {
+                    self.run(Action::Input(text), ctx);
+                }
+            }
             Action::Input(text) => match file_command(&text).filter(|_| self.controller.running_command().is_none()) {
                 Some(action) => {
                     self.controller.drawing.print(format!("Command: {}", text.trim().to_uppercase()));
@@ -2064,6 +2173,45 @@ fn editor_fonts() -> Vec<String> {
     fonts
 }
 
+/// The count of errors as AUDIT words it.
+fn errors_found(count: usize) -> String {
+    if count == 1 { "1 error found".into() } else { format!("{count} errors found") }
+}
+
+/// AUDIT's closing line: how many errors were found, and how many of them were fixed.
+fn auditing_summary(found: usize, fixed: usize) -> String {
+    if found == 0 {
+        "Auditing entities... No errors found.".into()
+    } else {
+        format!("Auditing entities... {}, {fixed} fixed.", errors_found(found))
+    }
+}
+
+/// One finding as a line of the report.
+fn finding_line(finding: &Finding) -> String {
+    let note = if finding.fix.is_none() { " (not fixed)" } else { "" };
+    format!("  {}: {}.{note}", finding.object, finding.problem)
+}
+
+/// The first lines of a report, and how many more there are, so a long list does not fill the command line.
+fn report_lines(mut lines: Vec<String>) -> Vec<String> {
+    if lines.len() > MAX_REPORT_LINES {
+        let more = lines.len() - MAX_REPORT_LINES;
+        lines.truncate(MAX_REPORT_LINES);
+        lines.push(format!("  and {more} more"));
+    }
+    lines
+}
+
+/// What RECOVER reports once the drawing is open: what could not be read, then what the audit found and fixed.
+fn recovery_report(recovery: Recovery) -> (Document, Vec<String>) {
+    let fixed = recovery.findings.iter().filter(|f| f.fix.is_some()).count();
+    let mut lines = report_lines(recovery.skipped);
+    lines.push(auditing_summary(recovery.findings.len(), fixed));
+    lines.extend(report_lines(recovery.findings.iter().map(finding_line).collect()));
+    (recovery.document, lines)
+}
+
 fn drawing_filters(dialog: rfd::FileDialog) -> rfd::FileDialog {
     dialog.add_filter("Drawings", &["dwg", "dxf"]).add_filter("DWG", &["dwg"]).add_filter("DXF", &["dxf"])
 }
@@ -2173,6 +2321,8 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "QSAVE" | "SAVE" => Action::Save,
         "SAVEAS" => Action::SaveAs,
         "OPEN" => Action::Open,
+        "RECOVER" => Action::Recover,
+        "AUDIT" => Action::Command("AUDIT"),
         "NEW" | "QNEW" => Action::New,
         "PLOT" | "PRINT" | "EXPORTPDF" => Action::ExportPdf,
         "DIMSTYLE" | "D" | "DST" | "DDIM" => Action::Command("DIMSTYLE"),

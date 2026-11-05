@@ -352,6 +352,8 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("PURGE", "Purge unused items"),
     ("SAVETIME", "Autosave interval"),
     ("DRAWINGRECOVERY", "Drawing recovery"),
+    ("AUDIT", "Audit and fix errors"),
+    ("RECOVER", "Recover a damaged drawing"),
     ("UNITS", "Drawing units"),
     ("LWEIGHT", "Lineweight settings"),
     ("STYLE", "Text style manager"),
