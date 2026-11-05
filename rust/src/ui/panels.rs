@@ -33,6 +33,8 @@ const HEADER_HEIGHT: f32 = 40.0;
 const QUICK_ICON: f32 = 18.0;
 const LARGE_ICON: f32 = 28.0;
 const SMALL_ICON: f32 = 20.0;
+const SMALL_BUTTON_WIDTH: f32 = 32.0;
+const MORE_BUTTON_WIDTH: f32 = 20.0;
 const VARIES: &str = "*VARIES*";
 const HISTORY_LINES: usize = 3;
 const COORDS_WIDTH: f32 = 170.0;
@@ -91,10 +93,20 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, size: egui::Vec2, icon_size: f32, 
     response
 }
 
+/// The words under a large button. AutoCAD calls its multiline text button just Text.
+fn large_text(name: &str) -> &'static str {
+    if name == "MTEXT" { "Text" } else { label(name) }
+}
+
+/// The width of a large button, which grows with the words under it.
+fn large_button_width(ui: &egui::Ui, name: &str) -> f32 {
+    let galley = ui.fonts(|f| f.layout_no_wrap(large_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
+    (galley.size().x + 14.0).max(56.0)
+}
+
 /// A big ribbon button: the icon with its label underneath.
 fn large_button(ui: &mut egui::Ui, name: &str, checked: bool) -> egui::Response {
-    // AutoCAD calls its multiline text button just Text.
-    let text = if name == "MTEXT" { "Text" } else { label(name) };
+    let text = large_text(name);
     let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(12.0), theme::TEXT));
     let size = vec2((galley.size().x + 14.0).max(56.0), 64.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -240,7 +252,8 @@ fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
             .rect
             .width();
         ui.allocate_ui_with_layout(vec2(width, 16.0), Layout::top_down(Align::Center), |ui| {
-            ui.label(RichText::new(title).color(theme::TEXT_DIM).size(11.5));
+            // The title keeps one line even when the group has room for fewer buttons than its name.
+            ui.add(egui::Label::new(RichText::new(title).color(theme::TEXT_DIM).size(11.5)).wrap_mode(egui::TextWrapMode::Extend));
         });
     });
 }
@@ -283,6 +296,86 @@ fn small_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static s
                 if response.clicked() {
                     app.actions.push(Action::Command(name));
                 }
+            }
+        });
+    }
+}
+
+/// The More button at the end of a group: a drop-down with the small buttons that do not fit on the ribbon.
+fn more_button(app: &mut LinewrightApp, ui: &mut egui::Ui, hidden: &[&'static str]) {
+    let (rect, response) = ui.allocate_exact_size(vec2(MORE_BUTTON_WIDTH, 31.0), Sense::click());
+    let id = response.id.with("more");
+    if response.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(id));
+    }
+    let open = ui.memory(|m| m.is_popup_open(id));
+    let hovered = response.hovered();
+    button_background(ui, rect, hovered, open);
+    let center = rect.center();
+    let triangle = vec![pos2(center.x - 4.0, center.y - 2.0), pos2(center.x + 4.0, center.y - 2.0), pos2(center.x, center.y + 2.0)];
+    ui.painter().add(egui::Shape::convex_polygon(triangle, icon_tint(hovered, open, true), Stroke::NONE));
+    egui::popup::popup_below_widget(ui, id, &response, egui::popup::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        for &name in hidden {
+            let icon = icons::image(name, theme::TEXT).fit_to_exact_size(vec2(SMALL_ICON, SMALL_ICON));
+            if ui.add(egui::Button::image_and_text(icon, label(name))).on_hover_text(tool_tip(name)).clicked() {
+                app.actions.push(Action::Command(name));
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+    });
+}
+
+/// A group of the ribbon: its large buttons, then its small buttons in columns of `rows`.
+struct RibbonGroup {
+    title: &'static str,
+    large: &'static [&'static str],
+    small: &'static [&'static str],
+    rows: usize,
+}
+
+/// The room a ribbon group's parts take, measured before anything is drawn.
+struct GroupSize {
+    large_width: f32,
+    large_count: usize,
+    title_width: f32,
+    columns: usize,
+}
+
+impl GroupSize {
+    /// The width of the group with its first `columns` small columns, and the More button when some are hidden.
+    fn width(&self, columns: usize, more: bool, spacing: f32) -> f32 {
+        let items = self.large_count + columns + usize::from(more);
+        let parts = self.large_width + columns as f32 * SMALL_BUTTON_WIDTH + if more { MORE_BUTTON_WIDTH } else { 0.0 };
+        (parts + spacing * items.saturating_sub(1) as f32).max(self.title_width)
+    }
+
+    /// The most small columns that fit in `room`. When some are hidden, the More button takes room too.
+    fn columns_that_fit(&self, room: f32, spacing: f32) -> usize {
+        if self.width(self.columns, false, spacing) <= room {
+            return self.columns;
+        }
+        (0..self.columns).rev().find(|&k| self.width(k, true, spacing) <= room).unwrap_or(0)
+    }
+}
+
+impl RibbonGroup {
+    fn size(&self, ui: &egui::Ui) -> GroupSize {
+        GroupSize {
+            large_width: self.large.iter().map(|name| large_button_width(ui, name)).sum(),
+            large_count: self.large.len(),
+            title_width: ui.fonts(|f| f.layout_no_wrap(self.title.to_string(), FontId::proportional(11.5), theme::TEXT_DIM)).size().x,
+            columns: self.small.len().div_ceil(self.rows),
+        }
+    }
+
+    /// Draws the group with its first `columns` small columns; the rest go in the More button.
+    fn show(&self, app: &mut LinewrightApp, ui: &mut egui::Ui, columns: usize) {
+        let (visible, hidden) = self.small.split_at((columns * self.rows).min(self.small.len()));
+        group(ui, self.title, |ui| {
+            large_buttons(app, ui, self.large);
+            small_buttons(app, ui, visible, self.rows);
+            if !hidden.is_empty() {
+                more_button(app, ui, hidden);
             }
         });
     }
@@ -545,11 +638,12 @@ pub fn ribbon(app: &mut LinewrightApp, ctx: &egui::Context) {
                 // The Properties group's width as last drawn, so the tools leave room for it.
                 let width_id = Id::new("ribbon_properties_width");
                 let reserved = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(560.0) + 16.0;
+                let budget = (ui.available_width() - reserved).max(0.0);
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
                 egui::ScrollArea::horizontal()
-                    .max_width((ui.available_width() - reserved).max(0.0))
+                    .max_width(budget)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                    .show(ui, |ui| ui.horizontal(|ui| tool_groups(app, ui)));
+                    .show(ui, |ui| ui.horizontal(|ui| tool_groups(app, ui, budget)));
                 divider(ui, 82.0);
                 let start = ui.cursor().left();
                 group(ui, "Properties", |ui| properties(app, ui));
@@ -560,22 +654,20 @@ pub fn ribbon(app: &mut LinewrightApp, ctx: &egui::Context) {
     });
 }
 
-fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui) {
-    group(ui, "Draw", |ui| {
-        large_buttons(app, ui, &["LINE", "PLINE"]);
-        small_buttons(
-            app,
-            ui,
-            &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "BOUNDARY", "SPLINE", "POINT", "MLINE", "WIPEOUT"],
-            2,
-        );
-    });
-    divider(ui, 82.0);
-    group(ui, "Modify", |ui| {
-        small_buttons(
-            app,
-            ui,
-            &[
+/// The ribbon's groups, left to right. `budget` is the width the tools have; each group keeps as many small
+/// buttons as fit in the room left for it, and the rest go in its More button.
+fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
+    let groups = [
+        RibbonGroup {
+            title: "Draw",
+            large: &["LINE", "PLINE"],
+            small: &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "BOUNDARY", "SPLINE", "POINT", "MLINE", "WIPEOUT"],
+            rows: 2,
+        },
+        RibbonGroup {
+            title: "Modify",
+            large: &[],
+            small: &[
                 "MOVE",
                 "MIRROR",
                 "COPY",
@@ -596,16 +688,39 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui) {
                 "MATCHPROP",
                 "LIST",
             ],
-            2,
-        )
-    });
-    divider(ui, 82.0);
-    group(ui, "Annotate and measure", |ui| {
-        large_buttons(app, ui, &["MTEXT", "DIMLINEAR"]);
-        small_buttons(app, ui, &["QLEADER", "DIMALIGNED", "DIMRADIUS", "DIMDIAMETER", "DIMANGULAR", "DIMSTYLE", "DISTANCE", "AREA"], 2);
-    });
-    divider(ui, 82.0);
-    group(ui, "Blocks & Groups", |ui| small_buttons(app, ui, &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"], 2));
+            rows: 2,
+        },
+        RibbonGroup {
+            title: "Annotate and measure",
+            large: &["MTEXT", "DIMLINEAR"],
+            small: &["QLEADER", "DIMALIGNED", "DIMRADIUS", "DIMDIAMETER", "DIMANGULAR", "DIMSTYLE", "DISTANCE", "AREA"],
+            rows: 2,
+        },
+        RibbonGroup {
+            title: "Blocks & Groups",
+            large: &[],
+            small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"],
+            rows: 2,
+        },
+    ];
+    let spacing = ui.spacing().item_spacing.x;
+    // Each divider is a 1 pixel line with the spacing on both sides.
+    let divider_width = 1.0 + 2.0 * spacing;
+    let sizes: Vec<GroupSize> = groups.iter().map(|group| group.size(ui)).collect();
+    let last = groups.len() - 1;
+    let mut used = 0.0;
+    for (index, (group, size)) in groups.iter().zip(&sizes).enumerate() {
+        if index > 0 {
+            divider(ui, 82.0);
+            used += divider_width;
+        }
+        // The groups after this one keep at least their large buttons, and the dividers still to come take room.
+        let later: f32 = sizes[index + 1..].iter().map(|s| s.width(0, s.columns > 0, spacing)).sum();
+        let room = budget - used - later - (last - index) as f32 * divider_width;
+        let columns = size.columns_that_fit(room, spacing);
+        used += size.width(columns, columns < size.columns, spacing);
+        group.show(app, ui, columns);
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ document tab
