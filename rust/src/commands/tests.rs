@@ -689,7 +689,7 @@ fn overkill_deletes_copies_and_combines_overlaps_as_one_undo_step() {
     let a = line(pt(0.0, 0.0), pt(10.0, 0.0));
     let entities = vec![a.clone(), a.duplicate(), line(pt(5.0, 0.0), pt(15.0, 0.0)), circle(pt(0.0, 5.0), 1.0)];
     let mut host = FakeHost::with(entities.clone());
-    let mut session = start("OVERKILL", &mut host, entities);
+    let mut session = start("-OVERKILL", &mut host, entities);
     typed(&mut session, &mut host, &["T", "0.001", "E", "Y", ""]);
     assert!(!session.active());
     assert_eq!(host.shapes(), vec![line_shape(pt(0.0, 0.0), pt(15.0, 0.0)), Shape::Circle { center: pt(0.0, 5.0), radius: 1.0 }]);
@@ -697,6 +697,43 @@ fn overkill_deletes_copies_and_combines_overlaps_as_one_undo_step() {
     assert!(host.reports.iter().any(|r| r.contains("Tolerance=0.001") && r.contains("Combine end to end=Yes")));
     host.retract();
     assert_eq!(host.entities.len(), 4, "undo brings all of it back");
+}
+
+#[test]
+fn overkill_in_the_window_takes_its_options_from_the_dialog_and_typed_it_takes_the_remembered_ones() {
+    let a = line(pt(0.0, 0.0), pt(10.0, 0.0));
+    let entities = vec![a.clone(), a.duplicate(), line(pt(5.0, 0.0), pt(15.0, 0.0))];
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let mut host = FakeHost::with(entities.clone());
+    let mut session = start_with("OVERKILL", &mut host, entities.clone(), defaults.clone());
+    assert!(session.active());
+    assert_eq!(session.prompt.as_ref().unwrap().kind, PromptKind::OverkillDialog);
+    // The window saves what the dialog chose, then answers the prompt with Enter.
+    defaults.borrow_mut().overkill.combine_partial = false;
+    typed(&mut session, &mut host, &[""]);
+    assert!(!session.active());
+    assert_eq!(host.shapes().len(), 2, "the copy goes, and the partial overlap stays when the dialog says so");
+    assert_eq!(host.reports.last().unwrap(), "1 duplicate(s) deleted\n0 overlapping object(s) or segment(s) deleted");
+
+    // Cancel changes nothing.
+    let mut host = FakeHost::with(entities.clone());
+    let mut session = start("OVERKILL", &mut host, entities);
+    session.cancel(&mut host);
+    assert!(!session.active());
+    assert_eq!(host.entities.len(), 3);
+}
+
+#[test]
+fn minus_overkill_turns_polylines_tidy_with_the_o_option() {
+    let square = crate::model::entities::polyline_from(&[pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 0.0), pt(4.0, 4.0), pt(0.0, 4.0)], true);
+    let mut host = FakeHost::with(vec![square.clone()]);
+    let mut session = start("-OVERKILL", &mut host, vec![square]);
+    typed(&mut session, &mut host, &["O", "Y", ""]);
+    assert!(!session.active());
+    let Shape::Polyline { vertices, closed: true } = &host.shapes()[0] else { panic!("{:?}", host.shapes()) };
+    assert_eq!(vertices.len(), 4, "the repeated corner is gone");
+    assert_eq!(host.reports.last().unwrap(), "0 duplicate(s) deleted\n1 overlapping object(s) or segment(s) deleted");
+    assert!(host.reports.iter().any(|r| r.contains("Optimize polylines=Yes")));
 }
 
 #[test]

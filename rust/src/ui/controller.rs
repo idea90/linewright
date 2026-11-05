@@ -719,6 +719,14 @@ impl Controller {
         }
     }
 
+    /// Answer the prompt with what Enter gives, for a dialog that has saved what the user chose.
+    pub fn accept_default(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.submit_text("", &mut self.drawing);
+        }
+        self.refresh();
+    }
+
     /// Esc: stop the running command, or when idle clear the selection.
     pub fn cancel(&mut self) {
         match &mut self.session {
@@ -1132,6 +1140,25 @@ mod tests {
         assert!(shapes(&controller).contains(&Shape::Circle { center: pt(8.0, 5.0), radius: 1.0 }));
         run(&mut controller, &["u", "all", "ar", "p", "0,10", "4", ""]);
         assert_eq!(controller.document().len(), 4);
+    }
+
+    #[test]
+    fn overkill_waits_for_the_dialog_and_cancel_changes_nothing() {
+        let a = line(pt(0.0, 0.0), pt(10.0, 0.0));
+        let mut controller = controller_with(vec![a.clone(), a.duplicate()]);
+        run(&mut controller, &["all", "overkill"]);
+        assert_eq!(controller.prompt().map(|p| p.kind), Some(PromptKind::OverkillDialog));
+        assert_eq!(controller.document().len(), 2, "nothing changes until the dialog answers");
+        controller.cancel();
+        assert!(controller.running_command().is_none());
+        assert_eq!(controller.document().len(), 2);
+
+        run(&mut controller, &["all", "overkill"]);
+        controller.defaults.borrow_mut().overkill.tolerance = 0.5;
+        controller.accept_default();
+        assert!(controller.running_command().is_none());
+        assert_eq!(shapes(&controller), vec![Shape::Line { start: pt(0.0, 0.0), end: pt(10.0, 0.0) }]);
+        assert_eq!(controller.defaults.borrow().overkill.tolerance, 0.5, "the settings the dialog saved are kept");
     }
 
     #[test]

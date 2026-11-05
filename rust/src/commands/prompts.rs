@@ -36,6 +36,8 @@ pub enum PromptKind {
     /// The second corner of a crossing window from the prompt's base point: answered with both corners and every
     /// object the window touches.
     Window,
+    /// The Delete Duplicate Objects dialog: the window shows it, and Enter takes the options it saved.
+    OverkillDialog,
 }
 
 /// A rubber band for the cursor position.
@@ -309,6 +311,7 @@ fn invalid_answer(kind: PromptKind) -> &'static str {
         PromptKind::Length => "Enter a number, zero or greater.",
         PromptKind::Angle => "Enter an angle in degrees.",
         PromptKind::Window => "Specify the other corner of the window as x,y.",
+        PromptKind::OverkillDialog => "Press Enter to accept the options, or Esc to cancel.",
         PromptKind::Text | PromptKind::Select | PromptKind::Pick => SELECT_HINT,
     }
 }
@@ -411,7 +414,7 @@ impl Session {
             PromptKind::Length => parse_length(text).map(Answer::Number),
             PromptKind::Angle => parse_finite(text).map(Answer::Number),
             PromptKind::Text => Some(Answer::Text(text.to_string())),
-            PromptKind::Select | PromptKind::Pick | PromptKind::Window => None,
+            PromptKind::Select | PromptKind::Pick | PromptKind::Window | PromptKind::OverkillDialog => None,
         }
     }
 
