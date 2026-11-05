@@ -19,6 +19,14 @@ pub struct Defaults {
     pub cloud_arc: Option<f64>,
     /// How LENGTHEN last changed lengths.
     pub lengthen: crate::commands::reshape::Lengthen,
+    /// How MLINE draws: which line runs along the points, how far apart the lines are, and in which style.
+    pub mline_justification: crate::model::mline::Justification,
+    pub mline_scale: f64,
+    pub mline_style: crate::model::mline::MlineStyle,
+    /// The drawing's multiline styles, for MLINE's STyle option. The window keeps it up to date.
+    pub mline_styles: Vec<crate::model::mline::MlineStyle>,
+    /// How OVERKILL last compared and combined objects.
+    pub overkill: crate::model::overkill::OverkillSettings,
     /// The layers as they were before LAYISO, for LAYUNISO.
     pub isolated_from: Option<Vec<crate::model::document::Layer>>,
     /// The drawing's layers and current layer, for the layer tools. The window keeps them up to date.
@@ -64,6 +72,11 @@ impl Default for Defaults {
             image: None,
             table_cell: None,
             lengthen: crate::commands::reshape::Lengthen::Total(1.0),
+            overkill: crate::model::overkill::OverkillSettings::default(),
+            mline_justification: crate::model::mline::Justification::Top,
+            mline_scale: 20.0,
+            mline_style: crate::model::mline::MlineStyle::standard(),
+            mline_styles: vec![crate::model::mline::MlineStyle::standard()],
             isolated_from: None,
             layers: vec![],
             current_layer: "0".into(),

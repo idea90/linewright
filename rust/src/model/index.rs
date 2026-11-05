@@ -160,7 +160,11 @@ pub fn entity_extent(entity: &Entity) -> Bounds {
         // A NURBS curve stays inside the hull of its control points.
         Shape::Spline { control, .. } => Bounds::around(control.iter().copied()),
         Shape::Point { position } => Bounds::around([*position]),
-        Shape::Solid { corners } => Bounds::around(corners.iter().copied()),
+        Shape::Solid { corners } | Shape::Wipeout { corners } => Bounds::around(corners.iter().copied()),
+        Shape::Mline { vertices, closed, justification, scale, style } => {
+            let paths = crate::model::mline::mline_paths(vertices, *closed, *justification, *scale, style);
+            Bounds::around(paths.into_iter().flat_map(|(_, path)| path).chain(vertices.iter().copied()))
+        }
         Shape::Hatch { loops, .. } => Bounds::around(loops.iter().flatten().copied()),
         Shape::Insert { block, position, scale_x, scale_y, rotation, attributes } => {
             let placed = insert_transform(block.0.base, *position, *scale_x, *scale_y, *rotation);

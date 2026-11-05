@@ -206,6 +206,8 @@ pub struct Document {
     pub current_text_style: String,
     /// The drawing's multileader styles, and the one new multileaders follow.
     pub mleader_styles: Vec<MleaderStyle>,
+    /// The multiline styles MLINE can draw with, from the file.
+    pub mline_styles: Vec<crate::model::mline::MlineStyle>,
     pub current_mleader_style: String,
     pub groups: Vec<ObjectGroup>,
     /// PICKSTYLE: whether picking a grouped object picks its whole group.
@@ -279,6 +281,7 @@ impl Document {
             text_styles: vec![TextStyleDef::standard()],
             current_text_style: STANDARD_STYLE.into(),
             mleader_styles: vec![MleaderStyle::standard()],
+            mline_styles: vec![crate::model::mline::MlineStyle::standard()],
             current_mleader_style: STANDARD_MLEADER_STYLE.into(),
             groups: vec![],
             group_selection: true,

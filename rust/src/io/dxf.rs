@@ -18,8 +18,9 @@ use crate::model::entities::{
     Shape, TextAlign, VAlign, Vertex,
 };
 use crate::model::geometry::{Point, bulge_arc, direction, pt, sweep_degrees};
-use crate::model::index::entity_extent;
+use crate::model::index::{Bounds, entity_extent};
 use crate::model::lineweight;
+use crate::model::mline::{Justification, MlineElement, MlineStyle, dedup, element_distances, miters};
 use crate::model::multileader::MleaderStyle;
 use crate::model::parts::{BYBLOCK_LINETYPE, TextSpec, clamped_knots, ellipse_point, entity_parts, spline_points};
 use crate::model::styles::{BYLAYER_LINETYPE, canonical_linetype};
@@ -1042,6 +1043,36 @@ impl<'a> Reader<'a> {
                     pixels: (pixels.0 as u32, pixels.1 as u32),
                 }
             }
+            "WIPEOUT" => read_wipeout(group)?,
+            "MLINE" => {
+                let style = group
+                    .get(340)
+                    .and_then(|handle| object_index(self.file, handle.trim()))
+                    .and_then(|at| read_mline_style(&self.file.groups[at]))
+                    .unwrap_or_else(|| MlineStyle {
+                        name: group.text(2).map_or("Standard".into(), |n| n.trim().to_string()),
+                        ..MlineStyle::standard()
+                    });
+                let mut vertices: Vec<Point> = vec![];
+                for p in group.0.iter().take_while(|p| p.code < 1000) {
+                    let value = || p.value.trim().parse::<f64>().ok();
+                    match p.code {
+                        11 => vertices.push(pt(value()?, 0.0)),
+                        21 => vertices.last_mut()?.y = value()?,
+                        _ => {}
+                    }
+                }
+                if vertices.len() < 2 {
+                    return None;
+                }
+                Shape::Mline {
+                    vertices,
+                    closed: group.int(71).unwrap_or(0) & 2 != 0,
+                    justification: Justification::from_code(group.int(70).unwrap_or(0)),
+                    scale: group.float(40).unwrap_or(1.0),
+                    style,
+                }
+            }
             "XLINE" | "RAY" => {
                 let direction = group.point(11)?;
                 let length = direction.length();
@@ -1539,6 +1570,10 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
             text_styles.iter().find(|s| Some(s.name.to_lowercase()) == current).unwrap_or(&text_styles[0]).name.clone();
         document.text_styles = text_styles;
     }
+    let mline_styles = read_mline_styles(&file);
+    if !mline_styles.is_empty() {
+        document.mline_styles = mline_styles;
+    }
     let mleader_styles = read_mleader_styles(&file);
     if !mleader_styles.is_empty() {
         let current = file.header("$CMLEADERSTYLE").map(|s| s.trim().to_lowercase());
@@ -2031,6 +2066,10 @@ struct Writer {
     /// Image files written: path, IMAGEDEF handle and pixel size; and each image's reactor, image and definition.
     image_defs: Vec<(String, String, (u32, u32))>,
     image_reactors: Vec<(String, String, String)>,
+    /// Whether any wipeout was written, which AutoCAD needs its class declared for.
+    wipeouts: bool,
+    /// The file's multiline styles' handles by lower-case name.
+    mline_styles: HashMap<String, String>,
     /// The table style tables are written with: its handle, and the text height to make it with when the file
     /// has none yet.
     table_style: Option<(String, Option<f64>)>,
@@ -2621,6 +2660,67 @@ impl Writer {
                 let mut pairs = self.head("POINT", owner, layer, color, linetype, &["AcDbPoint"]);
                 pairs.extend(point_pairs(10, *position));
                 vec![Group(pairs)]
+            }
+            Shape::Wipeout { corners } if self.modern => {
+                let bounds = Bounds::around(corners.iter().copied());
+                let (width, height) = (bounds.width().max(1e-12), bounds.height().max(1e-12));
+                let mut pairs = self.head("WIPEOUT", owner, layer, color, linetype, &["AcDbWipeout"]);
+                pairs.push(pair(90, 0));
+                pairs.extend(point_pairs(10, pt(bounds.x0, bounds.y0)));
+                pairs.extend(point_pairs(11, pt(width, 0.0)));
+                pairs.extend(point_pairs(12, pt(0.0, height)));
+                pairs.extend([pair(13, "1.0"), pair(23, "1.0"), pair(340, "0"), pair(70, 7), pair(280, 1)]);
+                pairs.extend([pair(281, 50), pair(282, 50), pair(283, 0), pair(71, 2), pair(91, corners.len() + 1)]);
+                // The clip boundary is in the picture's own terms: a unit square about its middle, y downwards.
+                for corner in corners.iter().chain(corners.first()) {
+                    let x = (corner.x - bounds.x0) / width - 0.5;
+                    let y = 0.5 - (corner.y - bounds.y0) / height;
+                    pairs.extend([pair(14, number(x)), pair(24, number(y))]);
+                }
+                pairs.push(pair(290, 0));
+                self.wipeouts = true;
+                vec![Group(pairs)]
+            }
+            Shape::Mline { vertices, closed, justification, scale, style } if self.modern => {
+                let points = dedup(vertices);
+                let miters = miters(&points, *closed && points.len() > 2);
+                let distances = element_distances(*justification, *scale, style);
+                let handle = self
+                    .mline_styles
+                    .get(&style.name.to_lowercase())
+                    .or_else(|| self.mline_styles.get("standard"))
+                    .cloned()
+                    .unwrap_or_else(|| "0".into());
+                let mut pairs = self.head("MLINE", owner, layer, color, linetype, &["AcDbMline"]);
+                pairs.extend([pair(2, &style.name), pair(340, &handle), pair(40, number(*scale)), pair(70, justification.code())]);
+                pairs.extend([pair(71, if *closed { 3 } else { 1 }), pair(72, points.len()), pair(73, distances.len())]);
+                pairs.extend(point_pairs(10, points.first().copied().unwrap_or_default()));
+                pairs.extend([pair(210, "0.0"), pair(220, "0.0"), pair(230, "1.0")]);
+                for (i, (point, miter)) in points.iter().zip(&miters).enumerate() {
+                    let next = points.get(i + 1).or(if *closed { points.first() } else { None });
+                    let along = match next {
+                        Some(next) => *next - *point,
+                        None => *point - points[i.saturating_sub(1)],
+                    };
+                    let unit = |v: Point| v * (1.0 / v.length().max(f64::MIN_POSITIVE));
+                    pairs.extend(point_pairs(11, *point));
+                    pairs.extend(point_pairs(12, unit(along)));
+                    pairs.extend(point_pairs(13, unit(*miter)));
+                    // Each line's distance from the vertex along the miter, and no dashes or fill of its own.
+                    for distance in &distances {
+                        pairs.extend([pair(74, 2), pair(41, number(distance * miter.length())), pair(41, "0.0"), pair(75, 0)]);
+                    }
+                }
+                vec![Group(pairs)]
+            }
+            // R12 has no multilines: their lines go in instead.
+            Shape::Mline { .. } => {
+                let pieces = explode(entity).unwrap_or_default();
+                pieces.iter().flat_map(|piece| self.entity(piece, linetype, dimension_style, owner)).collect()
+            }
+            // R12 has no wipeouts: the frame stands in.
+            Shape::Wipeout { corners } => {
+                (0..corners.len()).map(|i| self.line(owner, layer, color, linetype, corners[i], corners[(i + 1) % corners.len()])).collect()
             }
             Shape::Solid { corners } => {
                 // The file keeps the third and fourth corners the other way round.
@@ -3401,6 +3501,89 @@ fn write_table_style(file: &mut DxfFile, writer: &Writer) {
     file.groups.insert(dictionary + 1, Group(pairs));
 }
 
+/// The class AutoCAD reads wipeouts with, from the Express Tools that brought them.
+const WIPEOUT_CLASS: (&str, &str, &str, i32, i32) =
+    ("WIPEOUT", "AcDbWipeout", "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com", 127, 1);
+
+/// Declares a class in the CLASSES section, unless the file already does: name, C++ class, application, proxy
+/// flags and whether it is an entity.
+fn declare_class(file: &mut DxfFile, (name, class, application, flags, entity): (&str, &str, &str, i32, i32)) {
+    let Some((_, end)) = file.section("CLASSES") else { return };
+    if file.groups.iter().any(|g| g.kind() == "CLASS" && g.get(1).is_some_and(|n| n.trim() == name)) {
+        return;
+    }
+    let group = Group(vec![
+        pair(0, "CLASS"),
+        pair(1, name),
+        pair(2, class),
+        pair(3, application),
+        pair(90, flags),
+        pair(91, 0),
+        pair(280, 0),
+        pair(281, entity),
+    ]);
+    file.groups.insert(end, group);
+}
+
+/// A multiline style from its MLINESTYLE object: square caps at either end (flags 16 and 256), lines across the
+/// joints (flag 2), and its elements, each starting at its offset (code 49).
+fn read_mline_style(group: &Group) -> Option<MlineStyle> {
+    if group.kind() != "MLINESTYLE" {
+        return None;
+    }
+    let flags = group.int(70).unwrap_or(0);
+    let mut elements: Vec<MlineElement> = vec![];
+    for p in group.0.iter().take_while(|p| p.code < 1000) {
+        match p.code {
+            49 => {
+                elements.push(MlineElement { offset: p.value.trim().parse().ok()?, color: BYLAYER, linetype: BYLAYER_LINETYPE.to_string() })
+            }
+            62 if !elements.is_empty() => elements.last_mut()?.color = p.value.trim().parse().unwrap_or(BYLAYER),
+            6 if !elements.is_empty() => elements.last_mut()?.linetype = canonical_linetype(p.value.trim()),
+            _ => {}
+        }
+    }
+    Some(MlineStyle {
+        name: group.text(2)?.trim().to_string(),
+        description: group.text(3).unwrap_or_default().trim().to_string(),
+        elements,
+        start_cap: flags & 16 != 0,
+        end_cap: flags & 256 != 0,
+        joints: flags & 2 != 0,
+    })
+}
+
+/// The file's multiline styles, in the order the file keeps them.
+fn read_mline_styles(file: &DxfFile) -> Vec<MlineStyle> {
+    let Some((start, end)) = file.section("OBJECTS") else { return vec![] };
+    file.groups[start..end].iter().filter_map(read_mline_style).collect()
+}
+
+/// A wipeout's corners from its clip boundary, which is in the terms of its picture: pixels from the top left
+/// corner, about pixel centers. A rectangular boundary gives two opposite corners.
+fn read_wipeout(group: &Group) -> Option<Shape> {
+    let (position, u, v) = (group.point(10)?, group.point(11)?, group.point(12)?);
+    let height = group.float(23).unwrap_or(1.0);
+    let mut boundary: Vec<Point> = vec![];
+    for p in group.0.iter().take_while(|p| p.code < 1000) {
+        let value = || p.value.trim().parse::<f64>().ok();
+        match p.code {
+            14 => boundary.push(pt(value()?, 0.0)),
+            24 => boundary.last_mut()?.y = value()?,
+            _ => {}
+        }
+    }
+    let at = |b: Point| position + u * (b.x + 0.5) + v * (height - b.y - 0.5);
+    let mut corners: Vec<Point> = match boundary.as_slice() {
+        [a, b] => vec![at(*a), at(pt(b.x, a.y)), at(*b), at(pt(a.x, b.y))],
+        _ => boundary.iter().map(|b| at(*b)).collect(),
+    };
+    if corners.len() > 1 && corners.first()?.dist(*corners.last()?) < 1e-12 {
+        corners.pop();
+    }
+    (corners.len() >= 3).then_some(Shape::Wipeout { corners })
+}
+
 /// The classes AutoCAD needs declared before it reads images, as name, C++ class and proxy flags.
 const IMAGE_CLASSES: [(&str, &str, i32, i32); 3] = [
     ("IMAGE", "AcDbRasterImage", 2175, 1),
@@ -3687,6 +3870,17 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         entity_handles: HashMap::new(),
         image_defs: vec![],
         image_reactors: vec![],
+        wipeouts: false,
+        mline_styles: file
+            .section("OBJECTS")
+            .map(|(start, end)| {
+                file.groups[start..end]
+                    .iter()
+                    .filter(|g| g.kind() == "MLINESTYLE")
+                    .filter_map(|g| Some((g.get(2)?.trim().to_lowercase(), g.handle()?.trim().to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
         table_style: None,
         lineweight: lineweight::BYLAYER,
         text_styles: text_style_fonts(&file)
@@ -3830,6 +4024,9 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     }
     write_groups(&mut file, &mut writer, document);
     write_images(&mut file, &mut writer);
+    if writer.wipeouts {
+        declare_class(&mut file, WIPEOUT_CLASS);
+    }
     write_table_style(&mut file, &writer);
     if let Some(units) = document.units {
         file.set_header("$INSUNITS", 70, units.to_string());

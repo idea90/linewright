@@ -219,6 +219,15 @@ pub fn transform_shape(shape: &Shape, sim: &Similarity) -> Shape {
         },
         Shape::Point { position } => Shape::Point { position: sim.point(*position) },
         Shape::Solid { corners } => Shape::Solid { corners: corners.iter().map(|p| sim.point(*p)).collect() },
+        Shape::Wipeout { corners } => Shape::Wipeout { corners: corners.iter().map(|p| sim.point(*p)).collect() },
+        Shape::Mline { vertices, closed, justification, scale, style } => {
+            let mut vertices: Vec<Point> = vertices.iter().map(|p| sim.point(*p)).collect();
+            // A mirror turns left into right: running the path the other way puts each line back on its side.
+            if sim.determinant() < 0.0 {
+                vertices.reverse();
+            }
+            Shape::Mline { vertices, closed: *closed, justification: *justification, scale: scale * sim.scale(), style: style.clone() }
+        }
         Shape::Hatch { loops, solid, pattern, name, scale, angle, gradient, association } => Shape::Hatch {
             scale: scale * sim.scale(),
             angle: sim.angle(*angle),

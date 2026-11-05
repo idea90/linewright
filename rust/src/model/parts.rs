@@ -143,6 +143,8 @@ pub struct Parts {
     pub texts: Vec<TextSpec>,
     /// Gradient fills: the loops, as for areas, and the colors.
     pub gradients: Vec<(Vec<Vec<Point>>, Gradient)>,
+    /// Areas painted in the background color, each framed on screen but not on paper: wipeouts.
+    pub masks: Vec<Vec<Point>>,
 }
 
 impl Parts {
@@ -151,6 +153,7 @@ impl Parts {
         self.paths.iter_mut().flatten().for_each(point);
         self.fills.iter_mut().flatten().for_each(point);
         self.areas.iter_mut().flatten().flatten().for_each(point);
+        self.masks.iter_mut().flatten().for_each(point);
         self.points.iter_mut().for_each(point);
         for (loops, gradient) in &mut self.gradients {
             loops.iter_mut().flatten().for_each(point);
@@ -421,6 +424,11 @@ pub fn entity_parts(entity: &Entity, tolerance: f64) -> Parts {
         Shape::Point { position } => Parts { points: vec![*position], ..Parts::default() },
         // One area, not two triangles, so no seam shows where they would meet.
         Shape::Solid { corners } => Parts { areas: vec![vec![corners.clone()]], ..Parts::default() },
+        Shape::Wipeout { corners } => Parts { masks: vec![corners.clone()], ..Parts::default() },
+        Shape::Mline { vertices, closed, justification, scale, style } => Parts {
+            paths: super::mline::mline_paths(vertices, *closed, *justification, *scale, style).into_iter().map(|(_, p)| p).collect(),
+            ..Parts::default()
+        },
         Shape::Hatch { loops, solid, pattern, gradient, .. } => {
             let mut parts = Parts::default();
             if let Some(gradient) = gradient {
@@ -611,6 +619,23 @@ pub fn flatten(entity: &Entity, tolerance: f64) -> Vec<(Styled, Parts)> {
 }
 
 fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, tolerance: f64, depth: usize, out: &mut Vec<(Styled, Parts)>) {
+    if let Shape::Mline { vertices, closed, justification, scale, style: mline_style } = &entity.shape {
+        // Each line in its element's color and linetype; ByLayer ones, and the caps, follow the multiline itself.
+        for (element, path) in super::mline::mline_paths(vertices, *closed, *justification, *scale, mline_style) {
+            let mut piece = style.clone();
+            if let Some(element) = element.map(|i| &mline_style.elements[i]) {
+                if element.color != super::entities::BYLAYER {
+                    piece.color = element.color;
+                }
+                if !element.linetype.eq_ignore_ascii_case(super::styles::BYLAYER_LINETYPE) {
+                    piece.linetype = element.linetype.clone();
+                }
+            }
+            let parts = Parts { paths: vec![path], ..Parts::default() }.map(transform);
+            out.push((piece, parts));
+        }
+        return;
+    }
     let Shape::Insert { block, position, scale_x, scale_y, rotation, attributes } = &entity.shape else {
         // The chords must stay close to the curve after the transform has scaled it.
         let local = tolerance / transform.determinant().abs().sqrt().max(1e-300);

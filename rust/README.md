@@ -20,9 +20,15 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 
 - Draw: `LINE` (`L`), `PLINE` (`PL`), `RECTANGLE` (`REC`), `POLYGON` (`POL`), `MTEXT` (`MT`), `XLINE` (`XL`), `RAY`, `DONUT` (`DO`), `REVCLOUD`, `TABLE` (`TB`), `CIRCLE` (`C`), `ARC` (`A`), `ELLIPSE` (`EL`),
   `SPLINE` (`SPL`), `POINT` (`PO`), `HATCH` (`H`; SOLID, ANSI31, ANSI37, NET, LINE, DOTS, DASH), `TEXT` (`T`)
+- `MLINE` (`ML`): multilines with Justification (Top/Zero/Bottom), Scale and STyle, in the drawing's own multiline
+  styles (element offsets, colors, linetypes, caps and joints); they load from and save to DXF and explode to lines
+- `WIPEOUT`: masking areas from clicked corners or a closed polyline, hiding what is drawn under them; framed on
+  screen, printed without a frame; they load from and save to DXF
+- `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
-  `MATCHPROP` (`MA`)
+  `MATCHPROP` (`MA`), `OVERKILL` (`OV`; deletes duplicates and combines overlapping lines and arcs, with Tolerance,
+  Ignore properties, Partial overlap and End to end options)
 - Blocks: `INSERT` (`I`, asks for attribute values), `BLOCK` (`B`); attributes edited with `TEXTEDIT` (`ED`)
 - Groups: `GROUP` (`G`; named or unnamed `*A1`, with a description), `UNGROUP`, `GROUPEDIT` (add, remove, rename),
   `PICKSTYLE` or Ctrl+Shift+A for group selection; groups load from and save to DXF

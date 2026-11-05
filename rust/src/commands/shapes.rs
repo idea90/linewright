@@ -315,6 +315,32 @@ async fn selected_boundaries(io: &Io, selected: Vec<Entity>) -> Option<(Vec<Vec<
     Some((loops, (!ids.is_empty()).then_some(Association::Objects(ids))))
 }
 
+/// BOUNDARY: a closed polyline around each area clicked inside, and around the islands within it, as AutoCAD
+/// makes them with island detection on. They are drawn when Enter ends the picking.
+pub async fn boundary_command(io: Io) {
+    let mut picked: Vec<Vec<Vec<Point>>> = vec![];
+    loop {
+        let shown: Vec<Entity> = picked.iter().flatten().map(|l| outline(l)).collect();
+        let prompt = Prompt::point("Pick internal point or [Undo]:").options(&[UNDO]).region().preview(move |_| shown.clone());
+        match io.ask(prompt).await {
+            Some(Answer::Region { loops, .. }) if loops.is_empty() => {
+                io.step(Step::Report("Valid boundary not found.".into()));
+            }
+            Some(Answer::Region { loops, .. }) => picked.push(loops),
+            Some(answer) if answer.is(UNDO) => {
+                picked.pop();
+            }
+            _ => break,
+        }
+    }
+    let polylines: Vec<Entity> = picked.iter().flatten().map(|l| outline(l)).collect();
+    let count = polylines.len();
+    if count > 0 {
+        io.step(Step::Drawn(polylines));
+    }
+    io.step(Step::Report(format!("BOUNDARY created {count} polyline{}", if count == 1 { "" } else { "s" })));
+}
+
 /// A picked boundary drawn while more are picked.
 fn outline(corners: &[Point]) -> Entity {
     let vertices = corners.iter().map(|p| Vertex { x: p.x, y: p.y, bulge: 0.0, start_width: 0.0, end_width: 0.0 }).collect();

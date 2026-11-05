@@ -13,6 +13,7 @@ use crate::model::entities::{Entity, Shape};
 use crate::model::fillet::chamfer_lines;
 use crate::model::geometry::Point;
 use crate::model::index::{Bounds, entity_extent};
+use crate::model::overkill::{OverkillSettings, overkill};
 use crate::model::transform::{rotation, translation};
 use crate::model::trimming::break_entity;
 
@@ -211,6 +212,112 @@ pub async fn join_command(io: Io, selected: Vec<Entity>) {
         }
         None => io.step(Step::Report("Nothing to join: the objects must meet end to end.".into())),
     }
+}
+
+const DONE: &str = "D";
+const IGNORE: &str = "I";
+const TOLERANCE: &str = "T";
+const PARTIAL: &str = "P";
+const END_TO_END: &str = "E";
+const YES: &str = "Y";
+const NO: &str = "N";
+
+/// OVERKILL: deletes copies lying on top of other objects and combines lines and arcs that overlap, after the
+/// options are set as -OVERKILL asks for them.
+pub async fn overkill_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
+    let objects = objects_to_edit(&io, selected).await;
+    if objects.is_empty() {
+        return;
+    }
+    let mut settings = defaults.borrow().overkill.clone();
+    loop {
+        io.step(Step::Report(overkill_status(&settings)));
+        let prompt = Prompt::point("Enter an option to change [Done/Ignore/Tolerance/Partial overlap/End to end] <Done>:")
+            .options(&[DONE, IGNORE, TOLERANCE, PARTIAL, END_TO_END])
+            .default(Answer::keyword(DONE));
+        match io.ask(prompt).await {
+            Some(answer) if answer.is(DONE) => break,
+            Some(answer) if answer.is(IGNORE) => {
+                let prompt = Prompt::point("Ignore property [None/All/Color/LAyer/LType/LWeight] <None>:")
+                    .options(&["N", "A", "C", "LA", "LT", "LW"])
+                    .default(Answer::keyword("N"));
+                let Some(Answer::Keyword(which)) = io.ask(prompt).await else { continue };
+                let all = which == "A";
+                match which.as_str() {
+                    "C" => settings.ignore_color = !settings.ignore_color,
+                    "LA" => settings.ignore_layer = !settings.ignore_layer,
+                    "LT" => settings.ignore_linetype = !settings.ignore_linetype,
+                    "LW" => settings.ignore_lineweight = !settings.ignore_lineweight,
+                    _ => {
+                        settings.ignore_color = all;
+                        settings.ignore_layer = all;
+                        settings.ignore_linetype = all;
+                        settings.ignore_lineweight = all;
+                    }
+                }
+            }
+            Some(answer) if answer.is(TOLERANCE) => {
+                let prompt = Prompt::new(PromptKind::Length, format!("Specify tolerance <{}>:", format_general(settings.tolerance)))
+                    .default(Answer::Number(settings.tolerance));
+                if let Some(Answer::Number(tolerance)) = io.ask(prompt).await {
+                    settings.tolerance = tolerance;
+                }
+            }
+            Some(answer) if answer.is(PARTIAL) || answer.is(END_TO_END) => {
+                let partial = answer.is(PARTIAL);
+                let current = if partial { settings.combine_partial } else { settings.combine_end_to_end };
+                let question = if partial { "that partially overlap" } else { "when aligned end to end" };
+                let prompt = Prompt::point(format!("Combine co-linear objects {question}? [Yes/No] <{}>:", yes_no(current)))
+                    .options(&[YES, NO])
+                    .default(Answer::keyword(if current { YES } else { NO }));
+                if let Some(Answer::Keyword(choice)) = io.ask(prompt).await {
+                    let flag = if partial { &mut settings.combine_partial } else { &mut settings.combine_end_to_end };
+                    *flag = choice == YES;
+                }
+            }
+            Some(_) => {}
+            None => return,
+        }
+    }
+    defaults.borrow_mut().overkill = settings.clone();
+    let cleanup = overkill(&objects, &settings);
+    let mut steps = vec![];
+    if !cleanup.remove.is_empty() {
+        steps.push(Step::Remove(cleanup.remove));
+    }
+    if !cleanup.modify.is_empty() {
+        steps.push(Step::Modify(cleanup.modify));
+    }
+    if !steps.is_empty() {
+        io.step(Step::Compound(steps));
+    }
+    io.step(Step::Report(format!(
+        "{} duplicate(s) deleted\n{} overlapping object(s) or segment(s) deleted",
+        cleanup.duplicates, cleanup.overlaps
+    )));
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "Yes" } else { "No" }
+}
+
+fn overkill_status(settings: &OverkillSettings) -> String {
+    let ignored: Vec<&str> = [
+        (settings.ignore_color, "Color"),
+        (settings.ignore_layer, "Layer"),
+        (settings.ignore_linetype, "Linetype"),
+        (settings.ignore_lineweight, "Lineweight"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    format!(
+        "Current settings: Tolerance={}, Ignore={}, Combine partial overlap={}, Combine end to end={}",
+        format_general(settings.tolerance),
+        if ignored.is_empty() { "None".to_string() } else { ignored.join(",") },
+        yes_no(settings.combine_partial),
+        yes_no(settings.combine_end_to_end)
+    )
 }
 
 pub async fn matchprop_command(io: Io) {

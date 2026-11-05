@@ -650,3 +650,92 @@ fn table_makes_a_table_and_tabledit_changes_a_cell() {
     let Some(Shape::Table { cells, .. }) = host.shapes().pop() else { panic!() };
     assert_eq!(cells[2][1], "1000", "the cell picked, in the last row and second column");
 }
+
+#[test]
+fn boundary_outlines_the_room_clicked_in_and_its_column() {
+    let walls = [
+        ((0.0, 0.0), (20.0, 0.0)),
+        ((20.0, 0.0), (20.0, 10.0)),
+        ((20.0, 10.0), (0.0, 10.0)),
+        ((0.0, 10.0), (0.0, 0.0)),
+        ((10.0, 0.0), (10.0, 10.0)),
+    ];
+    let mut entities: Vec<Entity> = walls.iter().map(|&((x0, y0), (x1, y1))| line(pt(x0, y0), pt(x1, y1))).collect();
+    entities.push(circle(pt(15.0, 5.0), 1.0));
+    let mut host = FakeHost::with(entities);
+    let mut session = start("BOUNDARY", &mut host, vec![]);
+    typed(&mut session, &mut host, &["30,5", "12,2", "5,5", "U", ""]);
+    assert!(!session.active());
+    assert_eq!(host.reports, vec!["Valid boundary not found.", "BOUNDARY created 2 polylines"]);
+    let made: Vec<Shape> = host.shapes().split_off(6);
+    assert_eq!(made.len(), 2, "the room and the column, not the undone left room");
+    let Shape::Polyline { vertices, closed: true } = &made[0] else { panic!("{:?}", made[0]) };
+    let xs: Vec<f64> = vertices.iter().map(|v| v.x).collect();
+    assert!(xs.iter().all(|x| (10.0..=20.0).contains(x)), "the right room only: {xs:?}");
+    assert_eq!(vertices.len(), 4, "a rectangle's corners");
+    let Shape::Polyline { vertices: column, closed: true } = &made[1] else { panic!() };
+    assert!(column.iter().all(|v| (v.point().dist(pt(15.0, 5.0)) - 1.0).abs() < 1e-2), "the column");
+}
+
+#[test]
+fn overkill_deletes_copies_and_combines_overlaps_as_one_undo_step() {
+    let a = line(pt(0.0, 0.0), pt(10.0, 0.0));
+    let entities = vec![a.clone(), a.duplicate(), line(pt(5.0, 0.0), pt(15.0, 0.0)), circle(pt(0.0, 5.0), 1.0)];
+    let mut host = FakeHost::with(entities.clone());
+    let mut session = start("OVERKILL", &mut host, entities);
+    typed(&mut session, &mut host, &["T", "0.001", "E", "Y", ""]);
+    assert!(!session.active());
+    assert_eq!(host.shapes(), vec![line_shape(pt(0.0, 0.0), pt(15.0, 0.0)), Shape::Circle { center: pt(0.0, 5.0), radius: 1.0 }]);
+    assert_eq!(host.reports.last().unwrap(), "1 duplicate(s) deleted\n1 overlapping object(s) or segment(s) deleted");
+    assert!(host.reports.iter().any(|r| r.contains("Tolerance=0.001") && r.contains("Combine end to end=Yes")));
+    host.retract();
+    assert_eq!(host.entities.len(), 4, "undo brings all of it back");
+}
+
+#[test]
+fn wipeout_from_clicked_corners_or_a_closed_polyline() {
+    let mut host = FakeHost::default();
+    let mut session = start("WIPEOUT", &mut host, vec![]);
+    typed(&mut session, &mut host, &["0,0", "10,0", "@0,5", "C"]);
+    assert!(!session.active());
+    assert_eq!(host.shapes(), vec![Shape::Wipeout { corners: vec![pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 5.0)] }]);
+
+    let frame = crate::model::entities::polyline_from(&[pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 4.0), pt(0.0, 4.0)], true);
+    let mut host = FakeHost::with(vec![frame.clone()]);
+    let mut session = start("WIPEOUT", &mut host, vec![]);
+    typed(&mut session, &mut host, &[""]);
+    session.submit_pick(frame, pt(4.0, 2.0), false, &mut host);
+    typed(&mut session, &mut host, &["Y"]);
+    assert_eq!(host.shapes().len(), 1, "the polyline is erased");
+    let Shape::Wipeout { corners } = &host.shapes()[0] else { panic!() };
+    assert_eq!(corners.len(), 4);
+}
+
+#[test]
+fn mline_draws_with_the_justification_and_scale_it_is_given_and_remembers_them() {
+    use crate::model::mline::Justification;
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let mut host = FakeHost::default();
+    let mut session = start_with("MLINE", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["J", "Z", "S", "240", "ST", "?", "0,0", "5000,0", "@0,3000", "U", "@0,4000", ""]);
+    assert!(!session.active());
+    let Some(Shape::Mline { vertices, closed, justification, scale, style }) = host.shapes().last().cloned() else { panic!() };
+    assert_eq!(vertices, vec![pt(0.0, 0.0), pt(5000.0, 0.0), pt(5000.0, 4000.0)]);
+    assert!(!closed);
+    assert_eq!((justification, scale, style.name.as_str()), (Justification::Zero, 240.0, "Standard"));
+    assert!(host.reports.iter().any(|r| r == "Loaded mline styles: Standard"));
+    assert!(host.reports.iter().any(|r| r.contains("Justification = Zero, Scale = 240.00")));
+    assert_eq!(defaults.borrow().mline_scale, 240.0);
+}
+
+#[test]
+fn an_exploded_mline_is_its_lines() {
+    let mut host = FakeHost::default();
+    let mut session = start("MLINE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["0,0", "100,0", "100,100", "0,100", "C"]);
+    let mline = host.entities[0].clone();
+    let mut session = start("EXPLODE", &mut host, vec![mline]);
+    assert!(!session.active() || session.submit_text("", &mut host).is_none());
+    assert_eq!(host.entities.len(), 8, "four sides, two lines each");
+    assert!(host.shapes().iter().all(|s| matches!(s, Shape::Line { .. })));
+}

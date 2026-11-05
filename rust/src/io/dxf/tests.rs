@@ -693,3 +693,53 @@ fn text_styles_and_formatted_mtext_survive_a_round_trip() {
     let Shape::Text { width_factor, oblique, .. } = &back.entities()[1].shape else { panic!() };
     assert_eq!((*width_factor, *oblique), (0.8, 15.0));
 }
+
+#[test]
+fn a_wipeout_survives_a_round_trip_with_its_class_declared() {
+    let corners = vec![pt(2.0, 1.0), pt(12.0, 1.0), pt(9.0, 6.0), pt(2.0, 4.0)];
+    let document = Document::with_entities(vec![Entity::new(Shape::Wipeout { corners: corners.clone() })]);
+    let file = dxf_from_document(&document);
+    let class = file.groups.iter().filter(|g| g.kind() == "CLASS" && g.get(1).is_some_and(|n| n.trim() == "WIPEOUT")).count();
+    assert_eq!(class, 1);
+    let back = round_trip(&document);
+    let Shape::Wipeout { corners: read } = &back.entities()[0].shape else { panic!("{:?}", back.entities()[0].shape) };
+    assert_eq!(read.len(), 4);
+    for (a, b) in read.iter().zip(&corners) {
+        assert!(a.dist(*b) < 1e-9, "{a:?} {b:?}");
+    }
+    assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+}
+
+#[test]
+fn a_rectangular_wipeout_clip_gives_four_corners() {
+    let pairs = [(0, "WIPEOUT"), (8, "0"), (10, "10.0"), (20, "20.0"), (11, "4.0"), (21, "0.0"), (12, "0.0"), (22, "2.0")]
+        .into_iter()
+        .chain([(13, "1.0"), (23, "1.0"), (71, "1"), (91, "2"), (14, "-0.5"), (24, "-0.5"), (14, "0.5"), (24, "0.5")])
+        .map(|(code, value)| pair(code, value))
+        .collect();
+    let Some(Shape::Wipeout { corners }) = read_wipeout(&Group(pairs)) else { panic!() };
+    let mut seen: Vec<(f64, f64)> = corners.iter().map(|c| (c.x, c.y)).collect();
+    seen.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(seen, vec![(10.0, 20.0), (10.0, 22.0), (14.0, 20.0), (14.0, 22.0)]);
+}
+
+#[test]
+fn a_multiline_survives_a_round_trip_in_its_style() {
+    use crate::model::mline::{Justification, MlineStyle};
+    let wall = Entity::new(Shape::Mline {
+        vertices: vec![pt(0.0, 0.0), pt(4000.0, 0.0), pt(4000.0, 3000.0)],
+        closed: false,
+        justification: Justification::Bottom,
+        scale: 200.0,
+        style: MlineStyle::standard(),
+    });
+    let document = Document::with_entities(vec![wall.clone()]);
+    let file = dxf_from_document(&document);
+    let written = file.groups.iter().find(|g| g.kind() == "MLINE").expect("an MLINE");
+    let style = file.groups.iter().find(|g| g.kind() == "MLINESTYLE").unwrap();
+    assert_eq!(written.get(340).map(str::trim), style.handle().map(str::trim), "it points at the file's Standard style");
+    let back = round_trip(&document);
+    assert_eq!(back.entities()[0].shape, wall.shape);
+    assert_eq!(back.mline_styles[0].elements.len(), 2);
+    assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+}

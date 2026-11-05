@@ -266,6 +266,20 @@ pub enum Shape {
     Solid {
         corners: Vec<Point>,
     },
+    /// A wipeout: an area painted in the background color, hiding what is drawn before it, with its frame shown
+    /// on screen. Corners in order, the last joining the first.
+    Wipeout {
+        corners: Vec<Point>,
+    },
+    /// A multiline: the lines of `style` drawn along the path through `vertices`, `scale` times as far apart as the
+    /// style sets them, with the line `justification` names running along the path.
+    Mline {
+        vertices: Vec<Point>,
+        closed: bool,
+        justification: super::mline::Justification,
+        scale: f64,
+        style: super::mline::MlineStyle,
+    },
     /// Areas bounded by closed loops, filled solid or with a pattern of lines. Loops inside loops are holes.
     Hatch {
         loops: Vec<Vec<Point>>,
@@ -316,6 +330,8 @@ impl Shape {
             Shape::Spline { .. } => "Spline",
             Shape::Point { .. } => "Point",
             Shape::Solid { .. } => "Solid",
+            Shape::Wipeout { .. } => "Wipeout",
+            Shape::Mline { .. } => "MLine",
             Shape::Hatch { .. } => "Hatch",
             Shape::Insert { .. } => "Block reference",
         }

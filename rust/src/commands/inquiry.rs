@@ -86,7 +86,14 @@ pub fn describe(entity: &Entity) -> Vec<String> {
         }
         Shape::Spline { degree, control, .. } => add(format!("degree {degree}, {} control points", control.len())),
         Shape::Point { position } => add(format!("at point, {}", xy(*position))),
-        Shape::Solid { corners } => add(format!("{} corners", corners.len())),
+        Shape::Solid { corners } | Shape::Wipeout { corners } => add(format!("{} corners", corners.len())),
+        Shape::Mline { vertices, justification, scale, style, .. } => add(format!(
+            "style {}, justification {}, scale {}, {} vertices",
+            style.name,
+            justification.name(),
+            crate::commands::format_general(*scale),
+            vertices.len()
+        )),
         Shape::Hatch { loops, solid, name, .. } => {
             add(format!("pattern {}, {} boundary loop(s)", if *solid { "SOLID" } else { name }, loops.len()))
         }

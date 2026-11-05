@@ -515,6 +515,7 @@ impl Controller {
             let document = &self.drawing.document;
             let mut defaults = self.defaults.borrow_mut();
             defaults.dimension_styles = document.dimension_styles.clone();
+            defaults.mline_styles = document.mline_styles.clone();
             if let Some(style) = document.text_styles.iter().find(|s| s.name == document.current_text_style) {
                 defaults.text_style = style.clone();
             }

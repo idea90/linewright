@@ -102,6 +102,21 @@ pub fn explode(entity: &Entity) -> Option<Vec<Entity>> {
             }
             Some(pieces)
         }
+        // A multiline comes apart into a line for each segment of each of its lines, in that line's look.
+        Shape::Mline { .. } => Some(
+            flatten(entity, 1.0)
+                .into_iter()
+                .flat_map(|(style, parts)| {
+                    let lines: Vec<Entity> = parts
+                        .paths
+                        .iter()
+                        .flat_map(|path| path.windows(2))
+                        .map(|w| styled(entity, &style, Shape::Line { start: w[0], end: w[1] }))
+                        .collect();
+                    lines
+                })
+                .collect(),
+        ),
         Shape::Annotation { .. } | Shape::Table { .. } | Shape::Multileader { .. } => {
             let parts = entity_parts(entity, f64::INFINITY);
             let mut pieces: Vec<Entity> = parts
@@ -190,6 +205,14 @@ pub fn stretch(entity: &Entity, window: &Bounds, shift: Point) -> Option<Entity>
             closed: *closed,
         },
         Shape::Solid { corners } => Shape::Solid { corners: corners.iter().map(moved).collect() },
+        Shape::Wipeout { corners } => Shape::Wipeout { corners: corners.iter().map(moved).collect() },
+        Shape::Mline { vertices, closed, justification, scale, style } => Shape::Mline {
+            vertices: vertices.iter().map(moved).collect(),
+            closed: *closed,
+            justification: *justification,
+            scale: *scale,
+            style: style.clone(),
+        },
         Shape::Hatch { loops, solid, pattern, name, scale, angle, gradient, .. } => Shape::Hatch {
             loops: loops.iter().map(|l| l.iter().map(moved).collect()).collect(),
             solid: *solid,
@@ -344,7 +367,8 @@ pub fn grip_points(shape: &Shape) -> Vec<Point> {
             points.push(*center);
             points
         }
-        Shape::Solid { corners } => corners.clone(),
+        Shape::Solid { corners } | Shape::Wipeout { corners } => corners.clone(),
+        Shape::Mline { vertices, .. } => vertices.clone(),
         Shape::Hatch { .. } => vec![],
     }
 }
@@ -433,6 +457,16 @@ pub fn apply_grip(shape: &Shape, index: usize, to: Point) -> Option<Shape> {
             let mut corners = corners.clone();
             corners[index] = to;
             Shape::Solid { corners }
+        }
+        Shape::Wipeout { corners } => {
+            let mut corners = corners.clone();
+            corners[index] = to;
+            Shape::Wipeout { corners }
+        }
+        Shape::Mline { vertices, closed, justification, scale, style } => {
+            let mut vertices = vertices.clone();
+            vertices[index] = to;
+            Shape::Mline { vertices, closed: *closed, justification: *justification, scale: *scale, style: style.clone() }
         }
         _ => moved(),
     })
@@ -530,7 +564,7 @@ pub fn closed_loop(entity: &Entity) -> Option<Vec<Point>> {
             closed_path((0..=96).map(|i| ellipse_point(*center, *major, *ratio, TAU * i as f64 / 96.0)).collect())
         }
         Shape::Spline { closed: true, .. } => closed_path(entity_parts(entity, tolerance).paths.into_iter().next()?),
-        Shape::Solid { corners } => Some(corners.clone()),
+        Shape::Solid { corners } | Shape::Wipeout { corners } => Some(corners.clone()),
         _ => None,
     }
 }

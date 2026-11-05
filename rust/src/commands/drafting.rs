@@ -482,6 +482,168 @@ pub async fn place_image(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super:
     io.step(Step::Drawn(vec![shape(corner, width)]));
 }
 
+const POLYLINE: &str = "P";
+const CLOSE: &str = "C";
+const UNDO: &str = "U";
+
+/// WIPEOUT: an area that hides what is drawn under it, from corners clicked in turn or from a closed polyline.
+pub async fn wipeout_command(io: Io) {
+    let prompt = Prompt::point("Specify first point or [Polyline] <Polyline>:").options(&[POLYLINE]).default(Answer::keyword(POLYLINE));
+    let corners = match io.ask(prompt).await {
+        Some(Answer::Point(first)) => wipeout_corners(&io, first).await,
+        Some(answer) if answer.is(POLYLINE) => {
+            let Some(Answer::Picked(picked)) = io.ask(Prompt::new(PromptKind::Pick, "Select a closed polyline:")).await else { return };
+            let corners = match &picked.entity.shape {
+                Shape::Polyline { vertices, .. } if vertices.iter().any(|v| v.bulge != 0.0) => {
+                    io.step(Step::Report("The polyline must have straight segments only.".into()));
+                    return;
+                }
+                Shape::Polyline { .. } => crate::model::editing::closed_loop(&picked.entity),
+                _ => None,
+            };
+            let Some(corners) = corners else {
+                io.step(Step::Report("The object must be a closed polyline.".into()));
+                return;
+            };
+            let prompt = Prompt::point("Erase polyline? [Yes/No] <No>:").options(&["Y", "N"]).default(Answer::keyword("N"));
+            if io.ask(prompt).await.is_some_and(|answer| answer.is("Y")) {
+                io.step(Step::Remove(vec![picked.entity.clone()]));
+            }
+            Some(corners)
+        }
+        _ => None,
+    };
+    if let Some(corners) = corners {
+        io.step(Step::Drawn(vec![Entity::new(Shape::Wipeout { corners })]));
+    }
+}
+
+/// The corners after the first, until Enter or Close; None when cancelled or with fewer than three.
+async fn wipeout_corners(io: &Io, first: Point) -> Option<Vec<Point>> {
+    let mut corners = vec![first];
+    loop {
+        let shown = corners.clone();
+        let preview = move |cursor: Point| {
+            let mut points = shown.clone();
+            points.push(cursor);
+            vec![polyline_from(&points, points.len() > 2)]
+        };
+        let last = *corners.last()?;
+        let prompt = match corners.len() {
+            1 => Prompt::point("Specify next point:"),
+            2 => Prompt::point("Specify next point or [Undo]:").options(&[UNDO]),
+            _ => Prompt::point("Specify next point or [Close/Undo]:").options(&[CLOSE, UNDO]),
+        };
+        match io.ask(prompt.base(last).preview(preview)).await {
+            Some(Answer::Point(point)) => corners.push(point),
+            Some(answer) if answer.is(UNDO) => {
+                corners.pop();
+                if corners.is_empty() {
+                    return None;
+                }
+            }
+            Some(answer) if answer.is(CLOSE) => break,
+            None if corners.len() >= 3 => break,
+            _ => return None,
+        }
+    }
+    Some(corners)
+}
+
+const JUSTIFICATION: &str = "J";
+const SCALE: &str = "S";
+const STYLE: &str = "ST";
+
+/// MLINE: parallel lines along a path, in a multiline style, with the justification and scale it remembers.
+pub async fn mline_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super::defaults::Defaults>>) {
+    use crate::model::mline::Justification;
+    let first = loop {
+        let (justification, scale, style) = {
+            let d = defaults.borrow();
+            (d.mline_justification, d.mline_scale, d.mline_style.clone())
+        };
+        io.step(Step::Report(format!(
+            "Current settings: Justification = {}, Scale = {:.2}, Style = {}",
+            justification.name(),
+            scale,
+            style.name.to_uppercase()
+        )));
+        let prompt = Prompt::point("Specify start point or [Justification/Scale/STyle]:").options(&[JUSTIFICATION, SCALE, STYLE]);
+        match io.ask(prompt).await {
+            Some(Answer::Point(first)) => break first,
+            Some(answer) if answer.is(JUSTIFICATION) => {
+                let prompt =
+                    Prompt::point(format!("Enter justification type [Top/Zero/Bottom] <{}>:", justification.name().to_lowercase()))
+                        .options(&["T", "Z", "B"])
+                        .default(Answer::keyword(&justification.name()[..1].to_uppercase()));
+                if let Some(Answer::Keyword(choice)) = io.ask(prompt).await {
+                    defaults.borrow_mut().mline_justification = match choice.as_str() {
+                        "Z" => Justification::Zero,
+                        "B" => Justification::Bottom,
+                        _ => Justification::Top,
+                    };
+                }
+            }
+            Some(answer) if answer.is(SCALE) => {
+                let prompt = Prompt::new(PromptKind::Length, format!("Enter mline scale <{scale:.2}>:")).default(Answer::Number(scale));
+                if let Some(Answer::Number(scale)) = io.ask(prompt).await {
+                    defaults.borrow_mut().mline_scale = scale;
+                }
+            }
+            Some(answer) if answer.is(STYLE) => {
+                let styles = defaults.borrow().mline_styles.clone();
+                let names = styles.iter().map(|s| s.name.clone()).collect::<Vec<_>>().join(", ");
+                let Some(Answer::Text(name)) = io.ask(Prompt::new(PromptKind::Text, "Enter mline style name or [?]:")).await else {
+                    continue;
+                };
+                let name = name.trim();
+                if name == "?" {
+                    io.step(Step::Report(format!("Loaded mline styles: {names}")));
+                } else if let Some(found) = styles.iter().find(|s| s.name.eq_ignore_ascii_case(name)) {
+                    defaults.borrow_mut().mline_style = found.clone();
+                } else {
+                    io.step(Step::Report(format!("Cannot find mline style \"{name}\". Loaded styles: {names}")));
+                }
+            }
+            _ => return,
+        }
+    };
+    let (justification, scale, style) = {
+        let d = defaults.borrow();
+        (d.mline_justification, d.mline_scale, d.mline_style.clone())
+    };
+    let make = move |vertices: Vec<Point>, closed: bool| {
+        Entity::new(Shape::Mline { vertices, closed, justification, scale, style: style.clone() })
+    };
+    let mut points = vec![first];
+    let closed = loop {
+        let (shown, make_shown) = (points.clone(), make.clone());
+        let preview = move |cursor: Point| {
+            let mut through = shown.clone();
+            through.push(cursor);
+            vec![make_shown(through, false)]
+        };
+        let prompt = match points.len() {
+            1 => Prompt::point("Specify next point:"),
+            2 => Prompt::point("Specify next point or [Undo]:").options(&[UNDO]),
+            _ => Prompt::point("Specify next point or [Close/Undo]:").options(&[CLOSE, UNDO]),
+        };
+        match io.ask(prompt.base(*points.last().unwrap_or(&first)).preview(preview)).await {
+            Some(Answer::Point(point)) => points.push(point),
+            Some(answer) if answer.is(UNDO) => {
+                if points.len() > 1 {
+                    points.pop();
+                }
+            }
+            Some(answer) if answer.is(CLOSE) => break true,
+            _ => break false,
+        }
+    };
+    if points.len() >= 2 {
+        io.step(Step::Drawn(vec![make(points, closed)]));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -163,7 +163,14 @@ pub fn properties(entity: &Entity) -> Vec<Property> {
             rows.push(fixed("Control points", control.len().to_string()));
         }
         Shape::Point { position } => rows.extend(point_fields("Position", *position)),
-        Shape::Solid { corners } => rows.push(fixed("Corners", corners.len().to_string())),
+        Shape::Solid { corners } | Shape::Wipeout { corners } => rows.push(fixed("Corners", corners.len().to_string())),
+        Shape::Mline { vertices, closed, justification, scale, style } => {
+            rows.push(fixed("Style", style.name.clone()));
+            rows.push(fixed("Justification", justification.name().to_string()));
+            rows.push(editable("Scale", *scale));
+            rows.push(text_field("Closed", if *closed { "Yes" } else { "No" }));
+            rows.push(fixed("Vertices", vertices.len().to_string()));
+        }
         Shape::Hatch { loops, solid, name, scale, angle, gradient, association, .. } => {
             match gradient {
                 Some(gradient) => {
@@ -410,6 +417,11 @@ pub fn set_property(entity: &Entity, name: &str, typed: &str) -> Result<Entity, 
         },
         Shape::Point { position } => match name {
             "Position X" | "Position Y" => axis(position, value()?),
+            _ => return unknown(),
+        },
+        Shape::Mline { scale, closed, .. } => match name {
+            "Scale" => *scale = value()?,
+            "Closed" => *closed = matches!(typed.to_lowercase().as_str(), "yes" | "y" | "true" | "1"),
             _ => return unknown(),
         },
         Shape::Insert { position, scale_x, scale_y, rotation, attributes, .. } => {
