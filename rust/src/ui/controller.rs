@@ -7,7 +7,7 @@ use std::rc::Rc;
 use super::undo::{Change, LayerState, UndoStack};
 use crate::canvas::view::grid_spacing;
 use crate::commands::defaults::Defaults;
-use crate::commands::prompts::{Host, LayoutRequest, Prompt, PromptKind, SELECT_HINT, Session, ViewRequest};
+use crate::commands::prompts::{Host, LayoutRequest, Prompt, PromptKind, SELECT_HINT, ScaleSetting, Session, ViewRequest};
 use crate::commands::registry::{create, grip, resolve};
 use crate::model::annotation::AnnotationKind;
 use crate::model::dimension::DimensionStyle;
@@ -128,6 +128,15 @@ impl Host for Drawing {
         self.note_change();
     }
 
+    fn linetype_scale(&mut self, setting: ScaleSetting) {
+        match setting {
+            ScaleSetting::Global(scale) => self.document.ltscale = scale,
+            ScaleSetting::Paper(on) => self.document.psltscale = on,
+            ScaleSetting::Current(scale) => self.document.celtscale = scale,
+        }
+        self.note_change();
+    }
+
     fn draw_order(&mut self, objects: Vec<Entity>, placement: DrawOrder) {
         let ids: Vec<EntityId> = objects.iter().map(|e| e.id).collect();
         let change = Change::Reorder { before: self.document.order(), after: self.document.reordered(&ids, &placement) };
@@ -182,6 +191,7 @@ impl Host for Drawing {
             entity.color = self.document.current_color;
             entity.linetype = self.document.current_linetype.clone();
             entity.lineweight = self.document.current_lineweight;
+            entity.linetype_scale = self.document.celtscale;
         }
         self.add(entities);
     }
@@ -526,6 +536,9 @@ impl Controller {
                 defaults.mline_style = style.clone();
             }
             defaults.wipeout_frame = document.wipeout_frame;
+            defaults.ltscale = document.ltscale;
+            defaults.psltscale = document.psltscale;
+            defaults.celtscale = document.celtscale;
             if let Some(style) = document.text_styles.iter().find(|s| s.name == document.current_text_style) {
                 defaults.text_style = style.clone();
             }

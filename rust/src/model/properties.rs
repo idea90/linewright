@@ -256,6 +256,10 @@ pub fn set_property(entity: &Entity, name: &str, typed: &str) -> Result<Entity, 
         }
         return Ok(Entity { attribute: Some(info), ..entity.clone() });
     }
+    // The General section's linetype scale applies to any kind of object.
+    if name == "Linetype scale" {
+        return Ok(Entity { linetype_scale: positive()?, ..entity.clone() });
+    }
     let mut shape = entity.shape.clone();
     let mut resize: Option<(usize, usize)> = None;
     let unknown = || Err(format!("{name} cannot be changed here."));
@@ -492,6 +496,14 @@ mod tests {
         assert_eq!(set_property(&circle(pt(0.0, 0.0), 1.0), "Diameter", "x").unwrap_err(), "Diameter needs a number.");
         let bigger = set_property(&circle(pt(0.0, 0.0), 1.0), "Diameter", "10").unwrap();
         assert_eq!(bigger.shape, Shape::Circle { center: pt(0.0, 0.0), radius: 5.0 });
+    }
+
+    #[test]
+    fn the_linetype_scale_is_any_objects_and_must_be_more_than_zero() {
+        let scaled = set_property(&line(pt(0.0, 0.0), pt(3.0, 4.0)), "Linetype scale", "0.5").unwrap();
+        assert_eq!(scaled.linetype_scale, 0.5);
+        assert_eq!(scaled.shape, Shape::Line { start: pt(0.0, 0.0), end: pt(3.0, 4.0) });
+        assert_eq!(set_property(&circle(pt(0.0, 0.0), 1.0), "Linetype scale", "0").unwrap_err(), "Linetype scale must be more than zero.");
     }
 
     #[test]

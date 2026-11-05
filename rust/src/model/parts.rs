@@ -586,12 +586,19 @@ pub struct Styled {
     pub layer: String,
     pub color: i32,
     pub linetype: String,
+    pub linetype_scale: f64,
     pub lineweight: i16,
 }
 
 impl Styled {
     pub fn of(entity: &Entity) -> Styled {
-        Styled { layer: entity.layer.clone(), color: entity.color, linetype: entity.linetype.clone(), lineweight: entity.lineweight }
+        Styled {
+            layer: entity.layer.clone(),
+            color: entity.color,
+            linetype: entity.linetype.clone(),
+            linetype_scale: entity.linetype_scale,
+            lineweight: entity.lineweight,
+        }
     }
 
     /// An entity inside a block: ByBlock color, linetype and lineweight come from the insert, and layer 0 takes the
@@ -605,6 +612,7 @@ impl Styled {
             } else {
                 entity.linetype.clone()
             },
+            linetype_scale: entity.linetype_scale,
             lineweight: if entity.lineweight == super::lineweight::BYBLOCK { insert.lineweight } else { entity.lineweight },
         }
     }

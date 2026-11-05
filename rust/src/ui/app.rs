@@ -62,6 +62,8 @@ pub enum Action {
     UseColor(i32),
     UseLinetype(String),
     UseLineweight(i16),
+    /// The linetype scale typed in the Properties palette with nothing selected: what new objects get (CELTSCALE).
+    UseLinetypeScale(String),
     /// Show lineweights on screen or not (LWDISPLAY).
     ToggleLineweights,
     NewLayer,
@@ -1124,6 +1126,7 @@ impl LinewrightApp {
                 entity.color = document.current_color;
                 entity.linetype = document.current_linetype.clone();
                 entity.lineweight = document.current_lineweight;
+                entity.linetype_scale = document.celtscale;
                 self.controller.push(Change::Add(vec![entity]));
             }
             None => {}
@@ -1541,6 +1544,10 @@ impl LinewrightApp {
                     self.controller.change_selected(|e: &mut Entity| e.lineweight = lineweight);
                 }
             }
+            Action::UseLinetypeScale(text) => match text.trim().parse::<f64>() {
+                Ok(scale) if scale.is_finite() && scale > 0.0 => self.controller.drawing.document.celtscale = scale,
+                _ => self.print("Linetype scale must be more than zero."),
+            },
             Action::ToggleLineweights => {
                 let document = &mut self.controller.drawing.document;
                 document.show_lineweights = !document.show_lineweights;

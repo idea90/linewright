@@ -365,6 +365,7 @@ pub async fn matchprop_command(io: Io) {
             layer: source.layer.clone(),
             color: source.color,
             linetype: source.linetype.clone(),
+            linetype_scale: source.linetype_scale,
             lineweight: source.lineweight,
             ..t
         })

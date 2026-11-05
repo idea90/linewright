@@ -1,12 +1,12 @@
 //! AutoCAD's layer tools on the command line: LAYISO, LAYUNISO, LAYOFF, LAYON, LAYFRZ, LAYTHW, LAYMCUR, LAYLCK
-//! and LAYULK.
+//! and LAYULK. Also the linetype scale commands LTSCALE, PSLTSCALE and CELTSCALE.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::defaults::Defaults;
 use super::edit::objects_to_edit;
-use super::prompts::{Answer, Io, Prompt, PromptKind, Step};
+use super::prompts::{Answer, Io, Prompt, PromptKind, ScaleSetting, Step};
 use crate::model::document::Layer;
 use crate::model::entities::Entity;
 
@@ -151,4 +151,37 @@ pub async fn thaw(io: Io, defaults: Rc<RefCell<Defaults>>) {
     let (layers, _) = layers_of(&defaults);
     io.step(Step::Layers { layers: layers.into_iter().map(|l| Layer { frozen: false, ..l }).collect(), current: None });
     io.step(Step::Report("All layers have been thawed.".into()));
+}
+
+/// LTSCALE: the drawing's linetype scale, which multiplies every linetype's dashes.
+pub async fn ltscale_command(io: Io, defaults: Rc<RefCell<Defaults>>) {
+    let current = defaults.borrow().ltscale;
+    let prompt =
+        Prompt::new(PromptKind::Number, format!("Enter new linetype scale factor <{current:.4}>:")).default(Answer::Number(current));
+    if let Some(Answer::Number(scale)) = io.ask(prompt).await {
+        io.step(Step::LinetypeScale(ScaleSetting::Global(scale)));
+    }
+}
+
+/// PSLTSCALE: whether model space objects in viewports keep their dashes as long on the sheet as paper space ones.
+pub async fn psltscale_command(io: Io, defaults: Rc<RefCell<Defaults>>) {
+    let current = defaults.borrow().psltscale;
+    let prompt = Prompt::new(PromptKind::Number, format!("Enter new value for PSLTSCALE <{}>:", u8::from(current)))
+        .options(&["0", "1"])
+        .default(Answer::keyword(if current { "1" } else { "0" }));
+    let on = match io.ask(prompt).await {
+        Some(answer) if answer.is("0") => false,
+        Some(answer) if answer.is("1") => true,
+        _ => return,
+    };
+    io.step(Step::LinetypeScale(ScaleSetting::Paper(on)));
+}
+
+/// CELTSCALE: the linetype scale new objects get.
+pub async fn celtscale_command(io: Io, defaults: Rc<RefCell<Defaults>>) {
+    let current = defaults.borrow().celtscale;
+    let prompt = Prompt::new(PromptKind::Number, format!("Enter new value for CELTSCALE <{current:.4}>:")).default(Answer::Number(current));
+    if let Some(Answer::Number(scale)) = io.ask(prompt).await {
+        io.step(Step::LinetypeScale(ScaleSetting::Current(scale)));
+    }
 }

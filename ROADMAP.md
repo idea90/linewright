@@ -24,7 +24,7 @@ Things an early user is most likely to miss or be hurt by.
 - [ ] **Autosave and recovery.** Save a copy every few minutes (`SAVETIME`), and offer to restore it after a crash.
       There is no autosave today, so a crash loses everything since the last save.
 - [ ] **`AUDIT` and `RECOVER`** for damaged DXF files: fix what can be fixed and report the rest.
-- [ ] **Linetype scale:** `LTSCALE`, `PSLTSCALE` and per-object linetype scale, which drawings from AutoCAD rely on.
+- [x] **Linetype scale:** `LTSCALE`, `PSLTSCALE` and per-object linetype scale, which drawings from AutoCAD rely on.
 - [ ] **`OOPS`** to bring back the last erased objects.
 - [ ] **MLEDIT's other tools:** cross and tee joints, Cut Single, Cut All and Weld All. Needs gaps inside a
       multiline's lines, saved in its DXF element data.

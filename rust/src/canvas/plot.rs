@@ -17,14 +17,14 @@ use crate::model::index::Bounds;
 use crate::model::lineweight;
 use crate::model::mtext::{self, RunStyle};
 use crate::model::parts::{BOLD_OFFSET, TextLook};
-use crate::model::styles::{BYLAYER_LINETYPE, dash_pattern};
+use crate::model::styles::{BYLAYER_LINETYPE, scaled_pattern};
 use crate::model::viewport::{frame_corners, viewport_scale};
 
 pub const MM_PER_INCH: f64 = 25.4;
 pub const POINTS_PER_INCH: f64 = 72.0;
 pub const MARGIN_MM: f64 = 10.0;
-/// The length on paper of one unit of a linetype's dash pattern.
-const DASH_UNIT_MM: f64 = 0.25;
+/// A dash or gap shorter than this on paper prints solid, as one too fine to see.
+const MIN_DASH_MM: f64 = 0.25;
 /// Points (the objects) print as a dot at least this wide, in PDF points, even with no lineweight.
 const MIN_POINT_DOT: f64 = 0.7;
 pub const FIT: &str = "Fit";
@@ -117,7 +117,7 @@ pub fn plot_page(
         if !document.is_visible(entity) || !document.bounds_of(entity.id).is_some_and(|b| b.touches(&layout.source)) {
             continue;
         }
-        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens);
+        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens, per_unit * document.ltscale);
     }
     Ok((page, layout))
 }
@@ -157,7 +157,9 @@ impl Pens {
     }
 }
 
-/// One entity on the page, each point placed by `place`, which makes `per_unit` points of a drawing unit.
+/// One entity on the page, each point placed by `place`, which makes `per_unit` points of a drawing unit. `dash_points`
+/// is how long a unit of a linetype's pattern is on the page, in points, before the entity's own linetype scale.
+#[allow(clippy::too_many_arguments)]
 fn plot_entity(
     page: &mut PdfPage,
     document: &Document,
@@ -166,6 +168,7 @@ fn plot_entity(
     per_unit: f64,
     tolerance: f64,
     pens: &Pens,
+    dash_points: f64,
 ) {
     if let Shape::Image { path, position, u, v, .. } = &entity.shape
         && document.layer(&entity.layer).is_none_or(|layer| layer.shown() && layer.plot)
@@ -184,8 +187,8 @@ fn plot_entity(
         } else {
             style.linetype.clone()
         };
-        // Dashes are as long on paper whatever the scale, as AutoCAD's are at a linetype scale of 1 on a sheet.
-        let dashes: Vec<f64> = dash_pattern(&linetype).iter().map(|d| *d as f64 * DASH_UNIT_MM * pens.points_per_mm).collect();
+        // Dashes are drawn at LTSCALE and the entity's own linetype scale, in the length they have on the page.
+        let dashes = scaled_pattern(&linetype, dash_points * style.linetype_scale, MIN_DASH_MM * pens.points_per_mm);
         // Wipeouts print as the paper. Their frames print only when WIPEOUTFRAME is 1, in the entity's pen.
         for mask in &parts.masks {
             page.fill_area(&[mask.iter().map(|p| place(*p)).collect()], (255, 255, 255));
@@ -267,12 +270,15 @@ pub fn plot_layout_page(document: &Document) -> Result<PdfPage, &'static str> {
             for id in model.ids_in(&seen) {
                 let Some(shown) = model.get(id) else { continue };
                 if document.is_visible(shown) && !frozen.iter().any(|l| l.eq_ignore_ascii_case(&shown.layer)) {
-                    plot_entity(&mut page, document, shown, &into_sheet, per_unit * scale, tolerance / scale, &pens);
+                    // PSLTSCALE keeps model space dashes as long on the sheet as paper space ones; otherwise they grow with the view.
+                    let divisor = if document.psltscale { scale } else { 1.0 };
+                    let dash_points = per_unit * scale * document.ltscale / divisor;
+                    plot_entity(&mut page, document, shown, &into_sheet, per_unit * scale, tolerance / scale, &pens, dash_points);
                 }
             }
             page.restore();
         }
-        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens);
+        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens, per_unit * document.ltscale);
     }
     Ok(page)
 }
@@ -424,6 +430,23 @@ mod tests {
         let document = Document::with_entities(vec![line(pt(0.0, 0.0), pt(100.0, 0.0))]);
         let (_, layout) = plot_page(&document, (210.0, 297.0), false, Some(1.0)).unwrap();
         assert!((layout.source.width() - 190.0).abs() < 1e-9, "the printable width of A4 in millimeters");
+    }
+
+    #[test]
+    fn dashes_print_at_ltscale_and_the_plot_scale_and_go_solid_when_too_fine() {
+        let mut dashed = line(pt(0.0, 0.0), pt(100.0, 0.0));
+        dashed.linetype = "Dashed".into();
+        let mut document = Document::with_entities(vec![dashed]);
+        let pdf = |document: &Document, scale: f64| {
+            let (page, _) = plot_page(document, (210.0, 297.0), false, Some(scale)).unwrap();
+            String::from_utf8_lossy(&page.to_bytes()).into_owned()
+        };
+        // 12.7 and 6.35 millimeters on paper at 1:1, which are 36 and 18 points.
+        assert!(pdf(&document, 1.0).contains("[36 18] 0 d"));
+        document.ltscale = 2.0;
+        assert!(pdf(&document, 1.0).contains("[72 36] 0 d"), "LTSCALE 2 doubles the dashes");
+        // At 1:200 the 6.35 gap is a tenth of a millimeter on paper, too fine to see: the line prints solid.
+        assert!(pdf(&document, 0.005).contains("[] 0 d"));
     }
 
     #[test]

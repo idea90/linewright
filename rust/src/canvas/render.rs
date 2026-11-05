@@ -16,8 +16,8 @@ use crate::model::geometry::{Point, direction};
 use crate::model::lineweight;
 use crate::model::mtext::{RichText, RunStyle, layout};
 use crate::model::parts::{BOLD_OFFSET, TextLook};
-use crate::model::styles::{BYLAYER_LINETYPE, dash_pattern};
-use crate::model::viewport::frame_corners;
+use crate::model::styles::{BYLAYER_LINETYPE, scaled_pattern};
+use crate::model::viewport::{frame_corners, viewport_scale};
 use crate::snap::osnap::SnapKind;
 use crate::ui::controller::Controller;
 use crate::ui::theme;
@@ -25,6 +25,7 @@ use crate::ui::theme::drawing_family;
 
 const MAJOR_GRID_EVERY: f64 = 10.0;
 const MIN_ENTITY_PIXELS: f64 = 1.0; // smaller than this is not drawn at all
+const MIN_DASH_PIXELS: f64 = 1.0; // a dash or gap shorter than this makes the line solid
 const MIN_TEXT_PIXELS: f64 = 3.0;
 const MAX_TEXT_PIXELS: f64 = 2000.0;
 const CHORD_PIXELS: f64 = 0.25; // how far a curve's chords may stray from it on screen
@@ -52,6 +53,11 @@ pub struct Screen<'a> {
     pub paper: bool,
     /// Pixels a millimeter of lineweight shows as, when lineweights show (LWDISPLAY).
     pub lineweight_pixels: Option<f64>,
+    /// PSLTSCALE: model space seen through a viewport keeps its dashes as long on the sheet as paper space ones.
+    pub psltscale: bool,
+    /// What linetype lengths are divided by before they are drawn: the viewport's scale when PSLTSCALE divides them
+    /// through a viewport, else 1.
+    pub linetype_divisor: f64,
 }
 
 impl<'a> Screen<'a> {
@@ -62,7 +68,7 @@ impl<'a> Screen<'a> {
         let lineweight_pixels = document
             .show_lineweights
             .then(|| if paper { camera.scale / crate::io::dxf::mm_per_unit(document) } else { lineweight::model_pixels(1.0) as f64 });
-        Screen { rect, camera, fonts, paper, lineweight_pixels }
+        Screen { rect, camera, fonts, paper, lineweight_pixels, psltscale: document.psltscale, linetype_divisor: 1.0 }
     }
 
     /// How wide a part's lines show: one pixel, or its lineweight when lineweights show.
@@ -314,6 +320,14 @@ enum Look<'a> {
     Preview,
 }
 
+/// The dashes a part is drawn with on screen, in pixels: its linetype's pattern at the drawing's LTSCALE and the
+/// part's own linetype scale, divided as PSLTSCALE says through a viewport. Empty draws the part solid, as when
+/// its dashes would be shorter than a pixel.
+fn screen_dashes(screen: &Screen, document: &Document, style: &Styled) -> Vec<f32> {
+    let per_unit = document.ltscale * style.linetype_scale * screen.camera.scale / screen.linetype_divisor;
+    scaled_pattern(&effective_linetype(style, document), per_unit, MIN_DASH_PIXELS).into_iter().map(|d| d as f32).collect()
+}
+
 fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, document: &Document, entity: &Entity, look: &Look) {
     // A construction line has no ends: only the part on screen is drawn, cut in drawing units where it is precise.
     let clipped_xline = match entity.shape {
@@ -339,14 +353,16 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
         if document.layer(&style.layer).is_some_and(|layer| !layer.shown()) {
             continue;
         }
+        let own_dashes: Vec<f32>;
         let own;
         let pen = match look {
             Look::Pen(pen) => *pen,
             Look::Own => {
+                own_dashes = screen_dashes(screen, document, &style);
                 own = Pen {
                     color: on_paper(color32(resolve_color(&style, document)), screen.paper),
                     width: screen.line_width(&style, document),
-                    dashes: dash_pattern(&effective_linetype(&style, document)),
+                    dashes: &own_dashes,
                 };
                 &own
             }
@@ -469,7 +485,15 @@ fn draw_viewport(ui: &egui::Ui, screen: &Screen, document: &Document, viewport: 
     }
     let camera = viewport_camera(&screen.camera, *center, *height, *view_center, *view_height);
     let scale = camera.scale;
-    let inside = Screen { rect: screen.rect, camera, fonts: screen.fonts, paper: true, lineweight_pixels: screen.lineweight_pixels };
+    let inside = Screen {
+        rect: screen.rect,
+        camera,
+        fonts: screen.fonts,
+        paper: true,
+        lineweight_pixels: screen.lineweight_pixels,
+        psltscale: screen.psltscale,
+        linetype_divisor: if screen.psltscale { viewport_scale(*height, *view_height) } else { 1.0 },
+    };
     let area = crate::model::index::Bounds::from_corners(inside.world(clip.min), inside.world(clip.max));
     let model = document.model();
     let mut shapes = vec![];
@@ -687,7 +711,8 @@ pub fn viewport_screen<'a>(screen: &Screen<'a>, viewport: &Entity) -> Option<(Sc
     let corners = frame_corners(*center, *width, *height);
     let frame = Rect::from_two_pos(screen.pos(corners[0]), screen.pos(corners[2]));
     let camera = viewport_camera(&screen.camera, *center, *height, *view_center, *view_height);
-    Some((Screen { camera, ..*screen }, frame))
+    let linetype_divisor = if screen.psltscale { viewport_scale(*height, *view_height) } else { 1.0 };
+    Some((Screen { camera, linetype_divisor, ..*screen }, frame))
 }
 
 pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &Overlay) {
@@ -803,6 +828,54 @@ fn draw_work(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::geometry::pt;
+
+    /// A screen of one pixel per drawing unit, with the drawing's own settings.
+    fn screen_with<'a>(fonts: &'a HashSet<String>, scale: f64, divisor: f64) -> Screen<'a> {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0));
+        Screen {
+            rect,
+            camera: Camera { center: pt(0.0, 0.0), scale },
+            fonts,
+            paper: false,
+            lineweight_pixels: None,
+            psltscale: true,
+            linetype_divisor: divisor,
+        }
+    }
+
+    fn dashed_part(linetype_scale: f64) -> Styled {
+        Styled { layer: "0".into(), color: 256, linetype: "Dashed".into(), linetype_scale, lineweight: 0 }
+    }
+
+    #[test]
+    fn dashes_follow_ltscale_and_the_objects_own_linetype_scale() {
+        let fonts = HashSet::new();
+        let mut document = Document::new();
+        document.ltscale = 2.0;
+        let dashes = screen_dashes(&screen_with(&fonts, 1.0, 1.0), &document, &dashed_part(0.5));
+        assert_eq!(dashes.len(), 2);
+        assert!((dashes[0] - 12.7).abs() < 1e-4 && (dashes[1] - 6.35).abs() < 1e-4, "{dashes:?}: 12.7 and 6.35 at 2 x 0.5");
+    }
+
+    #[test]
+    fn through_a_viewport_psltscale_makes_dashes_as_long_on_the_sheet_as_paper_space_ones() {
+        let fonts = HashSet::new();
+        let document = Document::new();
+        // A viewport at 4 pixels per unit, which is 4 times the sheet's scale: the dash divided by 4 is still 12.7 px.
+        let dashes = screen_dashes(&screen_with(&fonts, 4.0, 4.0), &document, &dashed_part(1.0));
+        assert!((dashes[0] - 12.7).abs() < 1e-4, "{dashes:?}");
+        let undivided = screen_dashes(&screen_with(&fonts, 4.0, 1.0), &document, &dashed_part(1.0));
+        assert!((undivided[0] - 50.8).abs() < 1e-3, "without PSLTSCALE the dash grows with the viewport");
+    }
+
+    #[test]
+    fn a_linetype_too_fine_to_see_is_drawn_solid() {
+        let fonts = HashSet::new();
+        let document = Document::new();
+        assert!(screen_dashes(&screen_with(&fonts, 0.1, 1.0), &document, &dashed_part(1.0)).is_empty(), "6.35 px at 0.1 is under a pixel");
+        assert_eq!(screen_dashes(&screen_with(&fonts, 0.2, 1.0), &document, &dashed_part(1.0)).len(), 2, "1.27 px is not");
+    }
 
     #[test]
     fn clipping_keeps_the_inside_part() {
