@@ -679,6 +679,8 @@ fn boundary_outlines_the_room_clicked_in_and_its_column() {
     assert!(xs.iter().all(|x| (10.0..=20.0).contains(x)), "the right room only: {xs:?}");
     assert_eq!(vertices.len(), 4, "a rectangle's corners");
     let Shape::Polyline { vertices: column, closed: true } = &made[1] else { panic!() };
+    assert_eq!(column.len(), 2, "the column is two half-circle arcs");
+    assert!(column.iter().all(|v| (v.bulge.abs() - 1.0).abs() < 1e-6), "{column:?}");
     assert!(column.iter().all(|v| (v.point().dist(pt(15.0, 5.0)) - 1.0).abs() < 1e-2), "the column");
 }
 

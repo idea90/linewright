@@ -9,6 +9,7 @@ use super::edit::objects_to_edit;
 use super::format_general;
 use super::prompts::{Answer, Io, Prompt, PromptKind, Step};
 use crate::canvas::aci::{color_rgb, parse_color};
+use crate::model::boundary::fit_arcs;
 use crate::model::editing::{closed_loop, hatch_pattern, hatch_pattern_names, rehatched};
 use crate::model::entities::{Association, Entity, EntityId, Gradient, Shape, Vertex, ellipse, point};
 use crate::model::geometry::{Point, pt};
@@ -320,7 +321,7 @@ async fn selected_boundaries(io: &Io, selected: Vec<Entity>) -> Option<(Vec<Vec<
 pub async fn boundary_command(io: Io) {
     let mut picked: Vec<Vec<Vec<Point>>> = vec![];
     loop {
-        let shown: Vec<Entity> = picked.iter().flatten().map(|l| outline(l)).collect();
+        let shown: Vec<Entity> = picked.iter().flatten().map(|l| fitted_outline(l)).collect();
         let prompt = Prompt::point("Pick internal point or [Undo]:").options(&[UNDO]).region().preview(move |_| shown.clone());
         match io.ask(prompt).await {
             Some(Answer::Region { loops, .. }) if loops.is_empty() => {
@@ -333,7 +334,7 @@ pub async fn boundary_command(io: Io) {
             _ => break,
         }
     }
-    let polylines: Vec<Entity> = picked.iter().flatten().map(|l| outline(l)).collect();
+    let polylines: Vec<Entity> = picked.iter().flatten().map(|l| fitted_outline(l)).collect();
     let count = polylines.len();
     if count > 0 {
         io.step(Step::Drawn(polylines));
@@ -345,4 +346,9 @@ pub async fn boundary_command(io: Io) {
 fn outline(corners: &[Point]) -> Entity {
     let vertices = corners.iter().map(|p| Vertex { x: p.x, y: p.y, bulge: 0.0, start_width: 0.0, end_width: 0.0 }).collect();
     Entity::new(Shape::Polyline { vertices, closed: true })
+}
+
+/// A boundary as BOUNDARY makes it, where its edge follows a circle or arc as one arc segment.
+fn fitted_outline(corners: &[Point]) -> Entity {
+    Entity::new(Shape::Polyline { vertices: fit_arcs(corners, true), closed: true })
 }
