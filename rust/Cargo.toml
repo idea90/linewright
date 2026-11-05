@@ -1,6 +1,6 @@
 [package]
 name = "linewright"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 edition = "2024"
 description = "A 2D CAD program in the style of AutoCAD: draw, edit, dimension and plot DXF and DWG drawings"
 license = "MIT"
