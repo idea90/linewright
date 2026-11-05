@@ -3561,6 +3561,104 @@ fn read_mline_style(group: &Group) -> Option<MlineStyle> {
     })
 }
 
+/// The ACAD_MLINESTYLE dictionary's place among the file's groups.
+fn mline_dictionary(file: &DxfFile) -> Option<usize> {
+    let (start, end) = file.section("OBJECTS")?;
+    let pairs = &file.groups[start + 1].0;
+    let at = pairs.iter().position(|p| p.code == 3 && p.value.trim() == "ACAD_MLINESTYLE")?;
+    let handle = pairs.get(at + 1)?.value.trim().to_string();
+    (start + 1..end)
+        .find(|&i| file.groups[i].kind() == "DICTIONARY" && file.groups[i].handle().is_some_and(|h| h.trim().eq_ignore_ascii_case(&handle)))
+}
+
+/// What an MLINESTYLE object says after its subclass marker: name, flags, description, fill color, cap angles,
+/// then each element's offset, color and linetype.
+fn mline_style_pairs(style: &MlineStyle) -> Vec<Pair> {
+    let flags = [
+        (style.fill.is_some(), 1),
+        (style.joints, 2),
+        (style.start_cap, 16),
+        (style.start_inner_arcs, 32),
+        (style.start_round, 64),
+        (style.end_cap, 256),
+        (style.end_inner_arcs, 512),
+        (style.end_round, 1024),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, bit)| bit)
+    .sum::<i32>();
+    let mut pairs = vec![pair(2, &style.name), pair(70, flags), pair(3, &style.description)];
+    pairs.extend([pair(62, style.fill.unwrap_or(BYLAYER)), pair(51, "90.0"), pair(52, "90.0"), pair(71, style.elements.len())]);
+    for element in &style.elements {
+        pairs.extend([pair(49, number(element.offset)), pair(62, element.color), pair(6, &element.linetype)]);
+    }
+    pairs
+}
+
+/// Make the file's multiline styles match the document: each one written afresh, new ones added to the
+/// ACAD_MLINESTYLE dictionary, and ones the drawing no longer has taken out (Standard always stays). Notes each
+/// style's handle for the multilines that use it.
+fn write_mline_styles(file: &mut DxfFile, writer: &mut Writer, document: &Document) {
+    if !writer.modern {
+        return;
+    }
+    let Some(mut dictionary) = mline_dictionary(file) else { return };
+    let dictionary_handle = file.groups[dictionary].handle().unwrap_or("0").trim().to_string();
+    let entries = |file: &DxfFile, dictionary: usize| -> Vec<(String, String)> {
+        let pairs = &file.groups[dictionary].0;
+        pairs
+            .windows(2)
+            .filter(|w| w[0].code == 3 && matches!(w[1].code, 350 | 360))
+            .map(|w| (w[0].value.trim().to_string(), w[1].value.trim().to_string()))
+            .collect()
+    };
+    // Styles that are gone leave the dictionary and the file.
+    for (name, handle) in entries(file, dictionary) {
+        let kept = name.eq_ignore_ascii_case("Standard") || document.mline_styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name));
+        if !kept {
+            let pairs = &mut file.groups[dictionary].0;
+            if let Some(at) = pairs.iter().position(|p| p.code == 3 && p.value.trim() == name) {
+                pairs.drain(at..at + 2);
+            }
+            if let Some(at) = object_index(file, &handle) {
+                file.groups.remove(at);
+            }
+            let Some(moved) = mline_dictionary(file) else { return };
+            dictionary = moved;
+        }
+    }
+    for style in &document.mline_styles {
+        let existing = entries(file, dictionary).into_iter().find(|(name, _)| name.eq_ignore_ascii_case(&style.name)).map(|(_, h)| h);
+        let handle = match existing.as_ref().and_then(|h| object_index(file, h)) {
+            Some(at) => {
+                // Keep what comes before the style's own values (handle, reactors, owner), and write those afresh.
+                let group = &mut file.groups[at];
+                let body = group.0.iter().position(|p| p.code == 100 && p.value.trim() == "AcDbMlineStyle").map_or(group.0.len(), |i| i + 1);
+                group.0.truncate(body);
+                group.0.extend(mline_style_pairs(style));
+                existing.unwrap_or_default()
+            }
+            None => {
+                let handle = writer.handle();
+                let mut pairs = vec![pair(0, "MLINESTYLE"), pair(5, &handle), pair(102, "{ACAD_REACTORS"), pair(330, &dictionary_handle)];
+                pairs.extend([pair(102, "}"), pair(330, &dictionary_handle), pair(100, "AcDbMlineStyle")]);
+                pairs.extend(mline_style_pairs(style));
+                let Some((_, end)) = file.section("OBJECTS") else { return };
+                file.groups.insert(end, Group(pairs));
+                let entry = &mut file.groups[dictionary].0;
+                let tail = entry.iter().position(|p| p.code >= 1000).unwrap_or(entry.len());
+                entry.splice(tail..tail, [pair(3, &style.name), pair(350, &handle)]);
+                handle
+            }
+        };
+        writer.mline_styles.insert(style.name.to_lowercase(), handle);
+    }
+    for (name, handle) in entries(file, dictionary) {
+        writer.mline_styles.entry(name.to_lowercase()).or_insert(handle);
+    }
+}
+
 /// The file's multiline styles, in the order the file keeps them.
 fn read_mline_styles(file: &DxfFile) -> Vec<MlineStyle> {
     let Some((start, end)) = file.section("OBJECTS") else { return vec![] };
@@ -3879,16 +3977,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         image_defs: vec![],
         image_reactors: vec![],
         wipeouts: false,
-        mline_styles: file
-            .section("OBJECTS")
-            .map(|(start, end)| {
-                file.groups[start..end]
-                    .iter()
-                    .filter(|g| g.kind() == "MLINESTYLE")
-                    .filter_map(|g| Some((g.get(2)?.trim().to_lowercase(), g.handle()?.trim().to_string())))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        mline_styles: HashMap::new(),
         table_style: None,
         lineweight: lineweight::BYLAYER,
         text_styles: text_style_fonts(&file)
@@ -3925,6 +4014,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         .unwrap_or_else(|| DIMENSION_STYLE.into());
     let style_names = write_dimension_styles(&mut file, &mut writer, document, &dimension_style);
     write_mleader_styles(&mut file, &mut writer, document);
+    write_mline_styles(&mut file, &mut writer, document);
     write_text_styles(&mut file, &mut writer, document);
     let mut linetypes: BTreeMap<String, String> = BTreeMap::new();
     let styles = (&style_names, dimension_style.as_str());

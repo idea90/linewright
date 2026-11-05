@@ -770,3 +770,38 @@ fn a_multiline_style_reads_its_fill_and_round_ends() {
     assert!(!style.start_cap && !style.end_cap && !style.start_inner_arcs && !style.end_inner_arcs && !style.joints);
     assert_eq!(style.elements.len(), 2);
 }
+
+#[test]
+fn new_and_changed_multiline_styles_are_saved_and_removed_ones_go() {
+    use crate::model::mline::{Justification, MlineElement, MlineStyle};
+    let element = |offset: f64, color: i32| MlineElement { offset, color, linetype: "ByLayer".into() };
+    let wall = MlineStyle {
+        name: "WALL".into(),
+        description: "Cavity wall".into(),
+        elements: vec![element(1.5, 1), element(0.5, 256), element(-1.5, 5)],
+        fill: Some(8),
+        start_cap: true,
+        end_round: true,
+        ..MlineStyle::standard()
+    };
+    let mut document = Document::with_entities(vec![Entity::new(Shape::Mline {
+        vertices: vec![pt(0.0, 0.0), pt(10.0, 0.0)],
+        closed: false,
+        justification: Justification::Top,
+        scale: 1.0,
+        style: wall.clone(),
+    })]);
+    document.mline_styles = vec![MlineStyle::standard(), wall.clone()];
+    let back = round_trip(&document);
+    assert_eq!(back.mline_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["Standard", "WALL"]);
+    assert_eq!(back.mline_styles[1], wall);
+    let Shape::Mline { style, .. } = &back.entities()[0].shape else { panic!() };
+    assert_eq!(style, &wall, "the multiline points at its own style");
+
+    // Saving the reopened drawing without the style and its multiline takes the style out of the file.
+    let mut changed = back;
+    changed.mline_styles.retain(|s| s.name == "Standard");
+    changed.set_entities(vec![]);
+    let again = round_trip(&changed);
+    assert_eq!(again.mline_styles.len(), 1);
+}
