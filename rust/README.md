@@ -30,6 +30,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   the frames, OFF hides them, Display but not plot shows them on screen only); they load from and save to DXF
 - `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands; curved edges
   become arc segments
+- `OOPS`: brings back the objects the last `ERASE` or `BLOCK` took out, as one undo step, and forgets them. Delete
+  does the same erase as `ERASE`.
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize

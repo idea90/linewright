@@ -25,12 +25,12 @@ Things an early user is most likely to miss or be hurt by.
       There is no autosave today, so a crash loses everything since the last save.
 - [ ] **`AUDIT` and `RECOVER`** for damaged DXF files: fix what can be fixed and report the rest.
 - [ ] **Linetype scale:** `LTSCALE`, `PSLTSCALE` and per-object linetype scale, which drawings from AutoCAD rely on.
-- [ ] **`OOPS`** to bring back the last erased objects.
+- [x] **`OOPS`** to bring back the last erased objects.
 - [x] **MLEDIT's other tools:** cross and tee joints, Cut Single, Cut All and Weld All. Needs gaps inside a
       multiline's lines, saved in its DXF element data.
-- [ ] **Ribbon overflow:** less common buttons go into a drop-down when the window is too narrow, so nothing
+- [x] **Ribbon overflow:** less common buttons go into a drop-down when the window is too narrow, so nothing
       ends up past the edge (OVERKILL currently does at normal widths).
-- [ ] **Automatic release builds:** GitHub Actions builds both programs and attaches them to the release when a
+- [x] **Automatic release builds:** GitHub Actions builds both programs and attaches them to the release when a
       version tag is pushed, so releases no longer depend on one machine.
 - [x] **Window tests:** a way to drive dialogs in tests (the screenshot aid, `LINEWRIGHT_CAPTURE`, already types
       commands), so dialogs such as Delete Duplicate Objects and Multiline Style are covered.

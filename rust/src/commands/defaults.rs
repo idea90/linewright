@@ -62,6 +62,8 @@ pub struct Defaults {
     /// What COPYCLIP and CUTCLIP last copied, with the point it is pasted by.
     pub clipboard: Vec<Entity>,
     pub clipboard_base: crate::model::geometry::Point,
+    /// The objects the last ERASE or BLOCK took out of the drawing, which OOPS brings back.
+    pub last_erased: Vec<Entity>,
 }
 
 impl Default for Defaults {
@@ -102,6 +104,7 @@ impl Default for Defaults {
             blocks: vec![],
             clipboard: vec![],
             clipboard_base: Default::default(),
+            last_erased: vec![],
         }
     }
 }

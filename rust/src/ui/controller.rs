@@ -170,7 +170,9 @@ impl Host for Drawing {
         self.push(Change::Group(changes));
     }
 
-    fn add(&mut self, entities: Vec<Entity>) {
+    fn add(&mut self, mut entities: Vec<Entity>) {
+        // Objects already in the drawing stay as they are, such as ones OOPS brings back after their ERASE was undone.
+        entities.retain(|e| !self.document.contains(e.id));
         if !entities.is_empty() {
             self.push(Change::Add(entities));
         }
