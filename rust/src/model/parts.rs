@@ -620,6 +620,15 @@ pub fn flatten(entity: &Entity, tolerance: f64) -> Vec<(Styled, Parts)> {
 
 fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, tolerance: f64, depth: usize, out: &mut Vec<(Styled, Parts)>) {
     if let Shape::Mline { vertices, closed, justification, scale, style: mline_style } = &entity.shape {
+        // The fill goes under the lines, in the fill color; ByLayer fill follows the multiline itself.
+        let loops = super::mline::fill_loops(vertices, *closed, *justification, *scale, mline_style);
+        if !loops.is_empty() {
+            let mut piece = style.clone();
+            if let Some(color) = mline_style.fill.filter(|color| *color != super::entities::BYLAYER) {
+                piece.color = color;
+            }
+            out.push((piece, Parts { areas: vec![loops], ..Parts::default() }.map(transform)));
+        }
         // Each line in its element's color and linetype; ByLayer ones, and the caps, follow the multiline itself.
         for (element, path) in super::mline::mline_paths(vertices, *closed, *justification, *scale, mline_style) {
             let mut piece = style.clone();
