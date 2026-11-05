@@ -3,9 +3,10 @@
 //! network holding the point is traced. Whatever lies wholly inside it comes along as islands.
 
 use std::collections::{HashMap, HashSet};
+use std::f64::consts::{PI, TAU};
 
-use super::entities::{Entity, Shape};
-use super::geometry::{Point, pt};
+use super::entities::{Entity, Shape, Vertex};
+use super::geometry::{Point, arc_through_points, pt};
 use super::index::{Bounds, entity_extent};
 use super::parts::entity_parts;
 
@@ -398,6 +399,128 @@ fn contains(corners: &[Point], p: Point) -> bool {
     inside
 }
 
+/// How far a run's points may stray from its circle, per the circle's radius (plus a tiny absolute allowance).
+const ARC_TOLERANCE: f64 = 1e-3;
+const ARC_EPSILON: f64 = 1e-9;
+/// A run turns at most this far between neighbouring points. Curves sampled for boundaries turn about 9 degrees
+/// a point, while the corners of a polygon turn 45 degrees or more, so polygons are left as they are.
+const MAX_POINT_TURN: f64 = PI / 9.0;
+/// A run needs this many chords (one more point than that) before it counts as an arc.
+const MIN_RUN: usize = 3;
+
+/// A loop's points with the stretches that follow a circle turned into arc segments: each run of at least three
+/// chords on one circle, turning one way and no more than a half turn, becomes a single vertex carrying its bulge.
+/// Straight stretches and corners stay as they are. A loop that is one whole circle comes back as two vertices.
+pub fn fit_arcs(points: &[Point], closed: bool) -> Vec<Vertex> {
+    let closing_repeat = closed && points.len() > 1 && points[0].dist(points[points.len() - 1]) <= ARC_EPSILON;
+    let points = if closing_repeat { &points[..points.len() - 1] } else { points };
+    let n = points.len();
+    if n == 0 {
+        return vec![];
+    }
+    if closed && let Some(vertices) = whole_circle(points) {
+        return vertices;
+    }
+    let chords = if closed { n } else { n - 1 };
+    // The points starting at `start`, going round once for a loop, with the first one repeated at the end.
+    let ring_from = |start: usize| -> Vec<Point> { (0..=chords).map(|i| points[(start + i) % n]).collect() };
+    let mut ring = ring_from(0);
+    let mut runs = arc_runs(&ring, chords);
+    // Start where a run begins, so an arc crossing the first point is not cut in two.
+    if closed && runs.len() > 1 && runs[0].chords >= MIN_RUN && runs[runs.len() - 1].chords >= MIN_RUN {
+        ring = ring_from(runs[runs.len() - 1].start);
+        runs = arc_runs(&ring, chords);
+    }
+    let mut vertices: Vec<Vertex> = runs.iter().map(|run| vertex(ring[run.start], run.bulge)).collect();
+    if !closed {
+        vertices.push(vertex(ring[chords], 0.0));
+    }
+    vertices
+}
+
+/// One run of chords: where it starts in the ring of points, how many chords it spans, and the bulge of the arc
+/// it becomes (zero for a plain chord).
+struct ArcRun {
+    start: usize,
+    chords: usize,
+    bulge: f64,
+}
+
+/// Cut the chords of a ring of points into runs, each as long as it can be while staying on one circle.
+fn arc_runs(ring: &[Point], chords: usize) -> Vec<ArcRun> {
+    let mut runs = vec![];
+    let mut k = 0;
+    while k < chords {
+        let mut best = None;
+        let mut m = MIN_RUN;
+        while k + m <= chords {
+            match run_sweep(&ring[k..=k + m]) {
+                Some(sweep) if sweep.abs() <= PI + 1e-9 => best = Some((m, sweep)),
+                _ => break,
+            }
+            m += 1;
+        }
+        match best {
+            Some((m, sweep)) => {
+                runs.push(ArcRun { start: k, chords: m, bulge: (sweep / 4.0).tan() });
+                k += m;
+            }
+            None => {
+                runs.push(ArcRun { start: k, chords: 1, bulge: 0.0 });
+                k += 1;
+            }
+        }
+    }
+    runs
+}
+
+/// A closed loop that lies wholly on one circle, as two half-circle vertices. None for any other loop.
+fn whole_circle(points: &[Point]) -> Option<Vec<Vertex>> {
+    let n = points.len();
+    if n < 4 {
+        return None;
+    }
+    let ring: Vec<Point> = points.iter().copied().chain([points[0]]).collect();
+    let whole = run_sweep(&ring)?;
+    if (whole.abs() - TAU).abs() > 1e-6 {
+        return None;
+    }
+    let half = n / 2;
+    let first = run_sweep(&ring[..=half])?;
+    Some(vec![vertex(points[0], (first / 4.0).tan()), vertex(points[half], ((whole - first) / 4.0).tan())])
+}
+
+/// The signed angle, in radians and positive counter-clockwise, that a run of points turns through around the
+/// circle they all lie on. None when they do not lie on one circle, turn one way, and turn no more than
+/// `MAX_POINT_TURN` between neighbours.
+fn run_sweep(run: &[Point]) -> Option<f64> {
+    let len = run.len();
+    let circle = arc_through_points(run[0], run[len / 3], run[2 * len / 3])?;
+    let (center, radius) = (circle.center, circle.radius);
+    // A nearly straight run fits a huge circle, so the tolerance also scales with how far the run reaches.
+    let reach = run.iter().map(|p| p.dist(run[0])).fold(0.0, f64::max);
+    let tolerance = ARC_TOLERANCE * radius.min(reach) + ARC_EPSILON;
+    if !radius.is_finite() || run.iter().any(|p| (p.dist(center) - radius).abs() > tolerance) {
+        return None;
+    }
+    let turns: Vec<f64> = run
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (w[0] - center, w[1] - center);
+            a.cross(b).atan2(a.dot(b))
+        })
+        .collect();
+    let first = turns[0];
+    if turns.iter().any(|t| t * first <= 0.0 || t.abs() > MAX_POINT_TURN) {
+        return None;
+    }
+    Some(turns.iter().sum())
+}
+
+fn vertex(p: Point, bulge: f64) -> Vertex {
+    Vertex { x: p.x, y: p.y, bulge, start_width: 0.0, end_width: 0.0 }
+}
+
 /// The new states of associative hatches after objects changed (`ids`, at `areas`): those made from closed objects
 /// take their new outlines; those from points inside areas find their areas again. A hatch whose boundary is gone
 /// keeps its loops and stops following. A hatch that changed itself has moved along already.
@@ -529,5 +652,43 @@ mod tests {
             region_in_drawing(base + pt(3.0, 3.0), extent, |area| all.iter().filter(|e| entity_extent(e).touches(area)).cloned().collect())
                 .unwrap();
         assert!((area(&region.outer) - 900.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_circle_loop_becomes_two_half_circle_arcs() {
+        let points = super::super::parts::arc_points(pt(15.0, 5.0), 1.0, 0.0, TAU, 2.9e-3);
+        let vertices = fit_arcs(&points, true);
+        assert_eq!(vertices.len(), 2);
+        assert!(vertices.iter().all(|v| (v.bulge.abs() - 1.0).abs() < 1e-6), "{vertices:?}");
+        assert!(vertices.iter().all(|v| (v.point().dist(pt(15.0, 5.0)) - 1.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn a_rounded_corner_keeps_its_lines_and_becomes_one_arc() {
+        // A 10 by 10 rectangle whose lower right corner is rounded with radius 2, the arc sampled as parts do.
+        let mut points = vec![pt(0.0, 0.0)];
+        points.extend(super::super::parts::arc_points(pt(8.0, 2.0), 2.0, -PI / 2.0, PI / 2.0, 2.0 * 1e-3));
+        points.extend([pt(10.0, 10.0), pt(0.0, 10.0)]);
+        let vertices = fit_arcs(&points, true);
+        assert_eq!(vertices.len(), 5);
+        let arcs: Vec<&Vertex> = vertices.iter().filter(|v| v.bulge != 0.0).collect();
+        assert_eq!(arcs.len(), 1);
+        assert!((arcs[0].bulge - (PI / 8.0).tan()).abs() < 1e-9, "{}", arcs[0].bulge);
+        assert_eq!(arcs[0].point(), pt(8.0, 0.0));
+        let straight: Vec<Point> = vertices.iter().filter(|v| v.bulge == 0.0).map(|v| v.point()).collect();
+        assert_eq!(straight, vec![pt(0.0, 0.0), pt(10.0, 2.0), pt(10.0, 10.0), pt(0.0, 10.0)]);
+    }
+
+    #[test]
+    fn polygons_are_unchanged() {
+        let l_shape = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 4.0), pt(4.0, 4.0), pt(4.0, 10.0), pt(0.0, 10.0)];
+        let vertices = fit_arcs(&l_shape, true);
+        assert_eq!(vertices.iter().map(|v| v.point()).collect::<Vec<_>>(), l_shape.to_vec());
+        assert!(vertices.iter().all(|v| v.bulge == 0.0));
+        // The corners of a square lie on one circle too, but turn 90 degrees a corner, so they stay corners.
+        let square = square(0.0, 0.0, 10.0);
+        let vertices = fit_arcs(&square, true);
+        assert_eq!(vertices.len(), 4);
+        assert!(vertices.iter().all(|v| v.bulge == 0.0));
     }
 }
