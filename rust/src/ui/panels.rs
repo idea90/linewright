@@ -36,6 +36,8 @@ const LARGE_ICON: f32 = 28.0;
 const SMALL_ICON: f32 = 20.0;
 const SMALL_BUTTON_WIDTH: f32 = 32.0;
 const MORE_BUTTON_WIDTH: f32 = 20.0;
+/// How far apart the buttons of a ribbon group are.
+const GROUP_SPACING: f32 = 2.0;
 const VARIES: &str = "*VARIES*";
 const HISTORY_LINES: usize = 3;
 const COORDS_WIDTH: f32 = 170.0;
@@ -240,12 +242,13 @@ fn window_button(ui: &mut egui::Ui, icon: &str, tip: &str, close: bool) -> egui:
 
 // ------------------------------------------------------------------------------------------------ ribbon
 
-fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+/// A ribbon group: its buttons above its title. Returns the room it took.
+fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) -> Rect {
     ui.vertical(|ui| {
         ui.set_min_height(86.0);
         let width = ui
             .horizontal(|ui| {
-                ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+                ui.spacing_mut().item_spacing = vec2(GROUP_SPACING, 2.0);
                 ui.set_min_height(66.0);
                 content(ui);
             })
@@ -256,7 +259,9 @@ fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
             // The title keeps one line even when the group has room for fewer buttons than its name.
             ui.add(egui::Label::new(RichText::new(title).color(theme::TEXT_DIM).size(11.5)).wrap_mode(egui::TextWrapMode::Extend));
         });
-    });
+    })
+    .response
+    .rect
 }
 
 fn large_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static str]) {
@@ -670,9 +675,7 @@ pub fn ribbon(app: &mut LinewrightApp, ctx: &egui::Context) {
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                     .show(ui, |ui| ui.horizontal(|ui| tool_groups(app, ui, budget)));
                 divider(ui, 82.0);
-                let start = ui.cursor().left();
-                group(ui, "Properties", |ui| properties(app, ui));
-                let width = ui.min_rect().right() - start;
+                let width = group(ui, "Properties", |ui| properties(app, ui)).width();
                 ui.data_mut(|d| d.insert_temp(width_id, width));
             });
         });
@@ -728,9 +731,11 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
             rows: 2,
         },
     ];
-    let spacing = ui.spacing().item_spacing.x;
+    // Buttons inside a group sit GROUP_SPACING apart (see `group`); the groups and dividers use the ribbon's spacing.
+    let spacing = GROUP_SPACING;
+    let outer = ui.spacing().item_spacing.x;
     // Each divider is a 1 pixel line with the spacing on both sides.
-    let divider_width = 1.0 + 2.0 * spacing;
+    let divider_width = 1.0 + 2.0 * outer;
     let sizes: Vec<GroupSize> = groups.iter().map(|group| group.size(ui)).collect();
     let last = groups.len() - 1;
     let mut used = 0.0;
