@@ -3506,6 +3506,10 @@ fn write_table_style(file: &mut DxfFile, writer: &Writer) {
 const WIPEOUT_CLASS: (&str, &str, &str, i32, i32) =
     ("WIPEOUT", "AcDbWipeout", "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com", 127, 1);
 
+/// The class AutoCAD reads the wipeout frame setting with.
+const WIPEOUT_VARIABLES_CLASS: (&str, &str, &str, i32, i32) =
+    ("WIPEOUTVARIABLES", "AcDbWipeoutVariables", "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com", 0, 0);
+
 /// Declares a class in the CLASSES section, unless the file already does: name, C++ class, application, proxy
 /// flags and whether it is an entity.
 fn declare_class(file: &mut DxfFile, (name, class, application, flags, entity): (&str, &str, &str, i32, i32)) {
@@ -3635,7 +3639,8 @@ fn write_mline_styles(file: &mut DxfFile, writer: &mut Writer, document: &Docume
             Some(at) => {
                 // Keep what comes before the style's own values (handle, reactors, owner), and write those afresh.
                 let group = &mut file.groups[at];
-                let body = group.0.iter().position(|p| p.code == 100 && p.value.trim() == "AcDbMlineStyle").map_or(group.0.len(), |i| i + 1);
+                let body =
+                    group.0.iter().position(|p| p.code == 100 && p.value.trim() == "AcDbMlineStyle").map_or(group.0.len(), |i| i + 1);
                 group.0.truncate(body);
                 group.0.extend(mline_style_pairs(style));
                 existing.unwrap_or_default()
@@ -3817,6 +3822,7 @@ fn write_wipeout_variables(file: &mut DxfFile, writer: &mut Writer, document: &D
     let end = pairs.iter().position(|p| p.code >= 1000).unwrap_or(pairs.len());
     pairs.splice(end..end, [pair(3, "ACAD_WIPEOUT_VARS"), pair(350, &handle)]);
     file.groups.insert(root + 1, object);
+    declare_class(file, WIPEOUT_VARIABLES_CLASS);
 }
 
 /// The dictionary that lists the image files.
