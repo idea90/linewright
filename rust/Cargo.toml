@@ -1,0 +1,31 @@
+[package]
+name = "linewright"
+version = "1.0.0-alpha.1"
+edition = "2024"
+description = "A 2D CAD program in the style of AutoCAD: draw, edit, dimension and plot DXF and DWG drawings"
+license = "MIT"
+
+[[bin]]
+name = "linewright"
+path = "src/main.rs"
+
+[dependencies]
+ar-reshaper = "1"
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui_extras = { version = "0.31.1", features = ["svg"] }
+encoding_rs = "0.8"
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+rfd = "0.15"
+tempfile = "3"
+ttf-parser = "0.25"
+unicode-bidi = "0.3"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+# A debug build that still draws large drawings smoothly.
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

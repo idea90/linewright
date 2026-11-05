@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Build Linewright for Linux and/or Windows. The programs land in dist/.
+#
+#   ./compile            both (whatever this machine can build)
+#   ./compile linux      Linux only
+#   ./compile windows    Windows only
+#   ./compile --debug …  a debug build instead of a release build
+#
+# On Linux the Windows build needs a cross-linker. MinGW (x86_64-w64-mingw32-gcc) is used when installed;
+# otherwise Zig and cargo-zigbuild are installed into ~/.cache/linewright-build and used, which needs no sudo.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CRATE="$ROOT/rust"
+DIST="$ROOT/dist"
+TOOLS="${LINEWRIGHT_BUILD_CACHE:-$HOME/.cache/linewright-build}"
+WINDOWS_TARGET="x86_64-pc-windows-gnu"
+
+profile="release"
+targets=()
+for arg in "$@"; do
+    case "$arg" in
+        linux|windows) targets+=("$arg") ;;
+        all) targets+=(linux windows) ;;
+        --debug) profile="debug" ;;
+        -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
+    esac
+done
+
+case "$(uname -s)" in
+    Linux*) host="linux" ;;
+    MINGW*|MSYS*|CYGWIN*) host="windows" ;;
+    *) echo "Unsupported system: $(uname -s). Build on Linux or on Windows (Git Bash)." >&2; exit 1 ;;
+esac
+
+if [ ${#targets[@]} -eq 0 ]; then
+    if [ "$host" = "linux" ]; then targets=(linux windows); else targets=(windows); fi
+fi
+
+cargo_flags=()
+[ "$profile" = "release" ] && cargo_flags+=(--release)
+
+say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+
+need_cargo() {
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "Rust is not installed. Get it from https://rustup.rs and run this again." >&2
+        exit 1
+    fi
+}
+
+copy_out() { # source, name in dist/
+    mkdir -p "$DIST"
+    cp "$1" "$DIST/$2"
+    echo "Built $DIST/$2 ($(du -h "$DIST/$2" | cut -f1))"
+}
+
+build_linux() {
+    if [ "$host" != "linux" ]; then
+        echo "The Linux build has to be made on Linux (or in WSL)." >&2
+        return 1
+    fi
+    say "Building for Linux ($profile)"
+    (cd "$CRATE" && cargo build "${cargo_flags[@]}")
+    copy_out "$CRATE/target/$profile/linewright" "linewright-linux-x86_64"
+}
+
+# Zig and cargo-zigbuild, installed once into the tools folder.
+ensure_zig() {
+    export PATH="$TOOLS/bin:$TOOLS/zig-venv/bin:$PATH"
+    if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+        say "Installing cargo-zigbuild into $TOOLS"
+        cargo install --locked --root "$TOOLS" cargo-zigbuild
+    fi
+    if ! command -v zig >/dev/null 2>&1 && ! "$TOOLS/zig-venv/bin/python" -m ziglang version >/dev/null 2>&1; then
+        say "Installing Zig into $TOOLS"
+        if command -v uv >/dev/null 2>&1; then
+            uv venv -q "$TOOLS/zig-venv"
+            uv pip install -q --python "$TOOLS/zig-venv/bin/python" ziglang
+        elif python3 -m venv "$TOOLS/zig-venv" >/dev/null 2>&1; then
+            "$TOOLS/zig-venv/bin/pip" install -q ziglang
+        else
+            echo "Could not install Zig: install uv (https://docs.astral.sh/uv/), python3-venv, or MinGW" >&2
+            echo "(sudo apt install gcc-mingw-w64-x86-64) and run this again." >&2
+            exit 1
+        fi
+    fi
+}
+
+build_windows() {
+    say "Building for Windows ($profile)"
+    if [ "$host" = "windows" ]; then
+        (cd "$CRATE" && cargo build "${cargo_flags[@]}")
+        copy_out "$CRATE/target/$profile/linewright.exe" "linewright-windows-x86_64.exe"
+        return
+    fi
+    rustup target add "$WINDOWS_TARGET" >/dev/null 2>&1
+    if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+        (cd "$CRATE" && CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+            cargo build "${cargo_flags[@]}" --target "$WINDOWS_TARGET")
+    else
+        ensure_zig
+        # Zig's own C libraries print harmless warnings while linking; hide them, errors still show.
+        (cd "$CRATE" && cargo zigbuild "${cargo_flags[@]}" --target "$WINDOWS_TARGET" \
+            --config "target.$WINDOWS_TARGET.rustflags=['-Alinker_messages']")
+    fi
+    copy_out "$CRATE/target/$WINDOWS_TARGET/$profile/linewright.exe" "linewright-windows-x86_64.exe"
+}
+
+need_cargo
+for target in "${targets[@]}"; do
+    "build_$target"
+done

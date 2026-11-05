@@ -1,0 +1,91 @@
+use crate::model::dimension::{DimensionLook, DimensionStyle};
+use crate::model::document::ObjectGroup;
+use crate::model::entities::{BlockRef, Entity};
+use crate::model::index::Bounds;
+
+/// What commands remember from one use to the next, and what the drawing offers them.
+#[derive(Clone, Debug)]
+pub struct Defaults {
+    pub fillet_radius: f64,
+    /// The look new dimensions take: the drawing's dimension style, as DIMSCALE, DIMTXT and DIMASZ change it.
+    pub dimension_look: DimensionLook,
+    /// The dimension drawn last, which DIMCONTINUE and DIMBASELINE carry on from.
+    pub last_dimension: Option<Entity>,
+    /// A table and the point in it double-clicked, for TABLEDIT to start from.
+    pub table_cell: Option<(Entity, crate::model::geometry::Point)>,
+    /// The image file IMAGEATTACH places next, and its size in pixels.
+    pub image: Option<(String, (u32, u32))>,
+    /// The chord of each revision cloud arc, once REVCLOUD has one.
+    pub cloud_arc: Option<f64>,
+    /// How LENGTHEN last changed lengths.
+    pub lengthen: crate::commands::reshape::Lengthen,
+    /// The layers as they were before LAYISO, for LAYUNISO.
+    pub isolated_from: Option<Vec<crate::model::document::Layer>>,
+    /// The drawing's layers and current layer, for the layer tools. The window keeps them up to date.
+    pub layers: Vec<crate::model::document::Layer>,
+    pub current_layer: String,
+    /// The drawing's dimension styles, which -DIMSTYLE lists and restores. The window keeps it up to date.
+    pub dimension_styles: Vec<DimensionStyle>,
+    /// The layouts by name, which one is open, its sheet, and the extent of model space, for LAYOUT and MVIEW.
+    pub layouts: Vec<String>,
+    /// The drawing's groups, for GROUP, UNGROUP and GROUPEDIT.
+    pub groups: Vec<ObjectGroup>,
+    pub active_layout: Option<usize>,
+    /// The viewports of the layout on screen, and the one model space is open through, for VPLAYER.
+    pub viewports: Vec<Entity>,
+    pub through_viewport: Option<crate::model::entities::EntityId>,
+    pub sheet: Option<Bounds>,
+    pub model_extent: Option<Bounds>,
+    /// The text style new text follows.
+    pub text_style: crate::model::document::TextStyleDef,
+    /// Corners given for new multiline text, for the window to open its editor with.
+    pub mtext_request: Option<crate::model::geometry::Point>,
+    /// The multileader style new multileaders follow.
+    pub mleader_style: crate::model::multileader::MleaderStyle,
+    pub chamfer_distances: (f64, f64),
+    pub hatch_pattern: String,
+    pub hatch_scale: f64,
+    pub hatch_angle: f64,
+    pub last_block: String,
+    /// The drawing's blocks, which INSERT can place. The window keeps it up to date.
+    pub blocks: Vec<BlockRef>,
+    /// What COPYCLIP and CUTCLIP last copied, with the point it is pasted by.
+    pub clipboard: Vec<Entity>,
+    pub clipboard_base: crate::model::geometry::Point,
+}
+
+impl Default for Defaults {
+    fn default() -> Self {
+        Defaults {
+            fillet_radius: 0.0,
+            dimension_look: DimensionLook::default(),
+            last_dimension: None,
+            cloud_arc: None,
+            image: None,
+            table_cell: None,
+            lengthen: crate::commands::reshape::Lengthen::Total(1.0),
+            isolated_from: None,
+            layers: vec![],
+            current_layer: "0".into(),
+            dimension_styles: vec![DimensionStyle::standard()],
+            layouts: vec![],
+            groups: vec![],
+            active_layout: None,
+            viewports: vec![],
+            through_viewport: None,
+            sheet: None,
+            model_extent: None,
+            text_style: crate::model::document::TextStyleDef::standard(),
+            mtext_request: None,
+            mleader_style: crate::model::multileader::MleaderStyle::standard(),
+            chamfer_distances: (0.0, 0.0),
+            hatch_pattern: "SOLID".into(),
+            hatch_scale: 1.0,
+            hatch_angle: 0.0,
+            last_block: String::new(),
+            blocks: vec![],
+            clipboard: vec![],
+            clipboard_base: Default::default(),
+        }
+    }
+}
