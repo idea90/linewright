@@ -10,8 +10,8 @@ Download the latest build from [Releases](https://github.com/idea90/linewright/r
 cd rust && cargo run --release       # or run it straight away
 ```
 
-The app lives in [`rust/`](rust/); its [README](rust/README.md) lists every command and feature. `src/` and `tests/`
-hold the original Python/Qt version it was rewritten from.
+The app lives in [`rust/`](rust/); its [README](rust/README.md) lists every command and feature. It was first
+written in Python with Qt; that version is in the git history up to 1.0 Alpha 3.
 
 What comes next is in the [roadmap](ROADMAP.md).
 

@@ -11,8 +11,8 @@ keyboard habits match AutoCAD's (Space and right-click act as Enter, Enter repea
 behave, do what AutoCAD does.
 
 - The app is the **Rust** crate in `rust/`. It's a native egui/eframe program for Linux (X11 and Wayland) and Windows.
-- `src/` and `tests/` hold the **original Python/Qt version** (PySide6 + ezdxf) that the Rust code was rewritten
-  from. It is kept for reference and no longer developed. Make changes in `rust/` unless asked otherwise.
+- It was first written in Python with Qt (PySide6 + ezdxf). That version was removed after 1.0 Alpha 3 and lives
+  only in the git history (tag `v1.0.0-alpha.3` and earlier).
 - License: MIT. Releases are published on GitHub (`idea90/linewright`) as pre-releases with Linux and Windows
   binaries; the current version is `1.0.0-alpha.1`.
 
@@ -54,9 +54,6 @@ compile              build script for Linux/Windows binaries into dist/
 rust/                the app (Cargo crate "linewright")
   README.md          full feature and command list
   src/               see below
-src/linewright/      original Python/Qt version (reference only)
-tests/               pytest suite for the Python version
-pyproject.toml, uv.lock, .python-version   Python project files (uv)
 ```
 
 ### `rust/src/`
