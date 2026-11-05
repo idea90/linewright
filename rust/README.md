@@ -21,11 +21,14 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Draw: `LINE` (`L`), `PLINE` (`PL`), `RECTANGLE` (`REC`), `POLYGON` (`POL`), `MTEXT` (`MT`), `XLINE` (`XL`), `RAY`, `DONUT` (`DO`), `REVCLOUD`, `TABLE` (`TB`), `CIRCLE` (`C`), `ARC` (`A`), `ELLIPSE` (`EL`),
   `SPLINE` (`SPL`), `POINT` (`PO`), `HATCH` (`H`; SOLID, ANSI31, ANSI37, NET, LINE, DOTS, DASH), `TEXT` (`T`)
 - `MLINE` (`ML`): multilines with Justification (Top/Zero/Bottom), Scale and STyle, in the drawing's own multiline
-  styles (element offsets, colors, linetypes, caps and joints); they load from and save to DXF and explode to lines
+  styles (element offsets, colors, linetypes, line, outer arc and inner arc caps, joints and fill); they load from
+  and save to DXF and explode to lines. `MLSTYLE` manages the styles (new, delete, set current, elements, caps,
+  fill), and `MLEDIT` (`-MLEDIT`) joins two multilines at a corner and adds or deletes vertices
 - `WIPEOUT`: masking areas from clicked corners or a closed polyline, hiding what is drawn under them; framed on
   screen and printed with their frames; its Frames option sets WIPEOUTFRAME for the drawing (ON shows and prints
   the frames, OFF hides them, Display but not plot shows them on screen only); they load from and save to DXF
-- `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands
+- `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands; curved edges
+  become arc segments
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
