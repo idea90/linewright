@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::defaults::Defaults;
-use super::prompts::{Host, PromptKind, Session};
+use super::prompts::{Host, PromptKind, ScaleSetting, Session};
 use super::registry::create;
 use crate::model::entities::{Entity, Shape, circle, line};
 use crate::model::geometry::{Point, pt};
@@ -21,6 +21,8 @@ struct FakeHost {
     reports: Vec<String>,
     /// The WIPEOUTFRAME mode a command set, if one did.
     frame_mode: Option<u8>,
+    /// The linetype scales commands set, in order.
+    scales: Vec<ScaleSetting>,
 }
 
 impl FakeHost {
@@ -85,6 +87,9 @@ impl Host for FakeHost {
     }
     fn wipeout_frame(&mut self, mode: u8) {
         self.frame_mode = Some(mode);
+    }
+    fn linetype_scale(&mut self, setting: ScaleSetting) {
+        self.scales.push(setting);
     }
     fn extent(&self) -> Option<Bounds> {
         self.entities.iter().map(entity_extent).reduce(Bounds::union)
@@ -807,6 +812,43 @@ fn wipeout_frames_sets_the_drawings_frame_mode_and_ends() {
     let mut session = start_with("WIPEOUT", &mut host, vec![], defaults);
     typed(&mut session, &mut host, &["F", "D"]);
     assert_eq!(host.frame_mode, Some(2));
+}
+
+#[test]
+fn ltscale_psltscale_and_celtscale_set_the_drawings_linetype_scales() {
+    let defaults = Rc::new(RefCell::new(Defaults { ltscale: 1.0, psltscale: true, celtscale: 1.0, ..Defaults::default() }));
+    let mut host = FakeHost::default();
+    let mut session = start_with("LTSCALE", &mut host, vec![], defaults.clone());
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter new linetype scale factor <1.0000>:");
+    typed(&mut session, &mut host, &["2.5"]);
+    assert!(!session.active());
+    assert_eq!(host.scales, vec![ScaleSetting::Global(2.5)]);
+
+    let mut host = FakeHost::default();
+    assert_eq!(super::registry::resolve("LTS"), Some("LTSCALE"), "LTS is the alias");
+    let mut session = start_with("LTSCALE", &mut host, vec![], defaults.clone());
+    assert_eq!(session.submit_text("0", &mut host), Some("Enter a number greater than zero."), "zero is refused");
+    typed(&mut session, &mut host, &["0.5"]);
+    assert_eq!(host.scales, vec![ScaleSetting::Global(0.5)], "LTS is the alias");
+
+    let mut host = FakeHost::default();
+    let mut session = start_with("PSLTSCALE", &mut host, vec![], defaults.clone());
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter new value for PSLTSCALE <1>:");
+    typed(&mut session, &mut host, &["0"]);
+    assert_eq!(host.scales, vec![ScaleSetting::Paper(false)]);
+
+    let mut host = FakeHost::default();
+    let mut session = start_with("CELTSCALE", &mut host, vec![], defaults.clone());
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter new value for CELTSCALE <1.0000>:");
+    typed(&mut session, &mut host, &["4"]);
+    assert_eq!(host.scales, vec![ScaleSetting::Current(4.0)]);
+
+    // Enter keeps the current value, and nothing is set.
+    let mut host = FakeHost::default();
+    let defaults = Rc::new(RefCell::new(Defaults { psltscale: false, ..Defaults::default() }));
+    let mut session = start_with("PSLTSCALE", &mut host, vec![], defaults);
+    typed(&mut session, &mut host, &[""]);
+    assert_eq!(host.scales, vec![ScaleSetting::Paper(false)], "Enter keeps 0 as it is");
 }
 
 #[test]

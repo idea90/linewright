@@ -754,6 +754,32 @@ fn the_wipeout_frame_mode_survives_a_round_trip_and_is_written_only_when_needed(
 }
 
 #[test]
+fn the_linetype_scales_survive_a_round_trip_and_are_written_only_when_needed() {
+    let mut scaled = line(pt(0.0, 0.0), pt(1.0, 1.0));
+    scaled.linetype_scale = 0.5;
+    let mut document = Document::with_entities(vec![line(pt(0.0, 0.0), pt(2.0, 0.0)), scaled]);
+    document.ltscale = 2.0;
+    document.psltscale = false;
+    document.celtscale = 3.0;
+    let file = dxf_from_document(&document);
+    let scales: Vec<Option<f64>> = file.groups.iter().filter(|g| g.kind() == "LINE").map(|g| g.float(48)).collect();
+    assert_eq!(scales, vec![None, Some(0.5)], "code 48 is written only for a scale other than 1");
+    assert_eq!(file.header("$LTSCALE").map(str::trim), Some("2.0"));
+    assert_eq!(file.header("$PSLTSCALE").map(str::trim), Some("0"));
+    assert_eq!(file.header("$CELTSCALE").map(str::trim), Some("3.0"));
+
+    let back = round_trip(&document);
+    assert_eq!((back.ltscale, back.psltscale, back.celtscale), (2.0, false, 3.0));
+    let scales: Vec<f64> = back.entities().iter().map(|e| e.linetype_scale).collect();
+    assert_eq!(scales, vec![1.0, 0.5]);
+    assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+
+    // A new drawing starts at AutoCAD's values: LTSCALE 1, PSLTSCALE on and CELTSCALE 1.
+    let fresh = round_trip(&Document::with_entities(vec![line(pt(0.0, 0.0), pt(1.0, 1.0))]));
+    assert_eq!((fresh.ltscale, fresh.psltscale, fresh.celtscale), (1.0, true, 1.0));
+}
+
+#[test]
 fn a_multiline_survives_a_round_trip_in_its_style() {
     use crate::model::mline::{Justification, MlineGap, MlineStyle};
     // With a doorway cut in the outer line of its second segment.

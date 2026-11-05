@@ -18,6 +18,7 @@ fn styled(entity: &Entity, style: &Styled, shape: Shape) -> Entity {
         layer: style.layer.clone(),
         color: style.color,
         linetype: style.linetype.clone(),
+        linetype_scale: style.linetype_scale,
         lineweight: style.lineweight,
         ..entity.derive(shape)
     }
@@ -75,6 +76,7 @@ pub fn explode(entity: &Entity) -> Option<Vec<Entity>> {
                     layer: attribute.layer.clone(),
                     color: attribute.color,
                     linetype: entity.linetype.clone(),
+                    linetype_scale: entity.linetype_scale,
                     lineweight: entity.lineweight,
                 };
                 pieces.push(styled(entity, &style, attribute.text.clone()));

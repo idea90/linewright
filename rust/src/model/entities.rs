@@ -346,6 +346,8 @@ pub struct Entity {
     pub layer: String,
     pub color: i32, // AutoCAD color index, 256 = by layer
     pub linetype: String,
+    /// Multiplies the linetype's dashes on top of the drawing's LTSCALE (DXF code 48). 1 is the usual.
+    pub linetype_scale: f64,
     /// Hundredths of a millimeter, or ByLayer, ByBlock or Default (see `lineweight`).
     pub lineweight: i16,
     pub shape: Shape,
@@ -369,6 +371,7 @@ impl Entity {
             layer: DEFAULT_LAYER.to_string(),
             color: BYLAYER,
             linetype: BYLAYER_LINETYPE.to_string(),
+            linetype_scale: 1.0,
             lineweight: super::lineweight::BYLAYER,
             shape,
             attribute: None,
@@ -403,6 +406,7 @@ impl Entity {
         self.layer == other.layer
             && self.color == other.color
             && self.linetype == other.linetype
+            && self.linetype_scale == other.linetype_scale
             && self.shape == other.shape
             && self.attribute == other.attribute
     }

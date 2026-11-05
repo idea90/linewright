@@ -579,6 +579,11 @@ fn lineweight_of(group: &Group, in_block: bool) -> i16 {
     }
 }
 
+/// An entity's linetype scale (code 48), which is 1 when the file leaves it out or gives no usable scale.
+fn linetype_scale_of(group: &Group) -> f64 {
+    group.float(48).filter(|scale| *scale > 0.0).unwrap_or(1.0)
+}
+
 /// The color a group gives: its true color (code 420) when it has one, else its index color (62).
 fn color_of(group: &Group, otherwise: i32) -> i32 {
     match group.int(420) {
@@ -941,11 +946,13 @@ impl<'a> Reader<'a> {
             let (layer, color, linetype) = style(group, false);
             let info = AttributeInfo { prompt: group.text(3).unwrap_or_default(), default, invisible: group.int(70).unwrap_or(0) & 1 != 0 };
             let lineweight = lineweight_of(group, false);
-            return Some(Entity { layer, color, linetype, lineweight, attribute: Some(info), ..Entity::new(shape) });
+            let linetype_scale = linetype_scale_of(group);
+            return Some(Entity { layer, color, linetype, linetype_scale, lineweight, attribute: Some(info), ..Entity::new(shape) });
         }
         let shape = self.shape(run)?;
         let (layer, color, linetype) = style(&run[0], in_block);
-        Some(Entity { layer, color, linetype, lineweight: lineweight_of(&run[0], in_block), ..Entity::new(shape) })
+        let linetype_scale = linetype_scale_of(&run[0]);
+        Some(Entity { layer, color, linetype, linetype_scale, lineweight: lineweight_of(&run[0], in_block), ..Entity::new(shape) })
     }
 
     fn shape(&self, groups: &[Group]) -> Option<Shape> {
@@ -1667,6 +1674,11 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
         document.default_lineweight = lineweight::nearest_standard(lw as f64);
     }
     document.show_lineweights = header_int("$LWDISPLAY") == Some(1);
+    // The linetype scales are real numbers, and PSLTSCALE is on unless the file turns it off.
+    let header_scale = |name: &str| file.header(name).and_then(|v| v.trim().parse::<f64>().ok()).filter(|scale| *scale > 0.0);
+    document.ltscale = header_scale("$LTSCALE").unwrap_or(1.0);
+    document.psltscale = header_int("$PSLTSCALE").is_none_or(|on| on != 0);
+    document.celtscale = header_scale("$CELTSCALE").unwrap_or(1.0);
     document.model_plot = model_plot_settings(&file);
     document.wipeout_frame = wipeout_frame_mode(&file).unwrap_or(1);
     let reader = Reader::new(&file);
@@ -2189,6 +2201,8 @@ struct Writer {
     table_style: Option<(String, Option<f64>)>,
     /// The lineweight of the entity being written, which every group it is written as carries.
     lineweight: i16,
+    /// The linetype scale of the entity being written, which its groups carry when it is not 1.
+    linetype_scale: f64,
 }
 
 impl Writer {
@@ -2237,6 +2251,9 @@ impl Writer {
         }
         if self.modern && self.lineweight != lineweight::BYLAYER {
             pairs.push(pair(370, self.lineweight));
+        }
+        if self.modern && self.linetype_scale != 1.0 {
+            pairs.push(pair(48, number(self.linetype_scale)));
         }
         if self.modern {
             pairs.extend(subclass.iter().map(|s| pair(100, s)));
@@ -2292,8 +2309,10 @@ impl Writer {
 
     fn entity(&mut self, entity: &Entity, linetype: &str, dimension_style: &str, owner: &str) -> Vec<Group> {
         let outer = std::mem::replace(&mut self.lineweight, entity.lineweight);
+        let outer_scale = std::mem::replace(&mut self.linetype_scale, entity.linetype_scale);
         let groups = self.entity_groups(entity, linetype, dimension_style, owner);
         self.lineweight = outer;
+        self.linetype_scale = outer_scale;
         groups
     }
 
@@ -4150,6 +4169,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         mline_styles: HashMap::new(),
         table_style: None,
         lineweight: lineweight::BYLAYER,
+        linetype_scale: 1.0,
         text_styles: text_style_fonts(&file)
             .into_iter()
             .filter_map(|(key, font)| {
@@ -4307,6 +4327,9 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         file.set_header("$CELWEIGHT", 370, document.current_lineweight.to_string());
         file.set_header("$LWDEFAULT", 370, document.default_lineweight.to_string());
         file.set_header("$LWDISPLAY", 290, i32::from(document.show_lineweights).to_string());
+        file.set_header("$LTSCALE", 40, number(document.ltscale));
+        file.set_header("$PSLTSCALE", 70, i32::from(document.psltscale).to_string());
+        file.set_header("$CELTSCALE", 40, number(document.celtscale));
         if let Some(at) = model_layout_object(&file) {
             set_plot_settings(&mut file.groups[at], &document.model_plot);
         }

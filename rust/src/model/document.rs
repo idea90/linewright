@@ -183,6 +183,13 @@ pub struct Document {
     pub current_layer: String,
     pub current_color: i32,
     pub current_linetype: String,
+    /// LTSCALE: the scale every linetype's dashes are drawn at, times each object's own linetype scale.
+    pub ltscale: f64,
+    /// PSLTSCALE: whether model space objects seen through a viewport keep their dashes as long on the sheet as paper
+    /// space ones (on, AutoCAD's start value) or are drawn at the viewport's scale (off).
+    pub psltscale: bool,
+    /// CELTSCALE: the linetype scale new objects get.
+    pub celtscale: f64,
     /// CELWEIGHT: the lineweight new objects get.
     pub current_lineweight: i16,
     /// LWDEFAULT: what Default means, in hundredths of a millimeter.
@@ -271,6 +278,9 @@ impl Document {
             current_layer: DEFAULT_LAYER.to_string(),
             current_color: BYLAYER,
             current_linetype: BYLAYER_LINETYPE.to_string(),
+            ltscale: 1.0,
+            psltscale: true,
+            celtscale: 1.0,
             current_lineweight: super::lineweight::BYLAYER,
             default_lineweight: super::lineweight::DEFAULT_MM100,
             show_lineweights: false,

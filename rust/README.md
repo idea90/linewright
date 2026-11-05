@@ -99,6 +99,10 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   ribbon, the Properties palette's General section or the Layer Properties manager. `LWEIGHT` (`LW`) sets the
   current and default lineweight; the status bar's Lineweight button (`LWDISPLAY`) shows them on screen, at a
   fixed width in model space and to scale on layouts. They print at their real width.
+- Linetype scale as in AutoCAD: dashes are drawn in drawing units times `LTSCALE` (`LTS`) and the object's own
+  linetype scale (Properties palette, General section; `CELTSCALE` for new objects). `PSLTSCALE` (0 or 1) keeps
+  model space dashes in viewports as long on the sheet as paper space ones. A dash too short to see draws solid.
+  Plots follow the same rule in paper units.
 - Plot style tables (.ctb): `PLOT` picks one per page setup, and with it whether objects' lineweights print.
   Pens give each color its plotted color, grayscale, screening and lineweight. Tables are read from AutoCAD's
   `Plotters\Plot Styles` folders (or `LINEWRIGHT_PLOT_STYLES`); acad, monochrome and grayscale.ctb work

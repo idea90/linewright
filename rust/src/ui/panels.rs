@@ -382,12 +382,13 @@ impl RibbonGroup {
     }
 }
 
-/// What the selection has in common, or what new objects get when nothing is selected: layer, color, linetype
-/// and lineweight. None where selected objects differ.
+/// What the selection has in common, or what new objects get when nothing is selected: layer, color, linetype,
+/// linetype scale and lineweight. None where selected objects differ.
 struct GeneralValues {
     layer: Option<String>,
     color: Option<i32>,
     linetype: Option<String>,
+    linetype_scale: Option<f64>,
     lineweight: Option<i16>,
     layers: Vec<(String, i32)>,
 }
@@ -401,9 +402,32 @@ impl GeneralValues {
             layer: if any { common(selected.iter().map(|e| e.layer.clone())) } else { Some(document.current_layer.clone()) },
             color: if any { common(selected.iter().map(|e| e.color)) } else { Some(document.current_color) },
             linetype: if any { common(selected.iter().map(|e| e.linetype.clone())) } else { Some(document.current_linetype.clone()) },
+            linetype_scale: if any { common(selected.iter().map(|e| e.linetype_scale)) } else { Some(document.celtscale) },
             lineweight: if any { common(selected.iter().map(|e| e.lineweight)) } else { Some(document.current_lineweight) },
             layers: document.layers.iter().map(|l| (l.name.clone(), l.color)).collect(),
         }
+    }
+}
+
+/// The General section's linetype scale, typed: for the selected objects, or for new ones when nothing is selected.
+/// *VARIES* shows where the selected objects differ.
+fn linetype_scale_edit(ui: &mut egui::Ui, app: &mut LinewrightApp, scale: Option<f64>, ids: &[EntityId], actions: &mut Vec<Action>) {
+    const KEY: &str = "Linetype scale";
+    let shown = scale.map_or(VARIES.to_string(), |scale| scale.to_string());
+    let buffer = app.property_edits.entry(KEY.to_string()).or_insert_with(|| shown.clone());
+    let response = ui.add(TextEdit::singleline(buffer).desired_width(150.0));
+    if response.has_focus() {
+        app.property_focus = true;
+    }
+    if response.lost_focus() {
+        if ui.input(|i| i.key_pressed(Key::Enter)) && *buffer != shown {
+            if ids.is_empty() {
+                actions.push(Action::UseLinetypeScale(buffer.clone()));
+            } else {
+                actions.push(Action::SetProperty(ids.to_vec(), KEY.into(), buffer.clone()));
+            }
+        }
+        app.property_edits.remove(KEY);
     }
 }
 
@@ -1275,6 +1299,9 @@ pub fn properties_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
                     Action::UseLineweight,
                     &mut actions,
                 );
+                ui.end_row();
+                ui.label(RichText::new("Linetype scale").color(theme::TEXT_DIM));
+                linetype_scale_edit(ui, app, values.linetype_scale, &ids, &mut actions);
                 ui.end_row();
             });
             ui.add_space(6.0);

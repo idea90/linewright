@@ -107,6 +107,9 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("ID", "Point coordinates"),
     ("ZOOM", "Zoom"),
     ("TEXTEDIT", "Edit text"),
+    ("LTSCALE", "Linetype scale"),
+    ("PSLTSCALE", "Paper space linetype scale"),
+    ("CELTSCALE", "Linetype scale for new objects"),
 ];
 
 pub const ALIASES: &[(&str, &str)] = &[
@@ -207,6 +210,7 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("DDEDIT", "TEXTEDIT"),
     ("ATTEDIT", "TEXTEDIT"),
     ("ATE", "TEXTEDIT"),
+    ("LTS", "LTSCALE"),
 ];
 
 pub fn label(name: &str) -> &'static str {
@@ -265,6 +269,9 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "PEDIT" => Box::pin(reshape::pedit_command(io)),
             "DIMCONTINUE" => Box::pin(dimension::continue_dimension(io, defaults)),
             "DIMBASELINE" => Box::pin(dimension::baseline_dimension(io, defaults)),
+            "LTSCALE" => Box::pin(layer_tools::ltscale_command(io, defaults)),
+            "PSLTSCALE" => Box::pin(layer_tools::psltscale_command(io, defaults)),
+            "CELTSCALE" => Box::pin(layer_tools::celtscale_command(io, defaults)),
             "LAYISO" => Box::pin(layer_tools::isolate(io, selected, defaults)),
             "LAYUNISO" => Box::pin(layer_tools::unisolate(io, defaults)),
             "LAYOFF" => Box::pin(layer_tools::layer_off(io, defaults)),
