@@ -32,7 +32,7 @@ Things an early user is most likely to miss or be hurt by.
       ends up past the edge (OVERKILL currently does at normal widths).
 - [ ] **Automatic release builds:** GitHub Actions builds both programs and attaches them to the release when a
       version tag is pushed, so releases no longer depend on one machine.
-- [ ] **Window tests:** a way to drive dialogs in tests (the screenshot aid, `LINEWRIGHT_CAPTURE`, already types
+- [x] **Window tests:** a way to drive dialogs in tests (the screenshot aid, `LINEWRIGHT_CAPTURE`, already types
       commands), so dialogs such as Delete Duplicate Objects and Multiline Style are covered.
 - [x] **The Python version:** removed; it lives on in the git history.
 
