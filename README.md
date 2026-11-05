@@ -13,4 +13,6 @@ cd rust && cargo run --release       # or run it straight away
 The app lives in [`rust/`](rust/); its [README](rust/README.md) lists every command and feature. `src/` and `tests/`
 hold the original Python/Qt version it was rewritten from.
 
+What comes next is in the [roadmap](ROADMAP.md).
+
 Licensed under the [MIT License](LICENSE).
