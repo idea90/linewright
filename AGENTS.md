@@ -43,6 +43,12 @@ Notes:
 - `LINEWRIGHT_CAPTURE=out.png` (debug builds) saves a screenshot of the window, useful for checking the UI.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
 
+## Releasing
+
+Push a tag named `v*` (for example `v1.0.0-alpha.4`) and `.github/workflows/release.yml` builds the Linux and
+Windows binaries, writes `SHA256SUMS` and uploads all three to the GitHub release for that tag, creating the release
+if it does not exist. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
+
 ## Repository layout
 
 ```
@@ -50,7 +56,7 @@ AGENTS.md            this file
 README.md            short intro, links to rust/README.md
 LICENSE              MIT
 compile              build script for Linux/Windows binaries into dist/
-.github/workflows/   CI for the Rust crate
+.github/workflows/   CI for the Rust crate, and the release build on a `v*` tag
 rust/                the app (Cargo crate "linewright")
   README.md          full feature and command list
   src/               see below
