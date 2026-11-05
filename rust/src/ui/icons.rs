@@ -128,6 +128,12 @@ fn shape(name: &str) -> &'static str {
         "OSNAP" => r#"<circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/>"#,
         "ZOOM_IN" => r#"<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5M10.5 8v5M8 10.5h5"/>"#,
         "ZOOM_OUT" => r#"<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5M8 10.5h5"/>"#,
+        "MLINE" => r#"<path d="M4 9h11v11M4 13h7v7"/>"#,
+        "WIPEOUT" => r#"<path d="M9 4.5h10.5v15H9l-4.5-7.5Z"/><path d="M2.5 8h4.4M2.5 16h4.4M19.5 11h2"/>"#,
+        "BOUNDARY" => {
+            r#"<rect x="3.5" y="3.5" width="17" height="17" rx="1.5"/><path d="M8 9.5 12 7.5l4 2v5l-4 2-4-2Z" stroke-width="2.4"/>"#
+        }
+        "OVERKILL" => r#"<path d="M4 8.5h11M8.5 15.5H19.5"/><path d="M17.5 4.5l3 3M20.5 4.5l-3 3"/>"#,
         _ => r#"<circle cx="12" cy="12" r="2"/>"#,
     }
 }

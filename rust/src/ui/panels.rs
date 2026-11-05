@@ -463,7 +463,12 @@ pub fn ribbon(app: &mut LinewrightApp, ctx: &egui::Context) {
 fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui) {
     group(ui, "Draw", |ui| {
         large_buttons(app, ui, &["LINE", "PLINE"]);
-        small_buttons(app, ui, &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "SPLINE", "POINT"], 2);
+        small_buttons(
+            app,
+            ui,
+            &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "BOUNDARY", "SPLINE", "POINT", "MLINE", "WIPEOUT"],
+            2,
+        );
     });
     divider(ui, 82.0);
     group(ui, "Modify", |ui| {
@@ -487,6 +492,7 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui) {
                 "BREAK",
                 "EXPLODE",
                 "JOIN",
+                "OVERKILL",
                 "MATCHPROP",
                 "LIST",
             ],
