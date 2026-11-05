@@ -417,7 +417,19 @@ impl LinewrightApp {
     pub fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> LinewrightApp {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        let mut app = LinewrightApp {
+        let mut app = LinewrightApp::without_window(cc.egui_ctx.clone(), path.is_none());
+        app.set_document(Document::new());
+        app.announce_new();
+        if let Some(path) = path {
+            app.open_in_background(path);
+        }
+        app
+    }
+
+    /// The window's state with an empty drawing, drawing into `egui_ctx`. `new` builds it from eframe's context;
+    /// tests build it from a bare one, without a window.
+    fn without_window(egui_ctx: egui::Context, welcome: bool) -> LinewrightApp {
+        LinewrightApp {
             controller: Controller::new(),
             camera: Camera::default(),
             input: String::new(),
@@ -431,7 +443,7 @@ impl LinewrightApp {
             space_cameras: Default::default(),
             shown_space: None,
             shown_layouts: 0,
-            welcome: path.is_none(),
+            welcome,
             suggestion: 0,
             suggestion_for: String::new(),
             dynamic_first: None,
@@ -449,19 +461,22 @@ impl LinewrightApp {
             pointer: None,
             allow_close: false,
             title: String::new(),
-            egui_ctx: cc.egui_ctx.clone(),
+            egui_ctx,
             #[cfg(debug_assertions)]
             capture: super::debug_capture::Capture::from_env(),
             drawing_fonts: HashSet::new(),
             fonts_pending: None,
             fonts_installed: true, // theme::apply installs the system fonts
             on_window_edge: false,
-        };
+        }
+    }
+
+    /// An app with an empty drawing and no window, for tests that draw its dialogs into a bare egui context.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> LinewrightApp {
+        let mut app = LinewrightApp::without_window(egui::Context::default(), false);
         app.set_document(Document::new());
         app.announce_new();
-        if let Some(path) = path {
-            app.open_in_background(path);
-        }
         app
     }
 
@@ -1180,6 +1195,13 @@ impl LinewrightApp {
             lineweight::name(form.default),
             if form.show { "shown" } else { "hidden" }
         ));
+    }
+
+    /// Open the dialog a running command's prompt asks for, when no other dialog is open.
+    fn open_prompt_dialogs(&mut self) {
+        if self.dialog.is_none() && self.controller.prompt().is_some_and(|p| p.kind == PromptKind::OverkillDialog) {
+            self.open_overkill();
+        }
     }
 
     /// Open Delete Duplicate Objects with the options last used.
@@ -1916,9 +1938,7 @@ impl eframe::App for LinewrightApp {
             self.zoom_extents_pending = false;
             self.zoom_extents();
         }
-        if self.dialog.is_none() && self.controller.prompt().is_some_and(|p| p.kind == PromptKind::OverkillDialog) {
-            self.open_overkill();
-        }
+        self.open_prompt_dialogs();
         panels::dialogs(self, ctx);
         if let Some(id) = self.controller.edit_text_request.take() {
             self.open_text_editor(id);
@@ -2051,5 +2071,171 @@ mod editor_tests {
         form.selection = (0, 2);
         form.apply(|s| s.italic = true);
         assert!(form.styles[0].italic && form.styles[1].italic && !form.styles[3].italic);
+    }
+}
+
+#[cfg(test)]
+mod dialog_tests {
+    use super::*;
+    use crate::model::entities::{Entity, Shape, line};
+    use crate::model::geometry::pt;
+    use crate::model::mline::{Justification, MlineStyle};
+
+    /// Runs one frame of the window's dialogs in the app's egui context, with `events` as the frame's input.
+    fn frame(app: &mut LinewrightApp, events: Vec<egui::Event>) {
+        let ctx = app.egui_ctx.clone();
+        let _ = ctx.run(egui::RawInput { events, ..Default::default() }, |ctx| panels::dialogs(app, ctx));
+    }
+
+    fn press(key: egui::Key) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    fn app_with(entities: Vec<Entity>) -> LinewrightApp {
+        let mut app = LinewrightApp::for_tests();
+        app.controller.set_document(Document::with_entities(entities));
+        app
+    }
+
+    /// Two copies of one line, which OVERKILL should reduce to one.
+    fn two_copies() -> Vec<Entity> {
+        let a = line(pt(0.0, 0.0), pt(10.0, 0.0));
+        vec![a.clone(), a.duplicate()]
+    }
+
+    /// Select everything and start OVERKILL, which asks for its dialog.
+    fn start_overkill(app: &mut LinewrightApp) {
+        app.controller.handle_input("all");
+        app.controller.handle_input("overkill");
+        assert_eq!(app.controller.prompt().map(|p| p.kind), Some(PromptKind::OverkillDialog));
+        app.open_prompt_dialogs();
+        assert!(matches!(app.dialog, Some(Dialog::Overkill(_))));
+    }
+
+    #[test]
+    fn overkill_dialog_opens_and_enter_accepts_the_changed_form() {
+        let mut app = app_with(two_copies());
+        start_overkill(&mut app);
+        frame(&mut app, vec![]);
+        assert!(matches!(app.dialog, Some(Dialog::Overkill(_))), "a frame with no key pressed keeps it open");
+        let Some(Dialog::Overkill(form)) = &mut app.dialog else { panic!() };
+        form.settings.combine_partial = false;
+        form.tolerance = "0.5".into();
+        frame(&mut app, vec![press(egui::Key::Enter)]);
+
+        assert!(app.dialog.is_none());
+        assert!(app.controller.running_command().is_none());
+        assert_eq!(app.document().len(), 1, "the copy is deleted");
+        assert!(matches!(app.document().entities()[0].shape, Shape::Line { .. }));
+        let remembered = app.controller.defaults.borrow().overkill.clone();
+        assert_eq!(remembered.tolerance, 0.5, "the form's tolerance is remembered");
+        assert!(!remembered.combine_partial, "the form's options are remembered");
+    }
+
+    #[test]
+    fn overkill_escape_cancels_and_leaves_the_drawing_unchanged() {
+        let mut app = app_with(two_copies());
+        start_overkill(&mut app);
+        // A modal only takes Escape once it has been drawn, as it is by the time a user presses it.
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![press(egui::Key::Escape)]);
+
+        assert!(app.dialog.is_none());
+        assert!(app.controller.running_command().is_none());
+        assert!(app.controller.prompt().is_none());
+        assert_eq!(app.document().len(), 2, "nothing is deleted");
+        assert!(!app.modified());
+    }
+
+    #[test]
+    fn overkill_bad_tolerance_shows_the_error_and_does_not_run() {
+        let mut app = app_with(two_copies());
+        start_overkill(&mut app);
+        let Some(Dialog::Overkill(form)) = &mut app.dialog else { panic!() };
+        form.tolerance = "a lot".into();
+        frame(&mut app, vec![press(egui::Key::Enter)]);
+
+        let Some(Dialog::Overkill(form)) = &app.dialog else { panic!("the dialog stays open") };
+        assert_eq!(form.error, "Enter a tolerance, zero or greater.");
+        assert_eq!(app.controller.prompt().map(|p| p.kind), Some(PromptKind::OverkillDialog), "the command waits");
+        assert_eq!(app.document().len(), 2, "nothing is deleted");
+
+        let Some(Dialog::Overkill(form)) = &mut app.dialog else { panic!() };
+        form.tolerance = "0".into();
+        frame(&mut app, vec![press(egui::Key::Enter)]);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.document().len(), 1, "a valid tolerance then runs it");
+    }
+
+    fn wall() -> Entity {
+        let shape = Shape::Mline {
+            vertices: vec![pt(0.0, 0.0), pt(20.0, 0.0)],
+            closed: false,
+            justification: Justification::Zero,
+            scale: 1.0,
+            style: MlineStyle::standard(),
+        };
+        Entity::new(shape)
+    }
+
+    fn drawn_style(app: &LinewrightApp) -> MlineStyle {
+        match &app.document().entities()[0].shape {
+            Shape::Mline { style, .. } => style.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mline_styles_copy_edit_set_current_and_ok_restyles_the_drawn_multiline_as_one_undo() {
+        let mut app = app_with(vec![wall()]);
+        app.open_mline_styles();
+        frame(&mut app, vec![]);
+        let Some(Dialog::MlineStyles(form)) = &mut app.dialog else { panic!("the manager is open") };
+        assert_eq!(form.current, "Standard");
+
+        // New: a copy of the selected style under the typed name.
+        form.new_name = "Thin".into();
+        let copy = MlineStyle { name: form.new_name.trim().to_string(), ..form.styles[form.selected].clone() };
+        form.styles.push(copy);
+        form.selected = form.styles.len() - 1;
+        form.new_name.clear();
+        // Set Current on the new style, then edit an element of Standard, which the drawn multiline uses.
+        form.current = form.styles[form.selected].name.clone();
+        form.selected = 0;
+        form.element = 0;
+        form.styles[0].elements[0].offset = 0.75;
+        frame(&mut app, vec![]);
+        app.set_mline_styles();
+
+        assert!(app.dialog.is_none());
+        assert!(app.document().mline_styles.iter().any(|s| s.name == "Thin"));
+        assert_eq!(app.controller.defaults.borrow().mline_style.name, "Thin", "MLINE draws with it next");
+        let drawn = drawn_style(&app);
+        assert_eq!(drawn.elements[0].offset, 0.75, "the multiline took the change");
+        assert_eq!(drawn.elements[1].offset, -0.5);
+
+        app.controller.undo();
+        assert_eq!(drawn_style(&app).elements[0].offset, 0.5, "one undo restores the multiline");
+        app.controller.redo();
+        assert_eq!(drawn_style(&app).elements[0].offset, 0.75);
+    }
+
+    #[test]
+    fn mline_style_dialog_keeps_the_picked_element_when_offsets_reorder() {
+        let mut app = app_with(vec![wall()]);
+        app.open_mline_styles();
+        for _ in 0..3 {
+            frame(&mut app, vec![]);
+        }
+        let Some(Dialog::MlineStyles(form)) = &mut app.dialog else { panic!() };
+        // The picked element is the top line (offset 0.5); moved below the other line it is listed second.
+        form.element = 0;
+        form.styles[0].elements[0].offset = -0.8;
+        frame(&mut app, vec![]);
+
+        let Some(Dialog::MlineStyles(form)) = &app.dialog else { panic!() };
+        let offsets: Vec<f64> = form.styles[0].elements.iter().map(|e| e.offset).collect();
+        assert_eq!(offsets, vec![-0.5, -0.8], "listed from the top one down");
+        assert_eq!(form.element, 1, "the element picked stays picked");
     }
 }
