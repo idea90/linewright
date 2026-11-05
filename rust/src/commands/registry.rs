@@ -249,7 +249,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "RAY" => Box::pin(drafting::ray_command(io)),
             "DONUT" => Box::pin(drafting::donut_command(io)),
             "REVCLOUD" => Box::pin(drafting::revcloud_command(io, defaults)),
-            "WIPEOUT" => Box::pin(drafting::wipeout_command(io)),
+            "WIPEOUT" => Box::pin(drafting::wipeout_command(io, defaults)),
             "MLINE" => Box::pin(drafting::mline_command(io, defaults)),
             "MTEXT" | "-MTEXT" => Box::pin(drafting::mtext_command(io)),
             "MTEXTBOX" => Box::pin(drafting::mtext_box_command(io, defaults)),

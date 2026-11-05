@@ -486,11 +486,21 @@ const POLYLINE: &str = "P";
 const CLOSE: &str = "C";
 const UNDO: &str = "U";
 
-/// WIPEOUT: an area that hides what is drawn under it, from corners clicked in turn or from a closed polyline.
-pub async fn wipeout_command(io: Io) {
-    let prompt = Prompt::point("Specify first point or [Polyline] <Polyline>:").options(&[POLYLINE]).default(Answer::keyword(POLYLINE));
+const FRAMES: &str = "F";
+
+/// WIPEOUT: an area that hides what is drawn under it, from corners clicked in turn or from a closed polyline. Its
+/// Frames option sets whether wipeout frames show and plot, for the whole drawing.
+pub async fn wipeout_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super::defaults::Defaults>>) {
+    let prompt = Prompt::point("Specify first point or [Frames/Polyline] <Polyline>:")
+        .options(&[FRAMES, POLYLINE])
+        .default(Answer::keyword(POLYLINE));
     let corners = match io.ask(prompt).await {
         Some(Answer::Point(first)) => wipeout_corners(&io, first).await,
+        Some(answer) if answer.is(FRAMES) => {
+            let current = defaults.borrow().wipeout_frame;
+            wipeout_frames(&io, current).await;
+            return;
+        }
         Some(answer) if answer.is(POLYLINE) => {
             let Some(Answer::Picked(picked)) = io.ask(Prompt::new(PromptKind::Pick, "Select a closed polyline:")).await else { return };
             let corners = match &picked.entity.shape {
@@ -548,6 +558,25 @@ async fn wipeout_corners(io: &Io, first: Point) -> Option<Vec<Point>> {
         }
     }
     Some(corners)
+}
+
+/// FRAMES: asks whether wipeout frames show and plot, as WIPEOUTFRAME does, and sets the answer. The command ends.
+async fn wipeout_frames(io: &Io, current: u8) {
+    let (word, name) = match current {
+        0 => ("OFF", "OFF"),
+        2 => ("D", "Display but not plot"),
+        _ => ("ON", "ON"),
+    };
+    let prompt = Prompt::point(format!("Enter mode [ON/OFF/Display but not plot] <{name}>:"))
+        .options(&["ON", "OFF", "D"])
+        .default(Answer::keyword(word));
+    let mode = match io.ask(prompt).await {
+        Some(answer) if answer.is("ON") => 1,
+        Some(answer) if answer.is("OFF") => 0,
+        Some(answer) if answer.is("D") => 2,
+        _ => return,
+    };
+    io.step(Step::WipeoutFrame(mode));
 }
 
 const JUSTIFICATION: &str = "J";

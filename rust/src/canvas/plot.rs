@@ -186,9 +186,15 @@ fn plot_entity(
         };
         // Dashes are as long on paper whatever the scale, as AutoCAD's are at a linetype scale of 1 on a sheet.
         let dashes: Vec<f64> = dash_pattern(&linetype).iter().map(|d| *d as f64 * DASH_UNIT_MM * pens.points_per_mm).collect();
-        // Wipeouts print as the paper, without their frames.
+        // Wipeouts print as the paper. Their frames print only when WIPEOUTFRAME is 1, in the entity's pen.
         for mask in &parts.masks {
             page.fill_area(&[mask.iter().map(|p| place(*p)).collect()], (255, 255, 255));
+        }
+        if document.wipeout_frame == 1 {
+            for mask in &parts.masks {
+                let frame: Vec<Point> = mask.iter().chain(mask.first()).map(|p| place(*p)).collect();
+                page.stroke(&frame, rgb, weight, &dashes);
+            }
         }
         for path in &parts.paths {
             page.stroke(&path.iter().map(|p| place(*p)).collect::<Vec<_>>(), rgb, weight, &dashes);

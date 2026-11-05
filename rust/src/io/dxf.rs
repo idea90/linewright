@@ -1555,6 +1555,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
     }
     document.show_lineweights = header_int("$LWDISPLAY") == Some(1);
     document.model_plot = model_plot_settings(&file);
+    document.wipeout_frame = wipeout_frame_mode(&file).unwrap_or(1);
     let reader = Reader::new(&file);
     let styles = reader.styles.all();
     if !styles.is_empty() {
@@ -3668,6 +3669,50 @@ fn write_images(file: &mut DxfFile, writer: &mut Writer) {
     file.groups.splice(dictionary + 1..dictionary + 1, objects);
 }
 
+/// The WIPEOUTVARIABLES object that the named objects dictionary lists under ACAD_WIPEOUT_VARS, by its index.
+fn wipeout_variables(file: &DxfFile) -> Option<usize> {
+    let (start, _) = file.section("OBJECTS")?;
+    let pairs = &file.groups[start + 1].0;
+    let at = pairs.iter().position(|p| p.code == 3 && p.value.trim() == "ACAD_WIPEOUT_VARS")?;
+    object_index(file, pairs.get(at + 1).filter(|p| p.code == 350 || p.code == 360)?.value.trim())
+}
+
+/// The frame mode in the drawing's WIPEOUTVARIABLES object (code 70), when it has a valid one.
+fn wipeout_frame_mode(file: &DxfFile) -> Option<u8> {
+    let at = wipeout_variables(file)?;
+    u8::try_from(file.groups[at].subclass("AcDbWipeoutVariables").int(70)?).ok().filter(|mode| *mode <= 2)
+}
+
+/// The frame mode AutoCAD reads from WIPEOUTVARIABLES. An existing object is updated; one is made when the mode is
+/// not the default or the drawing has wipeouts, so files without either stay as they were.
+fn write_wipeout_variables(file: &mut DxfFile, writer: &mut Writer, document: &Document) {
+    if let Some(at) = wipeout_variables(file) {
+        file.groups[at].set_in("AcDbWipeoutVariables", 70, document.wipeout_frame.to_string());
+        return;
+    }
+    if document.wipeout_frame == 1 && !writer.wipeouts {
+        return;
+    }
+    let Some((start, _)) = file.section("OBJECTS") else { return };
+    let root = start + 1;
+    let root_handle = file.groups[root].handle().unwrap_or("0").trim().to_string();
+    let handle = writer.handle();
+    let object = Group(vec![
+        pair(0, "WIPEOUTVARIABLES"),
+        pair(5, &handle),
+        pair(102, "{ACAD_REACTORS"),
+        pair(330, &root_handle),
+        pair(102, "}"),
+        pair(330, &root_handle),
+        pair(100, "AcDbWipeoutVariables"),
+        pair(70, document.wipeout_frame),
+    ]);
+    let pairs = &mut file.groups[root].0;
+    let end = pairs.iter().position(|p| p.code >= 1000).unwrap_or(pairs.len());
+    pairs.splice(end..end, [pair(3, "ACAD_WIPEOUT_VARS"), pair(350, &handle)]);
+    file.groups.insert(root + 1, object);
+}
+
 /// The dictionary that lists the image files.
 fn image_dictionary(file: &DxfFile) -> Option<usize> {
     let (start, _) = file.section("OBJECTS")?;
@@ -4026,6 +4071,9 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     write_images(&mut file, &mut writer);
     if writer.wipeouts {
         declare_class(&mut file, WIPEOUT_CLASS);
+    }
+    if writer.modern {
+        write_wipeout_variables(&mut file, &mut writer, document);
     }
     write_table_style(&mut file, &writer);
     if let Some(units) = document.units {

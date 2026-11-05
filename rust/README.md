@@ -23,7 +23,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - `MLINE` (`ML`): multilines with Justification (Top/Zero/Bottom), Scale and STyle, in the drawing's own multiline
   styles (element offsets, colors, linetypes, caps and joints); they load from and save to DXF and explode to lines
 - `WIPEOUT`: masking areas from clicked corners or a closed polyline, hiding what is drawn under them; framed on
-  screen, printed without a frame; they load from and save to DXF
+  screen and printed with their frames; its Frames option sets WIPEOUTFRAME for the drawing (ON shows and prints
+  the frames, OFF hides them, Display but not plot shows them on screen only); they load from and save to DXF
 - `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
