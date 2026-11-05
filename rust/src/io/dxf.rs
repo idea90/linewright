@@ -3525,13 +3525,15 @@ fn declare_class(file: &mut DxfFile, (name, class, application, flags, entity): 
     file.groups.insert(end, group);
 }
 
-/// A multiline style from its MLINESTYLE object: square caps at either end (flags 16 and 256), lines across the
-/// joints (flag 2), and its elements, each starting at its offset (code 49).
+/// A multiline style from its MLINESTYLE object: the fill (flag 1, in the color that comes before the first element),
+/// square, round and inner-arc ends at either end (flags 16, 64 and 32 at the start, 256, 1024 and 512 at the end),
+/// lines across the joints (flag 2), and its elements, each starting at its offset (code 49).
 fn read_mline_style(group: &Group) -> Option<MlineStyle> {
     if group.kind() != "MLINESTYLE" {
         return None;
     }
     let flags = group.int(70).unwrap_or(0);
+    let mut fill_color = BYLAYER;
     let mut elements: Vec<MlineElement> = vec![];
     for p in group.0.iter().take_while(|p| p.code < 1000) {
         match p.code {
@@ -3539,6 +3541,7 @@ fn read_mline_style(group: &Group) -> Option<MlineStyle> {
                 elements.push(MlineElement { offset: p.value.trim().parse().ok()?, color: BYLAYER, linetype: BYLAYER_LINETYPE.to_string() })
             }
             62 if !elements.is_empty() => elements.last_mut()?.color = p.value.trim().parse().unwrap_or(BYLAYER),
+            62 => fill_color = p.value.trim().parse().unwrap_or(BYLAYER),
             6 if !elements.is_empty() => elements.last_mut()?.linetype = canonical_linetype(p.value.trim()),
             _ => {}
         }
@@ -3547,8 +3550,13 @@ fn read_mline_style(group: &Group) -> Option<MlineStyle> {
         name: group.text(2)?.trim().to_string(),
         description: group.text(3).unwrap_or_default().trim().to_string(),
         elements,
+        fill: (flags & 1 != 0).then_some(fill_color),
         start_cap: flags & 16 != 0,
         end_cap: flags & 256 != 0,
+        start_round: flags & 64 != 0,
+        end_round: flags & 1024 != 0,
+        start_inner_arcs: flags & 32 != 0,
+        end_inner_arcs: flags & 512 != 0,
         joints: flags & 2 != 0,
     })
 }

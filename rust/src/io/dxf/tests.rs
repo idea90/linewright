@@ -743,3 +743,30 @@ fn a_multiline_survives_a_round_trip_in_its_style() {
     assert_eq!(back.mline_styles[0].elements.len(), 2);
     assert!(back.skipped.is_empty(), "{:?}", back.skipped);
 }
+
+#[test]
+fn a_multiline_style_reads_its_fill_and_round_ends() {
+    use crate::model::mline::MlineStyle;
+    // Flags 1 (fill) | 64 (round start) | 1024 (round end), the fill color 3 before the first element.
+    let pairs = [
+        (0, "MLINESTYLE"),
+        (2, "Rounded"),
+        (70, "1089"),
+        (62, "3"),
+        (49, "0.5"),
+        (62, "256"),
+        (6, "BYLAYER"),
+        (49, "-0.5"),
+        (62, "256"),
+        (6, "BYLAYER"),
+    ]
+    .into_iter()
+    .map(|(code, value)| pair(code, value))
+    .collect();
+    let style: MlineStyle = read_mline_style(&Group(pairs)).expect("a style");
+    assert_eq!(style.name, "Rounded");
+    assert_eq!(style.fill, Some(3));
+    assert!(style.start_round && style.end_round);
+    assert!(!style.start_cap && !style.end_cap && !style.start_inner_arcs && !style.end_inner_arcs && !style.joints);
+    assert_eq!(style.elements.len(), 2);
+}
