@@ -10,7 +10,7 @@ use super::app::{
     StyleForm, UNIT_CHOICES, WINDOW_NAME, quick_select_value,
 };
 use super::controller::{IDLE_HINT, IDLE_PROMPT};
-use super::{frame, icons, theme};
+use super::{frame, icons, logo, theme};
 use crate::canvas::aci::{BY_BLOCK, BY_LAYER, NAMED_COLORS, color_name, color_rgb, is_true_color, parse_color, true_color};
 use crate::canvas::plot::{FIT, PAPER_SIZES};
 use crate::canvas::render::{self, Overlay, Screen};
@@ -164,7 +164,7 @@ pub fn header(app: &mut LinewrightApp, ctx: &egui::Context) {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         ui.horizontal_centered(|ui| {
-            let menu_icon = icons::image("MENU", theme::ACCENT).fit_to_exact_size(vec2(QUICK_ICON, QUICK_ICON));
+            let menu_icon = logo::image().fit_to_exact_size(vec2(QUICK_ICON, QUICK_ICON));
             ui.menu_image_text_button(menu_icon, RichText::new(WINDOW_NAME).color(theme::ACCENT).strong().size(15.0), |ui| {
                 ui.set_min_width(220.0);
                 for (text, shortcut, action) in [
@@ -1428,7 +1428,7 @@ fn welcome_grid(ui: &egui::Ui, area: Rect) {
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// The mark and name: a drafting square with a line drawn across it and a compass arc, then the tagline.
+/// The mark and name: Linewright's logo on a tile, then the tagline.
 fn welcome_title(ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(58.0, 58.0), Sense::hover());
@@ -1440,19 +1440,7 @@ fn welcome_title(ui: &mut egui::Ui) {
             Stroke::new(1.0_f32, theme::BORDER_STRONG),
             StrokeKind::Inside,
         );
-        let inner = rect.shrink(15.0);
-        let pen = Stroke::new(2.4_f32, theme::TEXT);
-        painter.line_segment([inner.left_bottom(), inner.right_top()], pen);
-        painter.circle_filled(inner.left_bottom(), 3.2, theme::TEXT);
-        painter.circle_filled(inner.right_top(), 3.2, theme::TEXT);
-        // A compass arc swung from the line's start, as a draftsman checks a length.
-        let arc: Vec<Pos2> = (0..=24)
-            .map(|i| {
-                let a = std::f32::consts::FRAC_PI_2 * i as f32 / 24.0;
-                inner.left_bottom() + vec2(a.cos(), -a.sin()) * inner.width() * 0.7
-            })
-            .collect();
-        painter.add(egui::Shape::line(arc, Stroke::new(1.6_f32, theme::ACCENT_EDGE.gamma_multiply(1.6))));
+        logo::paint(painter, rect.shrink(14.0));
         ui.add_space(10.0);
         ui.vertical(|ui| {
             ui.add_space(2.0);

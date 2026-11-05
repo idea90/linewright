@@ -14,6 +14,7 @@ fn main() -> eframe::Result {
             .with_app_id("linewright")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 560.0])
+            .with_icon(linewright::ui::logo::window_icon(64))
             .with_decorations(false), // the header is the title bar
         ..Default::default()
     };
