@@ -215,6 +215,33 @@ fn erase_asks_for_objects_when_nothing_is_selected() {
 }
 
 #[test]
+fn oops_brings_back_what_erase_took_out_and_keeps_the_new_line() {
+    let first = line(pt(0.0, 0.0), pt(1.0, 0.0));
+    let second = line(pt(0.0, 1.0), pt(1.0, 1.0));
+    let mut host = FakeHost::with(vec![first.clone(), second.clone()]);
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let session = start_with("ERASE", &mut host, vec![first.clone(), second.clone()], defaults.clone());
+    assert!(!session.active());
+    assert!(host.entities.is_empty());
+
+    let mut session = start_with("LINE", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["0,5", "5,5", ""]);
+    assert_eq!(host.shapes(), vec![line_shape(pt(0.0, 5.0), pt(5.0, 5.0))]);
+
+    let session = start_with("OOPS", &mut host, vec![], defaults.clone());
+    assert!(!session.active());
+    assert_eq!(host.entities.len(), 3);
+    assert!(host.entities.iter().any(|e| e.id == first.id));
+    assert!(host.entities.iter().any(|e| e.id == second.id));
+    assert_eq!(host.shapes()[0], line_shape(pt(0.0, 5.0), pt(5.0, 5.0)));
+    assert!(defaults.borrow().last_erased.is_empty());
+
+    start_with("OOPS", &mut host, vec![], defaults);
+    assert_eq!(host.reports.last().unwrap(), "Nothing to restore.");
+    assert_eq!(host.entities.len(), 3);
+}
+
+#[test]
 fn mirror_keeps_the_source_by_default() {
     let target = line(pt(1.0, 0.0), pt(2.0, 0.0));
     let mut host = FakeHost::with(vec![target.clone()]);

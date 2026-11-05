@@ -122,6 +122,7 @@ pub async fn block_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<D
     let block = BlockRef(Arc::new(BlockDef { name: name.clone(), base, entities, attribute_defs, xref: None }));
     defaults.borrow_mut().blocks.push(block.clone());
     defaults.borrow_mut().last_block = name.clone();
+    defaults.borrow_mut().last_erased = objects.clone();
     io.step(Step::Compound(vec![Step::Remove(objects), Step::Drawn(vec![insert_of(&block, base, 1.0, 0.0, vec![])])]));
     io.step(Step::Report(format!("Block {name} made.")));
 }

@@ -55,10 +55,21 @@ pub(super) async fn base_point(io: &Io) -> Option<Point> {
     }
 }
 
-pub async fn erase(io: Io, selected: Vec<Entity>) {
+pub async fn erase(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
     let objects = objects_to_edit(&io, selected).await;
     if !objects.is_empty() {
+        defaults.borrow_mut().last_erased = objects.clone();
         io.step(Step::Remove(objects));
+    }
+}
+
+/// OOPS: brings back the objects the last ERASE or BLOCK took out, as one undo step, and forgets them.
+pub async fn oops(io: Io, defaults: Rc<RefCell<Defaults>>) {
+    let objects = std::mem::take(&mut defaults.borrow_mut().last_erased);
+    if objects.is_empty() {
+        io.step(Step::Report("Nothing to restore.".into()));
+    } else {
+        io.step(Step::Commit(objects));
     }
 }
 
