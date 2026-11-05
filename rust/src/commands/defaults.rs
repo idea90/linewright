@@ -62,6 +62,10 @@ pub struct Defaults {
     /// What COPYCLIP and CUTCLIP last copied, with the point it is pasted by.
     pub clipboard: Vec<Entity>,
     pub clipboard_base: crate::model::geometry::Point,
+    /// The SAVETIME autosave interval in minutes, which the window keeps up to date.
+    pub autosave_minutes: u32,
+    /// A SAVETIME value typed, for the window to set and remember.
+    pub autosave_request: Option<u32>,
 }
 
 impl Default for Defaults {
@@ -102,6 +106,8 @@ impl Default for Defaults {
             blocks: vec![],
             clipboard: vec![],
             clipboard_base: Default::default(),
+            autosave_minutes: crate::ui::settings::DEFAULT_SAVETIME,
+            autosave_request: None,
         }
     }
 }

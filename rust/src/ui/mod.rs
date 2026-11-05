@@ -7,5 +7,6 @@ pub mod icons;
 pub mod layers;
 pub mod panels;
 pub mod recent;
+pub mod settings;
 pub mod theme;
 pub mod undo;

@@ -2,9 +2,14 @@ use std::sync::Arc;
 
 use crate::model::entities::{BYLAYER, BlockDef, BlockRef, Entity};
 use crate::model::styles::BYLAYER_LINETYPE;
+use std::collections::hash_map::RandomState;
 use std::fs;
+use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc::{self, Sender};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::dxf::{DxfFile, document_from_dxf, dxf_from_document};
 use crate::model::document::Document;
@@ -221,6 +226,246 @@ pub fn oda_converter() -> Option<PathBuf> {
         .collect();
     found.sort();
     found.pop()
+}
+
+// ------------------------------------------------------------------------------------------- autosave
+
+/// The small text file beside an autosave copy: the drawing's name, the file it was saved to, and when it was written.
+const AUTOSAVE_NOTE: &str = "txt";
+
+/// An autosave copy a session left behind: its DXF, the drawing's name and file, and when the copy was written.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Autosave {
+    pub dxf: PathBuf,
+    /// The drawing's file name, or the name it had before it was saved, as in "plan.dxf" or "Drawing1".
+    pub title: String,
+    /// The file the drawing was saved to, if it ever was.
+    pub original: Option<PathBuf>,
+    /// When the copy was written, in seconds since 1970.
+    pub written: u64,
+}
+
+impl Autosave {
+    /// How long ago the copy was written, as the recovery dialog says it: "just now", "5 minutes ago".
+    pub fn age_text(&self, now: u64) -> String {
+        let seconds = now.saturating_sub(self.written);
+        let (count, unit) = match seconds {
+            0..60 => return "just now".to_string(),
+            60..3600 => (seconds / 60, "minute"),
+            3600..86400 => (seconds / 3600, "hour"),
+            _ => (seconds / 86400, "day"),
+        };
+        format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" })
+    }
+}
+
+/// Whether a drawing is due an autosave: it has unsaved changes, autosave is on, and `minutes` have passed since it
+/// was last saved or autosaved.
+pub fn autosave_due(modified: bool, minutes: u32, since_saved: Duration) -> bool {
+    modified && minutes > 0 && since_saved >= Duration::from_secs(u64::from(minutes) * 60)
+}
+
+/// The file name of an autosave copy: the drawing's name and a unique id, as in plan_3f2a.dxf.
+pub fn autosave_name(stem: &str, id: &str) -> String {
+    format!("{stem}_{id}.{DXF_SUFFIX}")
+}
+
+/// A new autosave file for a drawing called `stem` in `folder`, with an id that no file there has.
+pub fn new_autosave_path(folder: &Path, stem: &str) -> PathBuf {
+    loop {
+        let id = format!("{:06x}", RandomState::new().build_hasher().finish() & 0xff_ffff);
+        let path = folder.join(autosave_name(stem, &id));
+        if !path.exists() {
+            return path;
+        }
+    }
+}
+
+/// The note written beside an autosave copy: the drawing's name, the file it was saved to (empty if none), and when
+/// the copy was written, one item per line.
+pub fn autosave_note(title: &str, original: Option<&Path>, written: u64) -> String {
+    let original = original.map_or(String::new(), |p| p.display().to_string());
+    format!("{}\n{original}\n{written}\n", title.replace(['\n', '\r'], " "))
+}
+
+/// The current time in seconds since 1970.
+pub fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Write an autosave copy and its note. The copy is written under another name first, so a crash in the middle never
+/// leaves a damaged copy under its real name.
+fn write_autosave(dxf: &Path, bytes: &[u8], note: &str) -> std::io::Result<()> {
+    if let Some(folder) = dxf.parent() {
+        fs::create_dir_all(folder)?;
+    }
+    let staged = dxf.with_extension("tmp");
+    fs::write(&staged, bytes)?;
+    fs::rename(&staged, dxf)?;
+    fs::write(dxf.with_extension(AUTOSAVE_NOTE), note)
+}
+
+/// Remove an autosave copy and its note.
+pub fn remove_autosave(dxf: &Path) {
+    let _ = fs::remove_file(dxf);
+    let _ = fs::remove_file(dxf.with_extension(AUTOSAVE_NOTE));
+}
+
+/// The autosave copies in `folder`, newest first. A copy whose note is missing or unreadable is still listed.
+pub fn leftover_autosaves(folder: &Path) -> Vec<Autosave> {
+    let Ok(entries) = fs::read_dir(folder) else { return vec![] };
+    let mut copies: Vec<Autosave> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| suffix_of(path) == DXF_SUFFIX && path.is_file())
+        .map(read_autosave)
+        .collect();
+    copies.sort_by_key(|copy| std::cmp::Reverse(copy.written));
+    copies
+}
+
+fn read_autosave(dxf: PathBuf) -> Autosave {
+    let note = fs::read_to_string(dxf.with_extension(AUTOSAVE_NOTE)).unwrap_or_default();
+    let mut lines = note.lines();
+    let title = lines.next().filter(|t| !t.is_empty()).map_or_else(|| name_of(&dxf), str::to_string);
+    let original = lines.next().filter(|l| !l.is_empty()).map(PathBuf::from);
+    let written = lines.next().and_then(|l| l.trim().parse().ok()).or_else(|| modified_secs(&dxf)).unwrap_or(0);
+    Autosave { dxf, title, original, written }
+}
+
+fn modified_secs(path: &Path) -> Option<u64> {
+    path.metadata().ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+enum Job {
+    Write { dxf: PathBuf, bytes: Vec<u8>, note: String },
+    Remove(PathBuf),
+}
+
+/// Writes and removes autosave copies on a background thread, in the order they are asked for, so the window never
+/// waits on the disk. Dropping it waits until every copy is written or removed.
+pub struct Autosaver {
+    sender: Option<Sender<Job>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Autosaver {
+    /// Start the background thread that does the writing.
+    pub fn start() -> Autosaver {
+        let (sender, receiver) = mpsc::channel::<Job>();
+        let worker = std::thread::spawn(move || {
+            for job in receiver {
+                match job {
+                    Job::Write { dxf, bytes, note } => {
+                        let _ = write_autosave(&dxf, &bytes, &note);
+                    }
+                    Job::Remove(dxf) => remove_autosave(&dxf),
+                }
+            }
+        });
+        Autosaver { sender: Some(sender), worker: Some(worker) }
+    }
+
+    /// Write the DXF bytes of a drawing as an autosave copy, with its note.
+    pub fn write(&self, dxf: PathBuf, bytes: Vec<u8>, note: String) {
+        self.send(Job::Write { dxf, bytes, note });
+    }
+
+    /// Remove an autosave copy once its drawing is saved or discarded.
+    pub fn remove(&self, dxf: PathBuf) {
+        self.send(Job::Remove(dxf));
+    }
+
+    fn send(&self, job: Job) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(job);
+        }
+    }
+}
+
+impl Drop for Autosaver {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod autosave_tests {
+    use super::*;
+
+    #[test]
+    fn an_autosave_is_due_only_with_changes_and_after_savetime() {
+        assert!(!autosave_due(false, 10, Duration::from_secs(9999)), "nothing unsaved");
+        assert!(!autosave_due(true, 0, Duration::from_secs(9999)), "autosave is off");
+        assert!(!autosave_due(true, 10, Duration::from_secs(599)), "not yet");
+        assert!(autosave_due(true, 10, Duration::from_secs(600)));
+    }
+
+    #[test]
+    fn autosave_names_carry_the_drawing_and_a_new_id() {
+        assert_eq!(autosave_name("plan", "3f2a"), "plan_3f2a.dxf");
+        let folder = tempfile::tempdir().unwrap();
+        let first = new_autosave_path(folder.path(), "plan");
+        assert_eq!(first.parent(), Some(folder.path()));
+        assert!(first.file_name().unwrap().to_string_lossy().starts_with("plan_"));
+        fs::write(&first, b"").unwrap();
+        assert_ne!(new_autosave_path(folder.path(), "plan"), first);
+    }
+
+    #[test]
+    fn leftover_copies_are_read_back_newest_first_with_their_notes() {
+        let folder = tempfile::tempdir().unwrap();
+        let original = Path::new("/work/plan.dxf");
+        let older = folder.path().join("plan_aaaaaa.dxf");
+        write_autosave(&older, b"0", &autosave_note("plan.dxf", Some(original), 1000)).unwrap();
+        let untitled = folder.path().join("Drawing1_bbbbbb.dxf");
+        write_autosave(&untitled, b"0", &autosave_note("Drawing1", None, 2000)).unwrap();
+        fs::write(folder.path().join("stray.txt"), "x").unwrap();
+        fs::write(folder.path().join("half_cccccc.tmp"), "x").unwrap();
+        let found = leftover_autosaves(folder.path());
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].dxf, untitled);
+        assert_eq!(found[0].original, None);
+        let expected = Autosave { dxf: older.clone(), title: "plan.dxf".into(), original: Some(original.to_path_buf()), written: 1000 };
+        assert_eq!(found[1], expected);
+        remove_autosave(&older);
+        assert_eq!(leftover_autosaves(folder.path()).len(), 1);
+        assert!(leftover_autosaves(&folder.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn a_copy_without_a_note_is_still_listed() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("plan_dddddd.dxf"), b"0").unwrap();
+        let found = leftover_autosaves(folder.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].title, "plan_dddddd.dxf");
+        assert!(found[0].original.is_none());
+    }
+
+    #[test]
+    fn the_background_writer_finishes_its_queue_before_it_stops() {
+        let folder = tempfile::tempdir().unwrap();
+        let dxf = folder.path().join("plan_eeeeee.dxf");
+        let writer = Autosaver::start();
+        writer.write(dxf.clone(), b"DXF".to_vec(), autosave_note("plan.dxf", None, 5));
+        writer.remove(dxf.clone());
+        drop(writer);
+        assert!(!dxf.exists());
+        assert!(!dxf.with_extension("txt").exists());
+    }
+
+    #[test]
+    fn ages_read_as_the_dialog_says_them() {
+        let copy = Autosave { dxf: PathBuf::new(), title: String::new(), original: None, written: 1000 };
+        assert_eq!(copy.age_text(1030), "just now");
+        assert_eq!(copy.age_text(1060), "1 minute ago");
+        assert_eq!(copy.age_text(1000 + 3 * 3600), "3 hours ago");
+        assert_eq!(copy.age_text(1000 + 86400), "1 day ago");
+    }
 }
 
 #[cfg(test)]

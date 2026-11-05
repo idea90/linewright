@@ -317,6 +317,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "ID" => Box::pin(inquiry::id_command(io)),
             "ZOOM" => Box::pin(inquiry::zoom_command(io)),
             "TEXTEDIT" => Box::pin(inquiry::textedit_command(io, selected)),
+            "SAVETIME" => Box::pin(crate::ui::settings::savetime_command(io, defaults)),
             other => panic!("unknown command {other}"),
         }
     }
@@ -347,6 +348,8 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("SELECTSIMILAR", "Select similar objects"),
     ("FIND", "Find and replace text"),
     ("PURGE", "Purge unused items"),
+    ("SAVETIME", "Autosave interval"),
+    ("DRAWINGRECOVERY", "Drawing recovery"),
     ("UNITS", "Drawing units"),
     ("LWEIGHT", "Lineweight settings"),
     ("STYLE", "Text style manager"),

@@ -7,7 +7,7 @@ use eframe::egui::{
 
 use super::app::{
     Action, COMMAND_INPUT, ColorForm, ColorTarget, ContextMenu, Dialog, LinewrightApp, MenuKind, QUICK_SELECT_PROPERTIES, RENAME_INPUT,
-    StyleForm, UNIT_CHOICES, UNTITLED, WINDOW_NAME, quick_select_value,
+    StyleForm, UNIT_CHOICES, WINDOW_NAME, quick_select_value,
 };
 use super::controller::{IDLE_HINT, IDLE_PROMPT};
 use super::{frame, icons, theme};
@@ -18,6 +18,7 @@ use crate::commands::parse::{dynamic_entry, parse_length};
 use crate::commands::prompts::PromptKind;
 use crate::commands::registry::{Suggestion, label, resolve, shortest_alias, suggestions};
 use crate::io::dxf::unit_names;
+use crate::io::files::unix_now;
 use crate::model::dimension::{Arrowhead, STANDARD_STYLE, Tolerance};
 use crate::model::entities::{EntityId, Shape};
 use crate::model::lineweight;
@@ -1877,6 +1878,13 @@ fn loading_overlay(ui: &egui::Ui, ctx: &egui::Context, canvas: egui::Rect, name:
 
 // ------------------------------------------------------------------------------------------------ dialogs
 
+/// What the Drawing Recovery dialog was asked to do: open or delete the copy at this index, or close the dialog.
+enum RecoveryChoice {
+    Open(usize),
+    Delete(usize),
+    Close,
+}
+
 pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
     let Some(dialog) = &mut app.dialog else { return };
     match dialog {
@@ -1896,7 +1904,7 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
         }
         Dialog::Discard(then) => {
             let then = *then;
-            let name = app.document().path.as_ref().map_or(UNTITLED.to_string(), |_| app.file_name());
+            let name = app.file_name();
             let modal = egui::Modal::new(Id::new("discard")).show(ctx, |ui| {
                 ui.label(RichText::new(WINDOW_NAME).strong().size(15.0));
                 ui.add_space(8.0);
@@ -1919,6 +1927,61 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             match modal.inner {
                 Some(Some(save_first)) => app.discard_answered(then, save_first, ctx),
                 Some(None) => app.dialog = None,
+                None if modal.should_close() => app.dialog = None,
+                None => {}
+            }
+        }
+        Dialog::Recovery(copies) => {
+            let now = unix_now();
+            let mut choice = None;
+            let modal = egui::Modal::new(Id::new("recovery")).show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.label(RichText::new("Drawing Recovery").strong().size(15.0));
+                ui.add_space(8.0);
+                if copies.is_empty() {
+                    ui.label("No drawings need recovering.");
+                } else {
+                    ui.label("These drawings were not saved before Linewright stopped. Open one to carry on with it.");
+                    egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                        for (index, copy) in copies.iter().enumerate() {
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(&copy.title).strong());
+                                    let folder = copy.original.as_deref().and_then(std::path::Path::parent);
+                                    let folder = folder.map_or("Not saved yet".to_string(), |f| f.display().to_string());
+                                    ui.label(RichText::new(format!("Folder: {folder}")).color(theme::TEXT_DIM));
+                                    ui.label(RichText::new(format!("Autosaved {}", copy.age_text(now))).color(theme::TEXT_DIM));
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("Delete").clicked() {
+                                        choice = Some(RecoveryChoice::Delete(index));
+                                    }
+                                    if ui.button("Open").clicked() {
+                                        choice = Some(RecoveryChoice::Open(index));
+                                    }
+                                });
+                            });
+                        }
+                    });
+                }
+                ui.add_space(12.0);
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| ui.button("Close").clicked()).inner
+            });
+            if choice.is_none() && modal.inner {
+                choice = Some(RecoveryChoice::Close);
+            }
+            match choice {
+                Some(RecoveryChoice::Open(index)) => {
+                    let copy = copies[index].clone();
+                    app.dialog = None;
+                    app.recover(copy, ctx);
+                }
+                Some(RecoveryChoice::Delete(index)) => {
+                    let copy = copies.remove(index);
+                    app.delete_copy(copy);
+                }
+                Some(RecoveryChoice::Close) => app.dialog = None,
                 None if modal.should_close() => app.dialog = None,
                 None => {}
             }
