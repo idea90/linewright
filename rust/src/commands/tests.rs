@@ -19,6 +19,8 @@ struct FakeHost {
     history: Vec<Vec<Entity>>,
     group_depth: usize,
     reports: Vec<String>,
+    /// The WIPEOUTFRAME mode a command set, if one did.
+    frame_mode: Option<u8>,
 }
 
 impl FakeHost {
@@ -80,6 +82,9 @@ impl Host for FakeHost {
     }
     fn groups(&mut self, groups: Vec<crate::model::document::ObjectGroup>) {
         self.groups = groups;
+    }
+    fn wipeout_frame(&mut self, mode: u8) {
+        self.frame_mode = Some(mode);
     }
     fn extent(&self) -> Option<Bounds> {
         self.entities.iter().map(entity_extent).reduce(Bounds::union)
@@ -709,6 +714,33 @@ fn wipeout_from_clicked_corners_or_a_closed_polyline() {
     assert_eq!(host.shapes().len(), 1, "the polyline is erased");
     let Shape::Wipeout { corners } = &host.shapes()[0] else { panic!() };
     assert_eq!(corners.len(), 4);
+}
+
+#[test]
+fn wipeout_frames_sets_the_drawings_frame_mode_and_ends() {
+    let defaults = Rc::new(RefCell::new(Defaults { wipeout_frame: 1, ..Defaults::default() }));
+    let mut host = FakeHost::default();
+    let mut session = start_with("WIPEOUT", &mut host, vec![], defaults.clone());
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Specify first point or [Frames/Polyline] <Polyline>:");
+    typed(&mut session, &mut host, &["F"]);
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter mode [ON/OFF/Display but not plot] <ON>:");
+    typed(&mut session, &mut host, &["OFF"]);
+    assert!(!session.active(), "Frames ends the command");
+    assert_eq!(host.frame_mode, Some(0));
+    assert!(host.shapes().is_empty(), "no wipeout is drawn");
+
+    let mut host = FakeHost::default();
+    let defaults = Rc::new(RefCell::new(Defaults { wipeout_frame: 2, ..Defaults::default() }));
+    let mut session = start_with("WIPEOUT", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["F"]);
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter mode [ON/OFF/Display but not plot] <Display but not plot>:");
+    typed(&mut session, &mut host, &["ON"]);
+    assert_eq!(host.frame_mode, Some(1));
+
+    let mut host = FakeHost::default();
+    let mut session = start_with("WIPEOUT", &mut host, vec![], defaults);
+    typed(&mut session, &mut host, &["F", "D"]);
+    assert_eq!(host.frame_mode, Some(2));
 }
 
 #[test]

@@ -51,6 +51,8 @@ pub struct Defaults {
     /// The multileader style new multileaders follow.
     pub mleader_style: crate::model::multileader::MleaderStyle,
     pub chamfer_distances: (f64, f64),
+    /// The drawing's WIPEOUTFRAME mode, which WIPEOUT's Frames option shows. The window keeps it up to date.
+    pub wipeout_frame: u8,
     pub hatch_pattern: String,
     pub hatch_scale: f64,
     pub hatch_angle: f64,
@@ -92,6 +94,7 @@ impl Default for Defaults {
             mtext_request: None,
             mleader_style: crate::model::multileader::MleaderStyle::standard(),
             chamfer_distances: (0.0, 0.0),
+            wipeout_frame: 1,
             hatch_pattern: "SOLID".into(),
             hatch_scale: 1.0,
             hatch_angle: 0.0,

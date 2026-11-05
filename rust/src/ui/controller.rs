@@ -123,6 +123,11 @@ impl Host for Drawing {
         self.document.extent()
     }
 
+    fn wipeout_frame(&mut self, mode: u8) {
+        self.document.wipeout_frame = mode;
+        self.note_change();
+    }
+
     fn draw_order(&mut self, objects: Vec<Entity>, placement: DrawOrder) {
         let ids: Vec<EntityId> = objects.iter().map(|e| e.id).collect();
         let change = Change::Reorder { before: self.document.order(), after: self.document.reordered(&ids, &placement) };
@@ -516,6 +521,7 @@ impl Controller {
             let mut defaults = self.defaults.borrow_mut();
             defaults.dimension_styles = document.dimension_styles.clone();
             defaults.mline_styles = document.mline_styles.clone();
+            defaults.wipeout_frame = document.wipeout_frame;
             if let Some(style) = document.text_styles.iter().find(|s| s.name == document.current_text_style) {
                 defaults.text_style = style.clone();
             }

@@ -355,13 +355,15 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
                 &own
             }
         };
-        // A wipeout hides what is under it in the background's color; its frame shows in its own.
+        // A wipeout hides what is under it in the background's color; its frame shows in its own, unless WIPEOUTFRAME is 0.
         for mask in &parts.masks {
             if !matches!(look, Look::Preview) {
                 fill_area(shapes, screen, std::slice::from_ref(mask), if screen.paper { Color32::WHITE } else { theme::CANVAS });
             }
-            let frame: Vec<Point> = mask.iter().chain(mask.first()).copied().collect();
-            stroke_path(shapes, screen, &frame, pen);
+            if document.wipeout_frame != 0 {
+                let frame: Vec<Point> = mask.iter().chain(mask.first()).copied().collect();
+                stroke_path(shapes, screen, &frame, pen);
+            }
         }
         for path in &parts.paths {
             stroke_path(shapes, screen, path, pen);

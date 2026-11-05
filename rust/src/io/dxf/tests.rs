@@ -724,6 +724,36 @@ fn a_rectangular_wipeout_clip_gives_four_corners() {
 }
 
 #[test]
+fn the_wipeout_frame_mode_survives_a_round_trip_and_is_written_only_when_needed() {
+    let plain = Document::with_entities(vec![line(pt(0.0, 0.0), pt(1.0, 1.0))]);
+    let file = dxf_from_document(&plain);
+    assert!(!file.groups.iter().any(|g| g.kind() == "WIPEOUTVARIABLES"), "the default mode needs no object");
+
+    let mut document =
+        Document::with_entities(vec![Entity::new(Shape::Wipeout { corners: vec![pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 3.0)] })]);
+    assert_eq!(round_trip(&document).wipeout_frame, 1, "a drawing starts with its frames on and printed");
+    for mode in [0u8, 2] {
+        document.wipeout_frame = mode;
+        let file = dxf_from_document(&document);
+        let object = file.groups.iter().find(|g| g.kind() == "WIPEOUTVARIABLES").expect("the mode is written");
+        assert_eq!(object.subclass("AcDbWipeoutVariables").int(70), Some(i64::from(mode)));
+        let back = round_trip(&document);
+        assert_eq!(back.wipeout_frame, mode);
+        assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+    }
+
+    // A file that already has the object keeps it and takes the new mode.
+    let mut back = round_trip(&document);
+    back.wipeout_frame = 1;
+    assert_eq!(round_trip(&back).wipeout_frame, 1);
+
+    // A mode other than the default is kept even with no wipeouts to frame.
+    let mut quiet = Document::with_entities(vec![line(pt(0.0, 0.0), pt(1.0, 1.0))]);
+    quiet.wipeout_frame = 0;
+    assert_eq!(round_trip(&quiet).wipeout_frame, 0);
+}
+
+#[test]
 fn a_multiline_survives_a_round_trip_in_its_style() {
     use crate::model::mline::{Justification, MlineStyle};
     let wall = Entity::new(Shape::Mline {

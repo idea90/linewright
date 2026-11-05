@@ -191,6 +191,9 @@ pub struct Document {
     pub show_lineweights: bool,
     /// How model space plots: its plot style table and whether objects' lineweights print.
     pub model_plot: PlotSettings,
+    /// WIPEOUTFRAME: whether wipeout frames show on screen and print. 0 hides them, 1 shows and prints them (AutoCAD's
+    /// start value), and 2 shows them but does not print them.
+    pub wipeout_frame: u8,
     pub path: Option<PathBuf>,
     /// The loaded DXF file without the entities this document holds. Saving writes the document into it, so
     /// content Linewright cannot edit yet is kept.
@@ -272,6 +275,7 @@ impl Document {
             default_lineweight: super::lineweight::DEFAULT_MM100,
             show_lineweights: false,
             model_plot: PlotSettings::default(),
+            wipeout_frame: 1,
             path: None,
             source: None,
             skipped: BTreeMap::new(),

@@ -201,6 +201,8 @@ pub enum Step {
     Report(String),
     /// Change what the drawing area shows.
     View(ViewRequest),
+    /// Set whether wipeout frames show and plot: 0 off, 1 on and plotted, 2 shown but not plotted.
+    WipeoutFrame(u8),
 }
 
 /// A change to what the drawing area shows, as ZOOM asks.
@@ -238,6 +240,8 @@ pub trait Host {
     fn draw_order(&mut self, _objects: Vec<Entity>, _placement: DrawOrder) {}
     /// A layout change, for the window to make once the command has had its say.
     fn layout(&mut self, _request: LayoutRequest) {}
+    /// Set whether wipeout frames show and plot, as WIPEOUTFRAME does.
+    fn wipeout_frame(&mut self, _mode: u8) {}
 }
 
 /// What LAYOUT asks of the window. Layouts go by index; None is model space.
@@ -468,5 +472,6 @@ fn perform(step: Step, host: &mut dyn Host) {
         Step::Groups(groups) => host.groups(groups),
         Step::Layers { layers, current } => host.layers(layers, current),
         Step::DrawOrder(objects, placement) => host.draw_order(objects, placement),
+        Step::WipeoutFrame(mode) => host.wipeout_frame(mode),
     }
 }
