@@ -29,7 +29,7 @@ pub struct MlineStyle {
     /// A half circle closing the start with the outermost two lines, bulging out past the end.
     pub start_round: bool,
     pub end_round: bool,
-    /// A half circle joining the next pair of lines inward at the start, bulging back into the multiline.
+    /// Half circles joining the pairs of lines inside the outermost two at the start, nested inside its round cap.
     pub start_inner_arcs: bool,
     pub end_inner_arcs: bool,
     pub joints: bool,
@@ -215,10 +215,10 @@ fn end_arcs(points: &[Point], miters: &[Point], distances: &[f64], style: &Mline
             continue;
         }
         if style.start_inner_arcs {
-            out.push((None, half_circle(points[0], miters[0], outer, inner, start)));
+            out.push((None, half_circle(points[0], miters[0], outer, inner, start * -1.0)));
         }
         if style.end_inner_arcs {
-            out.push((None, half_circle(points[last], miters[last], outer, inner, end * -1.0)));
+            out.push((None, half_circle(points[last], miters[last], outer, inner, end)));
         }
     }
     out
@@ -382,8 +382,8 @@ mod tests {
         let arcs: Vec<&Vec<Point>> = paths.iter().filter(|(e, _)| e.is_none()).map(|(_, p)| p).collect();
         assert_eq!(arcs.len(), 1);
         assert!(close(arcs[0][0], pt(0.0, 0.5)) && close(*arcs[0].last().unwrap(), pt(0.0, -0.5)), "{:?}", arcs[0]);
-        // The arc bulges back into the multiline, so its middle is half a unit along from the end.
-        assert!(arcs[0].iter().any(|p| close(*p, pt(0.5, 0.0))), "{:?}", arcs[0]);
+        // Like a round cap, it bulges out past the end, half its width.
+        assert!(arcs[0].iter().any(|p| close(*p, pt(-0.5, 0.0))), "{:?}", arcs[0]);
     }
 
     #[test]
