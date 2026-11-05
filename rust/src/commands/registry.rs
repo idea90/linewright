@@ -4,7 +4,7 @@ use std::rc::Rc;
 use super::defaults::Defaults;
 use super::prompts::{Command, Io};
 use super::{
-    blocks, curves, dimension, drafting, draw, edit, groups, inquiry, layer_tools, layout, measuring, modify, qdim, reshape, shapes,
+    blocks, curves, dimension, drafting, draw, edit, groups, inquiry, layer_tools, layout, measuring, mledit, modify, qdim, reshape, shapes,
 };
 use crate::model::entities::Entity;
 
@@ -39,6 +39,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("REVCLOUD", "Revision cloud"),
     ("WIPEOUT", "Wipeout"),
     ("MLINE", "Multiline"),
+    ("MLEDIT", "Edit multiline"),
     ("MTEXT", "Multiline text"),
     ("DIVIDE", "Divide"),
     ("MEASURE", "Measure"),
@@ -137,6 +138,7 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("XL", "XLINE"),
     ("DO", "DONUT"),
     ("ML", "MLINE"),
+    ("-MLEDIT", "MLEDIT"),
     ("DOUGHNUT", "DONUT"),
     ("MT", "MTEXT"),
     ("DIV", "DIVIDE"),
@@ -251,6 +253,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "REVCLOUD" => Box::pin(drafting::revcloud_command(io, defaults)),
             "WIPEOUT" => Box::pin(drafting::wipeout_command(io)),
             "MLINE" => Box::pin(drafting::mline_command(io, defaults)),
+            "MLEDIT" => Box::pin(mledit::mledit_command(io)),
             "MTEXT" | "-MTEXT" => Box::pin(drafting::mtext_command(io)),
             "MTEXTBOX" => Box::pin(drafting::mtext_box_command(io, defaults)),
             "DIVIDE" => Box::pin(drafting::divide_command(io)),

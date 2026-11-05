@@ -11,3 +11,6 @@ wheels/
 
 # Built programs (published as GitHub release files)
 dist/
+
+# Agent worktrees
+.claude/worktrees/

@@ -739,3 +739,35 @@ fn an_exploded_mline_is_its_lines() {
     assert_eq!(host.entities.len(), 8, "four sides, two lines each");
     assert!(host.shapes().iter().all(|s| matches!(s, Shape::Line { .. })));
 }
+
+#[test]
+fn mledit_joins_two_walls_at_a_corner_and_adds_a_vertex() {
+    use crate::model::mline::{Justification, MlineStyle};
+    let wall = |vertices: Vec<Point>| {
+        Entity::new(Shape::Mline { vertices, closed: false, justification: Justification::Zero, scale: 1.0, style: MlineStyle::standard() })
+    };
+    let (horizontal, vertical) = (wall(vec![pt(0.0, 0.0), pt(20.0, 0.0)]), wall(vec![pt(10.0, 3.0), pt(10.0, 15.0)]));
+    let mut host = FakeHost::with(vec![horizontal.clone(), vertical.clone()]);
+    let mut session = start("MLEDIT", &mut host, vec![]);
+    typed(&mut session, &mut host, &["CJ"]);
+    session.submit_pick(horizontal, pt(2.0, 0.0), false, &mut host);
+    session.submit_pick(vertical, pt(10.0, 12.0), false, &mut host);
+    assert!(!session.active());
+    let paths: Vec<Vec<Point>> = host
+        .shapes()
+        .into_iter()
+        .map(|s| match s {
+            Shape::Mline { vertices, .. } => vertices,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(paths, vec![vec![pt(0.0, 0.0), pt(10.0, 0.0)], vec![pt(10.0, 0.0), pt(10.0, 15.0)]]);
+
+    let target = host.entities[0].clone();
+    let mut session = start("MLEDIT", &mut host, vec![]);
+    typed(&mut session, &mut host, &["AV"]);
+    session.submit_pick(target, pt(5.0, 0.2), false, &mut host);
+    typed(&mut session, &mut host, &[""]);
+    let Shape::Mline { vertices, .. } = &host.entities[0].shape else { panic!() };
+    assert_eq!(vertices, &vec![pt(0.0, 0.0), pt(5.0, 0.0), pt(10.0, 0.0)]);
+}
