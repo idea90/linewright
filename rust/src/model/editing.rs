@@ -206,12 +206,13 @@ pub fn stretch(entity: &Entity, window: &Bounds, shift: Point) -> Option<Entity>
         },
         Shape::Solid { corners } => Shape::Solid { corners: corners.iter().map(moved).collect() },
         Shape::Wipeout { corners } => Shape::Wipeout { corners: corners.iter().map(moved).collect() },
-        Shape::Mline { vertices, closed, justification, scale, style } => Shape::Mline {
+        Shape::Mline { vertices, closed, justification, scale, style, gaps } => Shape::Mline {
             vertices: vertices.iter().map(moved).collect(),
             closed: *closed,
             justification: *justification,
             scale: *scale,
             style: style.clone(),
+            gaps: gaps.clone(),
         },
         Shape::Hatch { loops, solid, pattern, name, scale, angle, gradient, .. } => Shape::Hatch {
             loops: loops.iter().map(|l| l.iter().map(moved).collect()).collect(),
@@ -463,10 +464,13 @@ pub fn apply_grip(shape: &Shape, index: usize, to: Point) -> Option<Shape> {
             corners[index] = to;
             Shape::Wipeout { corners }
         }
-        Shape::Mline { vertices, closed, justification, scale, style } => {
-            let mut vertices = vertices.clone();
-            vertices[index] = to;
-            Shape::Mline { vertices, closed: *closed, justification: *justification, scale: *scale, style: style.clone() }
+        Shape::Mline { vertices, .. } => {
+            let mut shape = shape.clone();
+            if let Shape::Mline { vertices: moved, .. } = &mut shape {
+                *moved = vertices.clone();
+                moved[index] = to;
+            }
+            shape
         }
         _ => moved(),
     })

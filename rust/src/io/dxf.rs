@@ -20,7 +20,7 @@ use crate::model::entities::{
 use crate::model::geometry::{Point, bulge_arc, direction, pt, sweep_degrees};
 use crate::model::index::{Bounds, entity_extent};
 use crate::model::lineweight;
-use crate::model::mline::{Justification, MlineElement, MlineStyle, dedup, element_distances, miters};
+use crate::model::mline::{Justification, MlineElement, MlineGap, MlineStyle, dedup, element_distances, miters};
 use crate::model::multileader::MleaderStyle;
 use crate::model::parts::{BYBLOCK_LINETYPE, TextSpec, clamped_knots, ellipse_point, entity_parts, spline_points};
 use crate::model::styles::{BYLAYER_LINETYPE, canonical_linetype};
@@ -1054,18 +1054,41 @@ impl<'a> Reader<'a> {
                         ..MlineStyle::standard()
                     });
                 let mut vertices: Vec<Point> = vec![];
+                // Each vertex's elements: code 74 starts one, its 41s are the miter distance, then where its line
+                // turns on and off along the segment (starting on at 0).
+                let mut params: Vec<Vec<Vec<f64>>> = vec![];
                 for p in group.0.iter().take_while(|p| p.code < 1000) {
                     let value = || p.value.trim().parse::<f64>().ok();
                     match p.code {
-                        11 => vertices.push(pt(value()?, 0.0)),
+                        11 => {
+                            vertices.push(pt(value()?, 0.0));
+                            params.push(vec![]);
+                        }
                         21 => vertices.last_mut()?.y = value()?,
+                        74 => params.last_mut()?.push(vec![]),
+                        41 => params.last_mut()?.last_mut()?.push(value()?),
                         _ => {}
                     }
                 }
                 if vertices.len() < 2 {
                     return None;
                 }
+                let gaps = params
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(segment, elements)| {
+                        elements.iter().enumerate().flat_map(move |(element, values)| {
+                            values.get(2..).unwrap_or_default().as_chunks::<2>().0.iter().map(move |pair| MlineGap {
+                                segment,
+                                element,
+                                from: pair[0],
+                                to: pair[1],
+                            })
+                        })
+                    })
+                    .collect();
                 Shape::Mline {
+                    gaps,
                     vertices,
                     closed: group.int(71).unwrap_or(0) & 2 != 0,
                     justification: Justification::from_code(group.int(70).unwrap_or(0)),
@@ -2682,7 +2705,7 @@ impl Writer {
                 self.wipeouts = true;
                 vec![Group(pairs)]
             }
-            Shape::Mline { vertices, closed, justification, scale, style } if self.modern => {
+            Shape::Mline { vertices, closed, justification, scale, style, gaps } if self.modern => {
                 let points = dedup(vertices);
                 let miters = miters(&points, *closed && points.len() > 2);
                 let distances = element_distances(*justification, *scale, style);
@@ -2707,9 +2730,15 @@ impl Writer {
                     pairs.extend(point_pairs(11, *point));
                     pairs.extend(point_pairs(12, unit(along)));
                     pairs.extend(point_pairs(13, unit(*miter)));
-                    // Each line's distance from the vertex along the miter, and no dashes or fill of its own.
-                    for distance in &distances {
-                        pairs.extend([pair(74, 2), pair(41, number(distance * miter.length())), pair(41, "0.0"), pair(75, 0)]);
+                    // Each line's distance from the vertex along the miter, then where it turns off and back on for
+                    // each gap MLEDIT cut on this segment; no fill of its own.
+                    for (element, distance) in distances.iter().enumerate() {
+                        let mut cuts: Vec<(f64, f64)> =
+                            gaps.iter().filter(|g| g.segment == i && g.element == element).map(|g| (g.from, g.to)).collect();
+                        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        pairs.extend([pair(74, 2 + 2 * cuts.len()), pair(41, number(distance * miter.length())), pair(41, "0.0")]);
+                        pairs.extend(cuts.iter().flat_map(|(from, to)| [pair(41, number(*from)), pair(41, number(*to))]));
+                        pairs.push(pair(75, 0));
                     }
                 }
                 vec![Group(pairs)]

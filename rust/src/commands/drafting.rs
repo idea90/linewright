@@ -642,7 +642,7 @@ pub async fn mline_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<supe
         (d.mline_justification, d.mline_scale, d.mline_style.clone())
     };
     let make = move |vertices: Vec<Point>, closed: bool| {
-        Entity::new(Shape::Mline { vertices, closed, justification, scale, style: style.clone() })
+        Entity::new(Shape::Mline { vertices, closed, justification, scale, style: style.clone(), gaps: vec![] })
     };
     let mut points = vec![first];
     let closed = loop {

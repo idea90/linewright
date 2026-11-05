@@ -23,7 +23,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - `MLINE` (`ML`): multilines with Justification (Top/Zero/Bottom), Scale and STyle, in the drawing's own multiline
   styles (element offsets, colors, linetypes, line, outer arc and inner arc caps, joints and fill); they load from
   and save to DXF and explode to lines. `MLSTYLE` manages the styles (new, delete, set current, elements, caps,
-  fill), and `MLEDIT` (`-MLEDIT`) joins two multilines at a corner and adds or deletes vertices
+  fill), and `MLEDIT` (`-MLEDIT`) makes closed, open and merged crosses and tees, corner joints,
+  adds and deletes vertices, and cuts (one line or all) and welds
 - `WIPEOUT`: masking areas from clicked corners or a closed polyline, hiding what is drawn under them; framed on
   screen and printed with their frames; its Frames option sets WIPEOUTFRAME for the drawing (ON shows and prints
   the frames, OFF hides them, Display but not plot shows them on screen only); they load from and save to DXF

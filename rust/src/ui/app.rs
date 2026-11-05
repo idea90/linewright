@@ -2174,6 +2174,7 @@ mod dialog_tests {
             justification: Justification::Zero,
             scale: 1.0,
             style: MlineStyle::standard(),
+            gaps: vec![],
         };
         Entity::new(shape)
     }

@@ -279,6 +279,8 @@ pub enum Shape {
         justification: super::mline::Justification,
         scale: f64,
         style: super::mline::MlineStyle,
+        /// Where MLEDIT has cut its lines.
+        gaps: Vec<super::mline::MlineGap>,
     },
     /// Areas bounded by closed loops, filled solid or with a pattern of lines. Loops inside loops are holes.
     Hatch {

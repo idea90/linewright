@@ -161,8 +161,8 @@ pub fn entity_extent(entity: &Entity) -> Bounds {
         Shape::Spline { control, .. } => Bounds::around(control.iter().copied()),
         Shape::Point { position } => Bounds::around([*position]),
         Shape::Solid { corners } | Shape::Wipeout { corners } => Bounds::around(corners.iter().copied()),
-        Shape::Mline { vertices, closed, justification, scale, style } => {
-            let paths = crate::model::mline::mline_paths(vertices, *closed, *justification, *scale, style);
+        Shape::Mline { vertices, closed, justification, scale, style, gaps } => {
+            let paths = crate::model::mline::mline_paths(vertices, *closed, *justification, *scale, style, gaps);
             Bounds::around(paths.into_iter().flat_map(|(_, path)| path).chain(vertices.iter().copied()))
         }
         Shape::Hatch { loops, .. } => Bounds::around(loops.iter().flatten().copied()),

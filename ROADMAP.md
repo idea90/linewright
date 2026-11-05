@@ -26,7 +26,7 @@ Things an early user is most likely to miss or be hurt by.
 - [ ] **`AUDIT` and `RECOVER`** for damaged DXF files: fix what can be fixed and report the rest.
 - [ ] **Linetype scale:** `LTSCALE`, `PSLTSCALE` and per-object linetype scale, which drawings from AutoCAD rely on.
 - [ ] **`OOPS`** to bring back the last erased objects.
-- [ ] **MLEDIT's other tools:** cross and tee joints, Cut Single, Cut All and Weld All. Needs gaps inside a
+- [x] **MLEDIT's other tools:** cross and tee joints, Cut Single, Cut All and Weld All. Needs gaps inside a
       multiline's lines, saved in its DXF element data.
 - [ ] **Ribbon overflow:** less common buttons go into a drop-down when the window is too narrow, so nothing
       ends up past the edge (OVERKILL currently does at normal widths).

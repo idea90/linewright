@@ -220,13 +220,29 @@ pub fn transform_shape(shape: &Shape, sim: &Similarity) -> Shape {
         Shape::Point { position } => Shape::Point { position: sim.point(*position) },
         Shape::Solid { corners } => Shape::Solid { corners: corners.iter().map(|p| sim.point(*p)).collect() },
         Shape::Wipeout { corners } => Shape::Wipeout { corners: corners.iter().map(|p| sim.point(*p)).collect() },
-        Shape::Mline { vertices, closed, justification, scale, style } => {
+        Shape::Mline { vertices, closed, justification, scale, style, gaps } => {
+            // A mirror turns left into right: running the path the other way puts each line back on its side, and
+            // each gap is then measured from the other end of its segment.
+            let mirrored = sim.determinant() < 0.0;
+            let gaps = if mirrored {
+                crate::model::mline::reversed_gaps(vertices, *closed, *justification, *scale, style, gaps)
+            } else {
+                gaps.clone()
+            };
             let mut vertices: Vec<Point> = vertices.iter().map(|p| sim.point(*p)).collect();
-            // A mirror turns left into right: running the path the other way puts each line back on its side.
-            if sim.determinant() < 0.0 {
+            if mirrored {
                 vertices.reverse();
             }
-            Shape::Mline { vertices, closed: *closed, justification: *justification, scale: scale * sim.scale(), style: style.clone() }
+            let gaps =
+                gaps.iter().map(|g| crate::model::mline::MlineGap { from: g.from * sim.scale(), to: g.to * sim.scale(), ..*g }).collect();
+            Shape::Mline {
+                vertices,
+                closed: *closed,
+                justification: *justification,
+                scale: scale * sim.scale(),
+                style: style.clone(),
+                gaps,
+            }
         }
         Shape::Hatch { loops, solid, pattern, name, scale, angle, gradient, association } => Shape::Hatch {
             scale: scale * sim.scale(),

@@ -164,7 +164,7 @@ pub fn properties(entity: &Entity) -> Vec<Property> {
         }
         Shape::Point { position } => rows.extend(point_fields("Position", *position)),
         Shape::Solid { corners } | Shape::Wipeout { corners } => rows.push(fixed("Corners", corners.len().to_string())),
-        Shape::Mline { vertices, closed, justification, scale, style } => {
+        Shape::Mline { vertices, closed, justification, scale, style, .. } => {
             rows.push(fixed("Style", style.name.clone()));
             rows.push(fixed("Justification", justification.name().to_string()));
             rows.push(editable("Scale", *scale));

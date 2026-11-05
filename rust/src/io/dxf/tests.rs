@@ -755,13 +755,15 @@ fn the_wipeout_frame_mode_survives_a_round_trip_and_is_written_only_when_needed(
 
 #[test]
 fn a_multiline_survives_a_round_trip_in_its_style() {
-    use crate::model::mline::{Justification, MlineStyle};
+    use crate::model::mline::{Justification, MlineGap, MlineStyle};
+    // With a doorway cut in the outer line of its second segment.
     let wall = Entity::new(Shape::Mline {
         vertices: vec![pt(0.0, 0.0), pt(4000.0, 0.0), pt(4000.0, 3000.0)],
         closed: false,
         justification: Justification::Bottom,
         scale: 200.0,
         style: MlineStyle::standard(),
+        gaps: vec![MlineGap { segment: 1, element: 1, from: 500.0, to: 1400.0 }],
     });
     let document = Document::with_entities(vec![wall.clone()]);
     let file = dxf_from_document(&document);
@@ -820,6 +822,7 @@ fn new_and_changed_multiline_styles_are_saved_and_removed_ones_go() {
         justification: Justification::Top,
         scale: 1.0,
         style: wall.clone(),
+        gaps: vec![],
     })]);
     document.mline_styles = vec![MlineStyle::standard(), wall.clone()];
     let back = round_trip(&document);

@@ -96,14 +96,27 @@ impl Justification {
     }
 }
 
-/// The lines a multiline draws: for each element, its path (closed back to its start when the multiline is),
-/// then the caps, rounds, inner arcs and joints across, which take the multiline's own look (element None).
+/// A break in one of a multiline's lines, as MLEDIT's cut and joint tools make: on segment `segment` (from vertex
+/// `segment` to the next, counting only vertices apart from the one before), the line of element `element` is left
+/// out from `from` to `to`, measured along that line from where it starts on the segment.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MlineGap {
+    pub segment: usize,
+    pub element: usize,
+    pub from: f64,
+    pub to: f64,
+}
+
+/// The lines a multiline draws: for each element, its path (closed back to its start when the multiline is) in as
+/// many pieces as its gaps leave, then the caps, rounds, inner arcs and joints across, which take the multiline's
+/// own look (element None).
 pub fn mline_paths(
     vertices: &[Point],
     closed: bool,
     justification: Justification,
     scale: f64,
     style: &MlineStyle,
+    gaps: &[MlineGap],
 ) -> Vec<(Option<usize>, Vec<Point>)> {
     let points: Vec<Point> = dedup(vertices);
     if points.len() < 2 || style.elements.is_empty() {
@@ -112,8 +125,11 @@ pub fn mline_paths(
     let closed = closed && points.len() > 2;
     let distances = element_distances(justification, scale, style);
     let miters = miters(&points, closed);
-    let mut out: Vec<(Option<usize>, Vec<Point>)> =
-        distances.iter().enumerate().map(|(i, d)| (Some(i), along_path(&points, &miters, closed, *d))).collect();
+    let mut out: Vec<(Option<usize>, Vec<Point>)> = distances
+        .iter()
+        .enumerate()
+        .flat_map(|(i, d)| without_gaps(&along_path(&points, &miters, closed, *d), i, gaps).into_iter().map(move |p| (Some(i), p)))
+        .collect();
     let (high, low) = extremes(&distances);
     let across = |at: usize| vec![points[at] + miters[at] * high, points[at] + miters[at] * low];
     if high > low {
@@ -169,6 +185,109 @@ pub fn fill_loops(vertices: &[Point], closed: bool, justification: Justification
         joined.extend(inner.into_iter().rev());
         vec![joined]
     }
+}
+
+/// Each element's line on each segment, as its start and end: `[element][segment]`.
+pub fn element_segments(
+    vertices: &[Point],
+    closed: bool,
+    justification: Justification,
+    scale: f64,
+    style: &MlineStyle,
+) -> Vec<Vec<(Point, Point)>> {
+    let points = dedup(vertices);
+    if points.len() < 2 {
+        return vec![];
+    }
+    let closed = closed && points.len() > 2;
+    let miters = miters(&points, closed);
+    element_distances(justification, scale, style)
+        .into_iter()
+        .map(|distance| along_path(&points, &miters, closed, distance).windows(2).map(|w| (w[0], w[1])).collect())
+        .collect()
+}
+
+/// How long element `element`'s line is along segment `segment`.
+pub fn element_segment_length(
+    vertices: &[Point],
+    closed: bool,
+    justification: Justification,
+    scale: f64,
+    style: &MlineStyle,
+    segment: usize,
+    element: usize,
+) -> f64 {
+    let points = dedup(vertices);
+    let closed = closed && points.len() > 2;
+    let Some(distance) = element_distances(justification, scale, style).get(element).copied() else { return 0.0 };
+    let path = along_path(&points, &miters(&points, closed), closed, distance);
+    path.get(segment).zip(path.get(segment + 1)).map_or(0.0, |(a, b)| a.dist(*b))
+}
+
+/// The gaps of a multiline whose vertices are about to run the other way: each moves to the segment it then is,
+/// measured from that segment's new start.
+pub fn reversed_gaps(
+    vertices: &[Point],
+    closed: bool,
+    justification: Justification,
+    scale: f64,
+    style: &MlineStyle,
+    gaps: &[MlineGap],
+) -> Vec<MlineGap> {
+    let count = dedup(vertices).len();
+    gaps.iter()
+        .filter_map(|gap| {
+            let length = element_segment_length(vertices, closed, justification, scale, style, gap.segment, gap.element);
+            // Open: segment k runs backwards as segment n-2-k. Closed: the closing segment stays last.
+            let segment = if gap.segment + 1 >= count { gap.segment } else { count.checked_sub(2 + gap.segment)? };
+            Some(MlineGap { segment, element: gap.element, from: length - gap.to, to: length - gap.from })
+        })
+        .collect()
+}
+
+/// One element's path cut where its gaps leave it out, as the pieces that are left.
+fn without_gaps(path: &[Point], element: usize, gaps: &[MlineGap]) -> Vec<Vec<Point>> {
+    if !gaps.iter().any(|g| g.element == element) {
+        return vec![path.to_vec()];
+    }
+    let mut pieces: Vec<Vec<Point>> = vec![];
+    let mut piece: Vec<Point> = vec![path[0]];
+    for (segment, pair) in path.windows(2).enumerate() {
+        let (start, end) = (pair[0], pair[1]);
+        let length = start.dist(end);
+        let at = |distance: f64| start + (end - start) * (distance / length.max(f64::MIN_POSITIVE));
+        // This segment's gaps, clipped to it, in order and run together where they overlap.
+        let mut cuts: Vec<(f64, f64)> = gaps
+            .iter()
+            .filter(|g| g.segment == segment && g.element == element)
+            .map(|g| (g.from.min(g.to).max(0.0), g.from.max(g.to).min(length)))
+            .filter(|(from, to)| to > from)
+            .collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = vec![];
+        for cut in cuts {
+            match merged.last_mut() {
+                Some(last) if cut.0 <= last.1 => last.1 = last.1.max(cut.1),
+                _ => merged.push(cut),
+            }
+        }
+        for (from, to) in merged {
+            if from > 0.0 {
+                piece.push(at(from));
+            }
+            if piece.len() > 1 {
+                pieces.push(std::mem::take(&mut piece));
+            }
+            piece = vec![at(to)];
+        }
+        if piece.last().is_none_or(|last| last.dist(end) > 0.0) {
+            piece.push(end);
+        }
+    }
+    if piece.len() > 1 {
+        pieces.push(piece);
+    }
+    pieces
 }
 
 /// The path of one element, `distance` to the left of the points, closed back to its start when the multiline is.
@@ -315,18 +434,18 @@ mod tests {
 
     #[test]
     fn top_justified_lines_hang_below_a_path_drawn_left_to_right() {
-        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Top, 20.0, &MlineStyle::standard());
+        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Top, 20.0, &MlineStyle::standard(), &[]);
         assert_eq!(paths.len(), 2);
         assert!(close(paths[0].1[0], pt(0.0, 0.0)) && close(paths[0].1[1], pt(10.0, 0.0)));
         assert!(close(paths[1].1[0], pt(0.0, -20.0)) && close(paths[1].1[1], pt(10.0, -20.0)));
-        let zero = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 20.0, &MlineStyle::standard());
+        let zero = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 20.0, &MlineStyle::standard(), &[]);
         assert!(close(zero[0].1[0], pt(0.0, 10.0)) && close(zero[1].1[0], pt(0.0, -10.0)));
     }
 
     #[test]
     fn corners_meet_on_the_miter() {
         let path = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0)];
-        let paths = mline_paths(&path, false, Justification::Bottom, 2.0, &MlineStyle::standard());
+        let paths = mline_paths(&path, false, Justification::Bottom, 2.0, &MlineStyle::standard(), &[]);
         // Bottom justified: the top line lies two units to the left of the path, inside the left turn.
         assert!(close(paths[0].1[1], pt(8.0, 2.0)), "{:?}", paths[0].1);
         assert!(close(paths[1].1[1], pt(10.0, 0.0)));
@@ -335,12 +454,12 @@ mod tests {
     #[test]
     fn a_closed_multiline_comes_round_and_caps_and_joints_draw_across() {
         let square = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)];
-        let paths = mline_paths(&square, true, Justification::Zero, 2.0, &MlineStyle::standard());
+        let paths = mline_paths(&square, true, Justification::Zero, 2.0, &MlineStyle::standard(), &[]);
         assert_eq!(paths[0].1.len(), 5);
         assert!(close(paths[0].1[0], pt(1.0, 1.0)), "inside corner: {:?}", paths[0].1[0]);
         assert!(close(paths[1].1[0], pt(-1.0, -1.0)), "outside corner: {:?}", paths[1].1[0]);
         let capped = MlineStyle { start_cap: true, end_cap: true, joints: true, ..MlineStyle::standard() };
-        let open = mline_paths(&square[..3], false, Justification::Zero, 2.0, &capped);
+        let open = mline_paths(&square[..3], false, Justification::Zero, 2.0, &capped, &[]);
         assert_eq!(open.iter().filter(|(element, _)| element.is_none()).count(), 3, "two caps and one joint");
     }
 
@@ -356,7 +475,7 @@ mod tests {
     #[test]
     fn a_round_cap_joins_the_outer_lines_and_reaches_half_the_width_past_the_end() {
         let line = [pt(0.0, 0.0), pt(10.0, 0.0)];
-        let paths = mline_paths(&line, false, Justification::Zero, 2.0, &rounded(true, true));
+        let paths = mline_paths(&line, false, Justification::Zero, 2.0, &rounded(true, true), &[]);
         let arcs: Vec<&Vec<Point>> = paths.iter().filter(|(e, _)| e.is_none()).map(|(_, p)| p).collect();
         assert_eq!(arcs.len(), 2);
         let start = arcs[0];
@@ -371,14 +490,14 @@ mod tests {
     #[test]
     fn a_closed_multiline_has_no_round_caps() {
         let square = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)];
-        let paths = mline_paths(&square, true, Justification::Zero, 2.0, &rounded(true, true));
+        let paths = mline_paths(&square, true, Justification::Zero, 2.0, &rounded(true, true), &[]);
         assert_eq!(paths.len(), 2);
     }
 
     #[test]
     fn four_lines_give_one_inner_arc_joining_the_middle_pair() {
         let style = MlineStyle { start_inner_arcs: true, ..with_offsets(&[1.5, 0.5, -0.5, -1.5]) };
-        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 1.0, &style);
+        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 1.0, &style, &[]);
         let arcs: Vec<&Vec<Point>> = paths.iter().filter(|(e, _)| e.is_none()).map(|(_, p)| p).collect();
         assert_eq!(arcs.len(), 1);
         assert!(close(arcs[0][0], pt(0.0, 0.5)) && close(*arcs[0].last().unwrap(), pt(0.0, -0.5)), "{:?}", arcs[0]);
@@ -389,7 +508,7 @@ mod tests {
     #[test]
     fn three_lines_have_no_inner_arcs() {
         let style = MlineStyle { start_inner_arcs: true, end_inner_arcs: true, ..with_offsets(&[1.0, 0.0, -1.0]) };
-        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 1.0, &style);
+        let paths = mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0)], false, Justification::Zero, 1.0, &style, &[]);
         assert_eq!(paths.len(), 3);
     }
 
@@ -410,5 +529,24 @@ mod tests {
         assert_eq!(loops.len(), 2);
         assert!(area(&loops[0]) > area(&loops[1]));
         assert!(close(loops[1][0], pt(1.0, 1.0)) && close(loops[0][0], pt(-1.0, -1.0)), "{loops:?}");
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+    use crate::model::geometry::pt;
+
+    #[test]
+    fn a_gap_leaves_out_part_of_one_line_only() {
+        let gaps = [MlineGap { segment: 1, element: 0, from: 2.0, to: 5.0 }];
+        let paths =
+            mline_paths(&[pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0)], false, Justification::Bottom, 1.0, &MlineStyle::standard(), &gaps);
+        let top: Vec<&Vec<Point>> = paths.iter().filter(|(e, _)| *e == Some(0)).map(|(_, p)| p).collect();
+        assert_eq!(top.len(), 2, "{top:?}");
+        // The top line runs one unit inside the corner, so its second segment starts at (9, 1).
+        assert!(top[0].last().unwrap().dist(pt(9.0, 3.0)) < 1e-9, "{:?}", top[0]);
+        assert!(top[1][0].dist(pt(9.0, 6.0)) < 1e-9, "{:?}", top[1]);
+        assert_eq!(paths.iter().filter(|(e, _)| *e == Some(1)).count(), 1);
     }
 }

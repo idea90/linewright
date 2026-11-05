@@ -790,7 +790,7 @@ fn mline_draws_with_the_justification_and_scale_it_is_given_and_remembers_them()
     let mut session = start_with("MLINE", &mut host, vec![], defaults.clone());
     typed(&mut session, &mut host, &["J", "Z", "S", "240", "ST", "?", "0,0", "5000,0", "@0,3000", "U", "@0,4000", ""]);
     assert!(!session.active());
-    let Some(Shape::Mline { vertices, closed, justification, scale, style }) = host.shapes().last().cloned() else { panic!() };
+    let Some(Shape::Mline { vertices, closed, justification, scale, style, .. }) = host.shapes().last().cloned() else { panic!() };
     assert_eq!(vertices, vec![pt(0.0, 0.0), pt(5000.0, 0.0), pt(5000.0, 4000.0)]);
     assert!(!closed);
     assert_eq!((justification, scale, style.name.as_str()), (Justification::Zero, 240.0, "Standard"));
@@ -815,7 +815,14 @@ fn an_exploded_mline_is_its_lines() {
 fn mledit_joins_two_walls_at_a_corner_and_adds_a_vertex() {
     use crate::model::mline::{Justification, MlineStyle};
     let wall = |vertices: Vec<Point>| {
-        Entity::new(Shape::Mline { vertices, closed: false, justification: Justification::Zero, scale: 1.0, style: MlineStyle::standard() })
+        Entity::new(Shape::Mline {
+            vertices,
+            closed: false,
+            justification: Justification::Zero,
+            scale: 1.0,
+            style: MlineStyle::standard(),
+            gaps: vec![],
+        })
     };
     let (horizontal, vertical) = (wall(vec![pt(0.0, 0.0), pt(20.0, 0.0)]), wall(vec![pt(10.0, 3.0), pt(10.0, 15.0)]));
     let mut host = FakeHost::with(vec![horizontal.clone(), vertical.clone()]);
@@ -841,4 +848,69 @@ fn mledit_joins_two_walls_at_a_corner_and_adds_a_vertex() {
     typed(&mut session, &mut host, &[""]);
     let Shape::Mline { vertices, .. } = &host.entities[0].shape else { panic!() };
     assert_eq!(vertices, &vec![pt(0.0, 0.0), pt(5.0, 0.0), pt(10.0, 0.0)]);
+}
+
+/// A wall two units thick along a path, its lines one unit each side.
+fn wall(vertices: Vec<Point>) -> Entity {
+    use crate::model::mline::{Justification, MlineStyle};
+    Entity::new(Shape::Mline {
+        vertices,
+        closed: false,
+        justification: Justification::Zero,
+        scale: 2.0,
+        style: MlineStyle::standard(),
+        gaps: vec![],
+    })
+}
+
+fn gaps_of(entity: &Entity) -> Vec<(usize, usize, f64, f64)> {
+    let Shape::Mline { gaps, .. } = &entity.shape else { panic!() };
+    let mut out: Vec<(usize, usize, f64, f64)> =
+        gaps.iter().map(|g| (g.segment, g.element, (g.from * 1e6).round() / 1e6, (g.to * 1e6).round() / 1e6)).collect();
+    out.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    out
+}
+
+fn mledit(host: &mut FakeHost, tool: &str, picks: &[(Entity, Point)], typed_after: &[&str]) {
+    let mut session = start("MLEDIT", host, vec![]);
+    typed(&mut session, host, &[tool]);
+    for (entity, point) in picks {
+        session.submit_pick(entity.clone(), *point, false, host);
+    }
+    typed(&mut session, host, typed_after);
+    assert!(!session.active());
+}
+
+#[test]
+fn mledit_crosses_cut_the_first_wall_through_the_second() {
+    let (a, b) = (wall(vec![pt(0.0, 0.0), pt(20.0, 0.0)]), wall(vec![pt(10.0, -5.0), pt(10.0, 5.0)]));
+    let mut host = FakeHost::with(vec![a.clone(), b.clone()]);
+    mledit(&mut host, "CC", &[(a.clone(), pt(3.0, 0.0)), (b.clone(), pt(10.0, 3.0))], &[]);
+    assert_eq!(gaps_of(&host.entities[0]), vec![(0, 0, 9.0, 11.0), (0, 1, 9.0, 11.0)]);
+    assert!(gaps_of(&host.entities[1]).is_empty(), "a closed cross leaves the second whole");
+
+    let mut host = FakeHost::with(vec![a.clone(), b.clone()]);
+    mledit(&mut host, "OC", &[(a, pt(3.0, 0.0)), (b, pt(10.0, 3.0))], &[]);
+    assert_eq!(gaps_of(&host.entities[1]), vec![(0, 0, 4.0, 6.0), (0, 1, 4.0, 6.0)], "an open cross opens the second too");
+}
+
+#[test]
+fn mledit_tees_end_the_first_wall_at_the_second() {
+    let (a, b) = (wall(vec![pt(10.0, 10.0), pt(10.0, 3.0)]), wall(vec![pt(0.0, 0.0), pt(20.0, 0.0)]));
+    let mut host = FakeHost::with(vec![a.clone(), b.clone()]);
+    mledit(&mut host, "OT", &[(a, pt(10.0, 8.0)), (b, pt(5.0, 0.0))], &[]);
+    let Shape::Mline { vertices, .. } = &host.entities[0].shape else { panic!() };
+    assert_eq!(vertices, &vec![pt(10.0, 10.0), pt(10.0, 1.0)], "the first ends at the second's near line");
+    assert_eq!(gaps_of(&host.entities[1]), vec![(0, 0, 9.0, 11.0)], "the near line opens where the first meets it");
+}
+
+#[test]
+fn mledit_cuts_one_line_and_welds_part_of_it_back() {
+    let a = wall(vec![pt(0.0, 0.0), pt(20.0, 0.0)]);
+    let mut host = FakeHost::with(vec![a.clone()]);
+    mledit(&mut host, "CS", &[(a, pt(5.0, 1.0))], &["8,1"]);
+    assert_eq!(gaps_of(&host.entities[0]), vec![(0, 0, 5.0, 8.0)]);
+    let cut = host.entities[0].clone();
+    mledit(&mut host, "WA", &[(cut, pt(6.0, 0.0))], &["7,0"]);
+    assert_eq!(gaps_of(&host.entities[0]), vec![(0, 0, 5.0, 6.0), (0, 0, 7.0, 8.0)]);
 }

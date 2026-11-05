@@ -81,8 +81,8 @@ pub fn primitives(entity: &Entity) -> Vec<Primitive> {
         Shape::Spline { degree, control, knots, weights, .. } => chords(&spline_points(*degree, control, knots, weights)),
         Shape::Point { position } => vec![seg(*position, *position)],
         Shape::Solid { corners } | Shape::Wipeout { corners } => closed_chords(corners),
-        Shape::Mline { vertices, closed, justification, scale, style } => {
-            crate::model::mline::mline_paths(vertices, *closed, *justification, *scale, style)
+        Shape::Mline { vertices, closed, justification, scale, style, gaps } => {
+            crate::model::mline::mline_paths(vertices, *closed, *justification, *scale, style, gaps)
                 .iter()
                 .flat_map(|(_, path)| path.windows(2).map(|w| seg(w[0], w[1])).collect::<Vec<_>>())
                 .collect()

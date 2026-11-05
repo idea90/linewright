@@ -425,8 +425,8 @@ pub fn entity_parts(entity: &Entity, tolerance: f64) -> Parts {
         // One area, not two triangles, so no seam shows where they would meet.
         Shape::Solid { corners } => Parts { areas: vec![vec![corners.clone()]], ..Parts::default() },
         Shape::Wipeout { corners } => Parts { masks: vec![corners.clone()], ..Parts::default() },
-        Shape::Mline { vertices, closed, justification, scale, style } => Parts {
-            paths: super::mline::mline_paths(vertices, *closed, *justification, *scale, style).into_iter().map(|(_, p)| p).collect(),
+        Shape::Mline { vertices, closed, justification, scale, style, gaps } => Parts {
+            paths: super::mline::mline_paths(vertices, *closed, *justification, *scale, style, gaps).into_iter().map(|(_, p)| p).collect(),
             ..Parts::default()
         },
         Shape::Hatch { loops, solid, pattern, gradient, .. } => {
@@ -619,7 +619,7 @@ pub fn flatten(entity: &Entity, tolerance: f64) -> Vec<(Styled, Parts)> {
 }
 
 fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, tolerance: f64, depth: usize, out: &mut Vec<(Styled, Parts)>) {
-    if let Shape::Mline { vertices, closed, justification, scale, style: mline_style } = &entity.shape {
+    if let Shape::Mline { vertices, closed, justification, scale, style: mline_style, gaps } = &entity.shape {
         // The fill goes under the lines, in the fill color; ByLayer fill follows the multiline itself.
         let loops = super::mline::fill_loops(vertices, *closed, *justification, *scale, mline_style);
         if !loops.is_empty() {
@@ -630,7 +630,7 @@ fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, toleran
             out.push((piece, Parts { areas: vec![loops], ..Parts::default() }.map(transform)));
         }
         // Each line in its element's color and linetype; ByLayer ones, and the caps, follow the multiline itself.
-        for (element, path) in super::mline::mline_paths(vertices, *closed, *justification, *scale, mline_style) {
+        for (element, path) in super::mline::mline_paths(vertices, *closed, *justification, *scale, mline_style, gaps) {
             let mut piece = style.clone();
             if let Some(element) = element.map(|i| &mline_style.elements[i]) {
                 if element.color != super::entities::BYLAYER {
