@@ -64,6 +64,10 @@ pub struct Defaults {
     pub clipboard_base: crate::model::geometry::Point,
     /// The objects the last ERASE or BLOCK took out of the drawing, which OOPS brings back.
     pub last_erased: Vec<Entity>,
+    /// The SAVETIME autosave interval in minutes, which the window keeps up to date.
+    pub autosave_minutes: u32,
+    /// A SAVETIME value typed, for the window to set and remember.
+    pub autosave_request: Option<u32>,
 }
 
 impl Default for Defaults {
@@ -105,6 +109,8 @@ impl Default for Defaults {
             clipboard: vec![],
             clipboard_base: Default::default(),
             last_erased: vec![],
+            autosave_minutes: crate::ui::settings::DEFAULT_SAVETIME,
+            autosave_request: None,
         }
     }
 }

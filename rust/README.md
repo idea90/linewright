@@ -46,6 +46,10 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   `DIMTXT`, `DIMASZ`, `DISTANCE`, `AREA`, `LIST` (`LI`), `ID`, `ZOOM` (`Z`)
 - `HATCH` picks internal points (islands stay empty) or selected closed objects
 - File commands typed as in AutoCAD: `QSAVE`, `SAVEAS`, `OPEN`, `NEW`, `PLOT`
+- Autosave: `SAVETIME` sets the minutes between copies of a drawing with unsaved changes (default 10, 0 turns it
+  off), kept in the `autosave` folder of the settings folder (`~/.config/linewright`, or `%APPDATA%\Linewright`).
+  After a crash or kill, the Drawing Recovery dialog at start-up (or `DRAWINGRECOVERY`) opens each copy as an
+  unsaved "(recovered)" drawing, or deletes it. A copy goes once its drawing is saved or discarded.
 - AutoCAD habits: Space and right-click are Enter, Enter repeats the last command, grips on selected objects,
   double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects, Ctrl+A, Ctrl+1 for the Properties palette
   (several objects of one kind change together; differing values show *VARIES*).

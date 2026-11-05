@@ -3,19 +3,24 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Pos2, Rect};
 
 use super::controller::Controller;
 use super::undo::Change;
-use super::{frame, layers, panels, theme};
+use super::{frame, layers, panels, settings, theme};
 use crate::canvas::plot::{FIT, PAPER_SIZES, export_layout_pdf, export_pdf, format_scale, parse_scale};
 use crate::canvas::view::{Camera, ZOOM_STEP, viewport_camera, viewport_view};
 use crate::commands::format_general;
 use crate::commands::prompts::{PromptKind, ViewRequest};
 use crate::fonts::{self, FontFile};
+use crate::io::dxf::dxf_from_document;
 use crate::io::dxf::unit_names;
-use crate::io::files::{DXF_SUFFIX, FileError, open_drawing, save_drawing};
+use crate::io::files::{
+    Autosave, Autosaver, DXF_SUFFIX, FileError, autosave_due, autosave_note, leftover_autosaves, new_autosave_path, open_drawing,
+    save_drawing, unix_now,
+};
 use crate::model::dimension::DimensionStyle;
 use crate::model::document::{Document, PlotSettings, TextStyleDef};
 use crate::model::entities::{BlockDef, BlockRef, Entity, EntityId, HAlign, Shape, TextAlign, VAlign};
@@ -131,6 +136,8 @@ pub enum Then {
     New,
     Open,
     Close,
+    /// Open the autosave copy Drawing Recovery picked.
+    Recover,
 }
 
 pub struct PlotForm {
@@ -352,11 +359,15 @@ pub enum Dialog {
     MlineStyles(MlineStyleForm),
     TextStyles(TextStyleForm),
     Mtext(MtextForm),
+    /// Drawing Recovery: the autosave copies left by earlier sessions, to open or delete.
+    Recovery(Vec<Autosave>),
 }
 
 struct Opening {
     name: String,
     receiver: Receiver<Result<Document, FileError>>,
+    /// The autosave copy being opened, when it is a recovery rather than a drawing the user chose.
+    recovery: Option<Autosave>,
 }
 
 pub struct LinewrightApp {
@@ -411,6 +422,19 @@ pub struct LinewrightApp {
     fonts_installed: bool,
     /// The pointer is on the window's edge, where a press resizes the window instead of reaching the drawing.
     pub on_window_edge: bool,
+    /// When the drawing was last saved or autosaved, which SAVETIME counts from.
+    saved_at: Instant,
+    /// The autosave interval in minutes, 0 when autosave is off.
+    autosave_minutes: u32,
+    autosaver: Autosaver,
+    /// The autosave copy of the drawing shown, named when it is first written.
+    autosave_file: Option<PathBuf>,
+    /// The autosave copy the drawing shown was recovered from. It is removed once the drawing is saved or discarded.
+    recovered_from: Option<PathBuf>,
+    /// The name a recovered drawing shows until it is saved, as in "plan (recovered)".
+    recovered_title: Option<String>,
+    /// The copy Open picked in Drawing Recovery, while unsaved changes to the drawing shown are answered first.
+    pending_recovery: Option<Autosave>,
 }
 
 impl LinewrightApp {
@@ -420,8 +444,14 @@ impl LinewrightApp {
         let mut app = LinewrightApp::without_window(cc.egui_ctx.clone(), path.is_none());
         app.set_document(Document::new());
         app.announce_new();
+        app.autosave_minutes = settings::savetime();
+        app.controller.defaults.borrow_mut().autosave_minutes = app.autosave_minutes;
         if let Some(path) = path {
             app.open_in_background(path);
+        }
+        // Copies left by a session that crashed or was killed are offered for recovery before anything else.
+        if !app.leftover_copies().is_empty() {
+            app.show_recovery();
         }
         app
     }
@@ -468,6 +498,13 @@ impl LinewrightApp {
             fonts_pending: None,
             fonts_installed: true, // theme::apply installs the system fonts
             on_window_edge: false,
+            saved_at: Instant::now(),
+            autosave_minutes: settings::DEFAULT_SAVETIME,
+            autosaver: Autosaver::start(),
+            autosave_file: None,
+            recovered_from: None,
+            recovered_title: None,
+            pending_recovery: None,
         }
     }
 
@@ -497,7 +534,10 @@ impl LinewrightApp {
     }
 
     pub fn file_name(&self) -> String {
-        self.document().path.as_deref().and_then(Path::file_name).map_or(UNTITLED.to_string(), |n| n.to_string_lossy().into_owned())
+        match self.document().path.as_deref().and_then(Path::file_name) {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => self.recovered_title.clone().unwrap_or_else(|| UNTITLED.to_string()),
+        }
     }
 
     pub fn modified(&self) -> bool {
@@ -505,6 +545,10 @@ impl LinewrightApp {
     }
 
     fn set_document(&mut self, document: Document) {
+        // The drawing shown is replaced, so its autosave copies go with it.
+        self.clear_autosaves();
+        self.recovered_title = None;
+        self.saved_at = Instant::now();
         self.space_cameras.clear();
         self.shown_space = None;
         self.shown_layouts = document.layouts.len();
@@ -617,10 +661,23 @@ impl LinewrightApp {
 
     /// Open a drawing without freezing the window. Everything is held still until it arrives or fails.
     pub fn open_in_background(&mut self, path: PathBuf) {
+        self.start_opening(path, None);
+    }
+
+    /// Open an autosave copy as a new drawing with no file yet, shown as "<name> (recovered)".
+    fn open_recovery_in_background(&mut self, copy: Autosave) {
+        let path = copy.dxf.clone();
+        self.start_opening(path, Some(copy));
+    }
+
+    fn start_opening(&mut self, path: PathBuf, recovery: Option<Autosave>) {
         if self.opening.is_some() {
             return;
         }
-        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name = match &recovery {
+            Some(copy) => copy.title.clone(),
+            None => path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+        };
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let opened = open_drawing(&path);
@@ -637,7 +694,7 @@ impl LinewrightApp {
             }
             let _ = sender.send(opened);
         });
-        self.opening = Some(Opening { name, receiver });
+        self.opening = Some(Opening { name, receiver, recovery });
     }
 
     fn poll_opening(&mut self, ctx: &egui::Context) {
@@ -650,15 +707,28 @@ impl LinewrightApp {
                 self.dialog = Some(Dialog::Message(format!("Could not open {name}.")));
             }
             Ok(result) => {
-                self.opening = None;
+                let recovery = self.opening.take().and_then(|o| o.recovery);
                 match result {
-                    Ok(document) => {
-                        if let Some(path) = &document.path {
-                            self.recent = super::recent::remember(path);
+                    Ok(mut document) => match recovery {
+                        Some(copy) => {
+                            // A recovered drawing has no file yet, so Save asks where to put it.
+                            document.path = None;
+                            self.welcome = false;
+                            self.set_document(document);
+                            let stem = Path::new(&copy.title).file_stem().map_or(copy.title.clone(), |s| s.to_string_lossy().into_owned());
+                            self.recovered_title = Some(format!("{stem} (recovered)"));
+                            self.recovered_from = Some(copy.dxf);
+                            // Nothing is saved yet, so the drawing counts as changed until it is.
+                            self.controller.drawing.note_change();
                         }
-                        self.welcome = false;
-                        self.set_document(document);
-                    }
+                        None => {
+                            if let Some(path) = &document.path {
+                                self.recent = super::recent::remember(path);
+                            }
+                            self.welcome = false;
+                            self.set_document(document);
+                        }
+                    },
                     Err(error) => self.dialog = Some(Dialog::Message(error.0)),
                 }
             }
@@ -669,6 +739,9 @@ impl LinewrightApp {
         match save_drawing(&mut self.controller.drawing.document, path) {
             Ok(()) => {
                 self.controller.drawing.set_clean();
+                self.clear_autosaves();
+                self.recovered_title = None;
+                self.saved_at = Instant::now();
                 self.recent = super::recent::remember(path);
                 true
             }
@@ -687,8 +760,10 @@ impl LinewrightApp {
     }
 
     fn save_as(&mut self) -> bool {
-        let stem =
-            self.document().path.as_deref().and_then(Path::file_stem).map_or(UNTITLED.to_string(), |s| s.to_string_lossy().into_owned());
+        let stem = match self.document().path.as_deref() {
+            Some(path) => path.file_stem().map_or(UNTITLED.to_string(), |s| s.to_string_lossy().into_owned()),
+            None => self.recovered_title.clone().unwrap_or_else(|| UNTITLED.to_string()),
+        };
         let dialog = drawing_filters(rfd::FileDialog::new().set_title("Save drawing")).set_file_name(format!("{stem}.{DXF_SUFFIX}"));
         let Some(path) = dialog.save_file() else { return false };
         let path = if path.extension().is_some() { path } else { path.with_extension(DXF_SUFFIX) };
@@ -718,8 +793,14 @@ impl LinewrightApp {
             }
             Then::Open => self.choose_and_open(),
             Then::Close => {
+                self.clear_autosaves();
                 self.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Then::Recover => {
+                if let Some(copy) = self.pending_recovery.take() {
+                    self.open_recovery_in_background(copy);
+                }
             }
         }
     }
@@ -729,6 +810,89 @@ impl LinewrightApp {
         if !save_first || self.save() {
             self.proceed(then, ctx);
         }
+    }
+
+    // ------------------------------------------------------------------------------------- autosave and recovery
+
+    /// Each frame: keep SAVETIME's setting current, and once it is due, copy a drawing with unsaved changes in the
+    /// background. A drawing without unsaved changes has no copy, so its copy is removed.
+    fn autosave_tick(&mut self, ctx: &egui::Context) {
+        let request = self.controller.defaults.borrow_mut().autosave_request.take();
+        if let Some(minutes) = request {
+            self.set_autosave_minutes(minutes);
+        }
+        if !self.modified() {
+            self.forget_autosave();
+            return;
+        }
+        if autosave_due(true, self.autosave_minutes, self.saved_at.elapsed()) {
+            self.autosave_now();
+        }
+        if self.autosave_minutes > 0 {
+            let interval = Duration::from_secs(u64::from(self.autosave_minutes) * 60);
+            ctx.request_repaint_after(interval.saturating_sub(self.saved_at.elapsed()).max(Duration::from_secs(1)));
+        }
+    }
+
+    /// Write the autosave copy of the drawing shown now, and start SAVETIME counting again.
+    fn autosave_now(&mut self) {
+        let Some(folder) = settings::autosave_folder() else {
+            self.saved_at = Instant::now();
+            return;
+        };
+        let title = self.file_name();
+        let stem = Path::new(&title).file_stem().map_or(title.clone(), |s| s.to_string_lossy().into_owned());
+        let dxf = self.autosave_file.get_or_insert_with(|| new_autosave_path(&folder, &stem)).clone();
+        let bytes = dxf_from_document(&self.controller.drawing.document).to_bytes();
+        let note = autosave_note(&title, self.document().path.as_deref(), unix_now());
+        self.autosaver.write(dxf.clone(), bytes, note);
+        self.saved_at = Instant::now();
+        self.print(format!("Autosaved to {}.", dxf.display()));
+    }
+
+    /// Remove the autosave copy of the drawing shown, if it has one.
+    fn forget_autosave(&mut self) {
+        if let Some(dxf) = self.autosave_file.take() {
+            self.autosaver.remove(dxf);
+        }
+    }
+
+    /// Remove the autosave copies of the drawing shown: its own, and the copy it was recovered from.
+    fn clear_autosaves(&mut self) {
+        self.forget_autosave();
+        if let Some(dxf) = self.recovered_from.take() {
+            self.autosaver.remove(dxf);
+        }
+    }
+
+    /// Set the SAVETIME interval, and keep it for later sessions.
+    fn set_autosave_minutes(&mut self, minutes: u32) {
+        self.autosave_minutes = minutes;
+        self.controller.defaults.borrow_mut().autosave_minutes = minutes;
+        settings::set_savetime(minutes);
+    }
+
+    /// The autosave copies left by earlier sessions. The copies this session is working on are not among them.
+    fn leftover_copies(&self) -> Vec<Autosave> {
+        let Some(folder) = settings::autosave_folder() else { return vec![] };
+        let own = [self.autosave_file.as_ref(), self.recovered_from.as_ref()];
+        leftover_autosaves(&folder).into_iter().filter(|copy| !own.contains(&Some(&copy.dxf))).collect()
+    }
+
+    /// Drawing Recovery: the copies left behind, to open or delete. DRAWINGRECOVERY opens it, and so does start-up.
+    fn show_recovery(&mut self) {
+        self.dialog = Some(Dialog::Recovery(self.leftover_copies()));
+    }
+
+    /// Open an autosave copy as a new drawing. Unsaved changes to the drawing shown are answered first.
+    pub fn recover(&mut self, copy: Autosave, ctx: &egui::Context) {
+        self.pending_recovery = Some(copy);
+        self.confirm_discard(Then::Recover, ctx);
+    }
+
+    /// Delete an autosave copy the user chose to throw away in Drawing Recovery.
+    pub fn delete_copy(&mut self, copy: Autosave) {
+        self.autosaver.remove(copy.dxf);
     }
 
     /// Open a block in the block editor, viewing all of it.
@@ -1509,6 +1673,7 @@ impl LinewrightApp {
                 self.dialog = Some(Dialog::RenameLayout { index, name, error: String::new() });
             }
             // Commands that work on the sheet itself go back to paper space first, as in AutoCAD.
+            Action::Command("DRAWINGRECOVERY") => self.show_recovery(),
             Action::Command(name @ ("MVIEW" | "LAYOUT")) if self.document().through().is_some() => {
                 self.controller.leave_viewport();
                 self.previous_views.clear();
@@ -1910,6 +2075,7 @@ impl eframe::App for LinewrightApp {
             ctx.request_repaint();
         }
         self.poll_opening(ctx);
+        self.autosave_tick(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.modified() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::Discard(Then::Close));
@@ -2031,6 +2197,8 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "PSPACE" | "PS" => Action::Command("PSPACE"),
         "LWDISPLAY" | "LWT" => Action::ToggleLineweights,
         "SELECTSIMILAR" => Action::Command("SELECTSIMILAR"),
+        "SAVETIME" => Action::Command("SAVETIME"),
+        "DRAWINGRECOVERY" => Action::Command("DRAWINGRECOVERY"),
         "COLOR" | "COL" | "COLOUR" | "DDCOLOR" => Action::ChooseColor(ColorTarget::Current),
         _ => return None,
     })

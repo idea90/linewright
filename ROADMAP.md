@@ -21,7 +21,7 @@ Released on GitHub as pre-releases with Linux and Windows builds. It covers most
 
 Things an early user is most likely to miss or be hurt by.
 
-- [ ] **Autosave and recovery.** Save a copy every few minutes (`SAVETIME`), and offer to restore it after a crash.
+- [x] **Autosave and recovery.** Save a copy every few minutes (`SAVETIME`), and offer to restore it after a crash.
       There is no autosave today, so a crash loses everything since the last save.
 - [ ] **`AUDIT` and `RECOVER`** for damaged DXF files: fix what can be fixed and report the rest.
 - [ ] **Linetype scale:** `LTSCALE`, `PSLTSCALE` and per-object linetype scale, which drawings from AutoCAD rely on.
