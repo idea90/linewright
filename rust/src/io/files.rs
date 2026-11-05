@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::dxf::{DxfFile, document_from_dxf, dxf_from_document};
+use crate::model::audit::{Finding, repair_all};
 use crate::model::document::Document;
 
 pub const DXF_SUFFIX: &str = "dxf";
@@ -38,6 +39,31 @@ fn unsupported(path: &Path) -> FileError {
 
 pub fn open_drawing(path: &Path) -> Result<Document, FileError> {
     open_nested(path, 0)
+}
+
+/// A damaged drawing read as far as it goes: what was skipped while reading it, and what the audit found in it. Every
+/// finding with a fix has been put right in the document.
+pub struct Recovery {
+    pub document: Document,
+    pub skipped: Vec<String>,
+    pub findings: Vec<Finding>,
+}
+
+/// RECOVER: reads a DXF or DWG file that OPEN would refuse, skipping what cannot be read, and repairs what the audit
+/// finds in it.
+pub fn recover_drawing(path: &Path) -> Result<Recovery, FileError> {
+    let could_not = |error: &dyn std::fmt::Display| FileError(format!("Could not recover {}: {error}", name_of(path)));
+    let bytes = match suffix_of(path).as_str() {
+        DXF_SUFFIX => fs::read(path).map_err(|e| could_not(&e))?,
+        DWG_SUFFIX => dwg_to_dxf(path)?,
+        _ => return Err(unsupported(path)),
+    };
+    let (file, skipped) = DxfFile::parse_recovering(&bytes).map_err(|e| could_not(&e))?;
+    let mut document = document_from_dxf(file);
+    document.path = Some(path.to_path_buf());
+    resolve_xrefs(&mut document, 0);
+    let findings = repair_all(&mut document);
+    Ok(Recovery { document, skipped, findings })
 }
 
 /// How deep external references within external references are followed.
@@ -226,8 +252,42 @@ pub fn oda_converter() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::entities::line;
+    use crate::model::entities::{circle, line};
     use crate::model::geometry::pt;
+
+    #[test]
+    fn a_damaged_file_is_recovered_with_what_is_left() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("plan.dxf");
+        let mut document = Document::with_entities(vec![line(pt(0.0, 0.0), pt(3.0, 4.0)), circle(pt(5.0, 5.0), 2.0)]);
+        save_drawing(&mut document, &path).unwrap();
+        // The circle's radius is garbled, which takes the circle out; the line is kept.
+        let text = fs::read_to_string(&path).unwrap();
+        let at = text.find("CIRCLE").unwrap();
+        let garbled = format!("{}{}", &text[..at], text[at..].replacen(" 40\n2.0\n", " 40\nbig\n", 1));
+        fs::write(&path, garbled).unwrap();
+        assert!(open_drawing(&path).is_ok(), "the normal reader takes a bad number as it comes");
+        let recovered = recover_drawing(&path).unwrap();
+        assert_eq!(recovered.document.len(), 1);
+        assert!(recovered.skipped.iter().any(|note| note.contains("needs a number")), "{:?}", recovered.skipped);
+        assert!(recovered.findings.is_empty());
+        assert_eq!(recovered.document.path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn a_truncated_file_opens_with_its_complete_objects() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("plan.dxf");
+        let mut document = Document::with_entities(vec![line(pt(0.0, 0.0), pt(3.0, 4.0)), line(pt(1.0, 1.0), pt(2.0, 2.0))]);
+        save_drawing(&mut document, &path).unwrap();
+        // Cut after an odd number of lines, so the last group code has no value to go with it.
+        let text = fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        fs::write(&path, lines[..(lines.len() * 2 / 3) | 1].join("\n")).unwrap();
+        assert!(open_drawing(&path).is_err());
+        let recovered = recover_drawing(&path).unwrap();
+        assert!(recovered.skipped.iter().any(|note| note.contains("ends in the middle")), "{:?}", recovered.skipped);
+    }
 
     #[test]
     fn save_and_open_a_dxf() {

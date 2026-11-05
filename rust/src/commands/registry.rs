@@ -347,6 +347,8 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("SELECTSIMILAR", "Select similar objects"),
     ("FIND", "Find and replace text"),
     ("PURGE", "Purge unused items"),
+    ("AUDIT", "Audit and fix errors"),
+    ("RECOVER", "Recover a damaged drawing"),
     ("UNITS", "Drawing units"),
     ("LWEIGHT", "Lineweight settings"),
     ("STYLE", "Text style manager"),

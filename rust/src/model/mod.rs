@@ -1,4 +1,5 @@
 pub mod annotation;
+pub mod audit;
 pub mod boundary;
 pub mod dimension;
 pub mod document;

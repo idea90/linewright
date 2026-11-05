@@ -49,6 +49,11 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Object snaps (endpoint, midpoint, center, node, quadrant, intersection, insertion, perpendicular, nearest) chosen
   in Drafting Settings (`OSNAP`, `OS`), object snap tracking (F11) and dynamic input by the cursor (F12).
 - Selecting and finding: `QSELECT`, `SELECTSIMILAR`, `FIND` (find and replace text); `PURGE` (`PU`), `UNITS` (`UN`).
+- Checking damaged drawings: `AUDIT` lists what cannot be drawn (no radius, too few vertices, coordinates that are not
+  numbers, text with no height, hatches without a loop, and so on) and what refers to a missing layer, linetype,
+  block or group, then asks `Fix any errors detected? [Yes/No] <N>:`. Yes fixes it all as one undo step; blocks are
+  only reported, to be fixed in the block editor. `RECOVER` opens a damaged DXF or DWG (DWG through the ODA
+  converter), skipping the lines and objects it cannot read, fixes what `AUDIT` would, and reports what it skipped.
 - Images (`IMAGEATTACH`, `IM`), external references (`XATTACH`, `XREF`) and the block editor (`BEDIT`, `BCLOSE`);
   tables (`TABLE`, `TABLEDIT` or double-click a cell) are AutoCAD tables, read from and saved to files; attribute
   definitions (`ATTDEF`) for blocks; images print in PDFs. Dynamic input takes a length and angle (Tab between

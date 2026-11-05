@@ -302,6 +302,27 @@ fn encode_percent_codes(text: &str) -> String {
     text.replace('⌀', "%%c").replace('°', "%%d").replace('±', "%%p")
 }
 
+/// Whether a group code's value must be a number. Codes for points, angles, distances, counts and flags are numbers;
+/// names, handles and text are not.
+fn is_number_code(code: i32) -> bool {
+    matches!(code, 10..=58 | 60..=79 | 90..=99 | 110..=149 | 160..=179 | 210..=239 | 270..=289 | 370..=389 | 420..=429 | 460..=469 | 1010..=1071)
+}
+
+/// The line of the next object at or after `from`: a group code 0 followed by a name in capitals, such as LINE or ENDSEC.
+fn next_object(lines: &[&str], from: usize) -> Option<usize> {
+    (from..lines.len().saturating_sub(1)).find(|&i| {
+        let name = lines[i + 1].trim();
+        lines[i].trim() == "0"
+            && name.starts_with(|c: char| c.is_ascii_uppercase())
+            && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    })
+}
+
+/// A line as it is quoted in a note, cut short when it is long.
+fn shorten(text: &str) -> String {
+    text.chars().take(40).collect()
+}
+
 impl DxfFile {
     pub fn parse(bytes: &[u8]) -> Result<DxfFile, DxfError> {
         if bytes.starts_with(b"AutoCAD Binary DXF") {
@@ -339,6 +360,75 @@ impl DxfFile {
             return Err(DxfError("This is not a DXF drawing.".into()));
         }
         Ok(DxfFile { groups })
+    }
+
+    /// Reads a damaged DXF file that `parse` refuses, keeping what can be read. A line that should hold a group code
+    /// but does not, and a value that is not a number where its code needs one, take out the object they belong to,
+    /// and reading picks up at the next object. A file that ends in the middle of a value loses that last line. The
+    /// notes say what was skipped.
+    pub fn parse_recovering(bytes: &[u8]) -> Result<(DxfFile, Vec<String>), DxfError> {
+        if bytes.starts_with(b"AutoCAD Binary DXF") {
+            return Err(DxfError("Binary DXF files are not supported. Save it as an ASCII DXF and try again.".into()));
+        }
+        let version = find_header(bytes, "$ACADVER").unwrap_or_else(|| "AC1009".into());
+        let encoding = file_encoding(&version, find_header(bytes, "$DWGCODEPAGE").as_deref());
+        let (decoded, _, _) = encoding.decode(bytes);
+        let text = decoded.strip_prefix('\u{feff}').unwrap_or(&decoded);
+        let lines: Vec<&str> = text.lines().collect();
+        let mut groups: Vec<Group> = vec![];
+        let mut notes = vec![];
+        // Whether the object being read holds a value that cannot be read, so the whole object is left out.
+        let mut damaged = false;
+        let mut i = 0;
+        while i < lines.len() {
+            let code_text = lines[i].trim();
+            if code_text.is_empty() && lines[i..].iter().all(|l| l.trim().is_empty()) {
+                break;
+            }
+            let Ok(code) = code_text.parse::<i32>() else {
+                notes.push(format!("Line {} should hold a group code but holds \"{}\".", i + 1, shorten(code_text)));
+                // Header variables are read one by one, so only a damaged one is lost there.
+                damaged |= groups.last().is_none_or(|g| g.kind() != "SECTION");
+                match next_object(&lines, i + 1) {
+                    Some(next) => i = next,
+                    None => break,
+                }
+                continue;
+            };
+            if i + 1 >= lines.len() {
+                notes.push("The file ends in the middle of a value, so its last line is left out.".into());
+                break;
+            }
+            let value = decode_escapes(lines[i + 1]);
+            let line = i + 1;
+            i += 2;
+            if code == 0 {
+                if std::mem::take(&mut damaged) {
+                    groups.pop();
+                }
+                if value.trim() == "EOF" {
+                    break;
+                }
+                groups.push(Group(vec![]));
+            }
+            let Some(group) = groups.last_mut() else {
+                notes.push(format!("Line {line} holds a value outside any object, so it is skipped."));
+                continue;
+            };
+            if is_number_code(code) && value.trim().parse::<f64>().is_err() {
+                notes.push(format!("Line {line} holds \"{}\" where group code {code} needs a number, so it is skipped.", shorten(&value)));
+                damaged |= group.kind() != "SECTION";
+                continue;
+            }
+            group.0.push(Pair { code, value });
+        }
+        if damaged {
+            groups.pop();
+        }
+        if !groups.iter().any(|g| g.kind() == "SECTION") {
+            return Err(DxfError("This is not a DXF drawing.".into()));
+        }
+        Ok((DxfFile { groups }, notes))
     }
 
     pub fn template() -> DxfFile {
