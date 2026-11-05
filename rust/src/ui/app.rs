@@ -22,6 +22,7 @@ use crate::model::entities::{BlockDef, BlockRef, Entity, EntityId, HAlign, Shape
 use crate::model::geometry::Point;
 use crate::model::index::Bounds;
 use crate::model::lineweight;
+use crate::model::mline::MlineStyle;
 use crate::model::mtext::{RichText, Run, RunStyle, has_formatting, plain, serialize, valid_rich};
 use crate::model::multileader::MleaderStyle;
 use crate::model::overkill::OverkillSettings;
@@ -229,6 +230,18 @@ pub struct MleaderStyleForm {
     pub error: String,
 }
 
+/// The Multiline Style manager: the styles as edited, which one and which of its lines is picked, which new
+/// multilines follow, and the styles multilines in the drawing use, which cannot be deleted.
+pub struct MlineStyleForm {
+    pub styles: Vec<MlineStyle>,
+    pub selected: usize,
+    pub element: usize,
+    pub current: String,
+    pub in_use: Vec<String>,
+    pub new_name: String,
+    pub error: String,
+}
+
 /// The Text Style manager: the styles as edited, and the fonts to choose from.
 pub struct TextStyleForm {
     pub styles: Vec<TextStyleDef>,
@@ -336,6 +349,7 @@ pub enum Dialog {
     /// Delete Duplicate Objects, which OVERKILL opens once the objects are picked.
     Overkill(OverkillForm),
     MleaderStyles(MleaderStyleForm),
+    MlineStyles(MlineStyleForm),
     TextStyles(TextStyleForm),
     Mtext(MtextForm),
 }
@@ -935,6 +949,66 @@ impl LinewrightApp {
         }
     }
 
+    /// The Multiline Style manager, opened on the style new multilines follow.
+    pub fn open_mline_styles(&mut self) {
+        let current = self.controller.defaults.borrow().mline_style.name.clone();
+        let document = self.document();
+        let mut in_use: Vec<String> = vec![];
+        let spaces = std::iter::once(None).chain((0..document.layouts.len()).map(Some));
+        for space in spaces {
+            for entity in document.space_entities(space) {
+                if let Shape::Mline { style, .. } = &entity.shape
+                    && !in_use.iter().any(|n| n.eq_ignore_ascii_case(&style.name))
+                {
+                    in_use.push(style.name.clone());
+                }
+            }
+        }
+        let styles = document.mline_styles.clone();
+        let selected = styles.iter().position(|s| s.name.eq_ignore_ascii_case(&current)).unwrap_or(0);
+        self.dialog = Some(Dialog::MlineStyles(MlineStyleForm {
+            styles,
+            selected,
+            element: 0,
+            current,
+            in_use,
+            new_name: String::new(),
+            error: String::new(),
+        }));
+    }
+
+    /// OK in the Multiline Style manager: the drawing keeps the styles as edited, multilines drawn in a style that
+    /// changed take its new look in one undo, and the current style is what MLINE draws with next.
+    pub fn set_mline_styles(&mut self) {
+        let Some(Dialog::MlineStyles(form)) = self.dialog.take() else { return };
+        let document = self.document();
+        let mut changed = vec![];
+        let spaces = std::iter::once(None).chain((0..document.layouts.len()).map(Some));
+        for space in spaces {
+            for entity in document.space_entities(space) {
+                let Shape::Mline { style, .. } = &entity.shape else { continue };
+                let Some(after) = form.styles.iter().find(|s| s.name.eq_ignore_ascii_case(&style.name)) else { continue };
+                if after == style {
+                    continue;
+                }
+                let mut state = entity.clone();
+                if let Shape::Mline { style, .. } = &mut state.shape {
+                    *style = after.clone();
+                }
+                changed.push(state);
+            }
+        }
+        if let Some(current) = form.styles.iter().find(|s| s.name == form.current) {
+            self.controller.defaults.borrow_mut().mline_style = current.clone();
+        }
+        self.controller.drawing.document.mline_styles = form.styles;
+        self.controller.drawing.note_change();
+        if !changed.is_empty() {
+            let change = Change::modify(self.document(), changed);
+            self.controller.push(change);
+        }
+    }
+
     /// OK in the Multileader Style Manager: multileaders that follow a style take its new sizes, in one undo.
     pub fn set_mleader_styles(&mut self) {
         let Some(Dialog::MleaderStyles(form)) = self.dialog.take() else { return };
@@ -1290,6 +1364,7 @@ impl LinewrightApp {
                     self.print("PSPACE works on a layout. Open one from its tab.");
                 }
             }
+            Action::Command("MLSTYLE") => self.open_mline_styles(),
             Action::Command("MLEADERSTYLE") => {
                 let document = self.document();
                 self.dialog = Some(Dialog::MleaderStyles(MleaderStyleForm {
@@ -1931,6 +2006,7 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "MTEXT" | "MT" | "T" => Action::Command("MTEXT"),
         "MTEDIT" => Action::Command("MTEDIT"),
         "MLEADERSTYLE" | "MLS" => Action::Command("MLEADERSTYLE"),
+        "MLSTYLE" => Action::Command("MLSTYLE"),
         "MSPACE" | "MS" => Action::Command("MSPACE"),
         "PSPACE" | "PS" => Action::Command("PSPACE"),
         "LWDISPLAY" | "LWT" => Action::ToggleLineweights,

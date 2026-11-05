@@ -521,6 +521,10 @@ impl Controller {
             let mut defaults = self.defaults.borrow_mut();
             defaults.dimension_styles = document.dimension_styles.clone();
             defaults.mline_styles = document.mline_styles.clone();
+            // The style MLINE draws with takes any change made to it since.
+            if let Some(style) = document.mline_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&defaults.mline_style.name)) {
+                defaults.mline_style = style.clone();
+            }
             defaults.wipeout_frame = document.wipeout_frame;
             if let Some(style) = document.text_styles.iter().find(|s| s.name == document.current_text_style) {
                 defaults.text_style = style.clone();

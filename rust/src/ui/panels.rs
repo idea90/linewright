@@ -21,6 +21,7 @@ use crate::io::dxf::unit_names;
 use crate::model::dimension::{Arrowhead, STANDARD_STYLE, Tolerance};
 use crate::model::entities::{EntityId, Shape};
 use crate::model::lineweight;
+use crate::model::mline::{MlineElement, MlineStyle};
 use crate::model::multileader::MleaderStyle;
 use crate::model::overkill::OverkillSettings;
 use crate::model::properties::shared_properties;
@@ -369,6 +370,104 @@ fn linetype_combo(ui: &mut egui::Ui, id: &str, width: f32, linetype: &Option<Str
         })
         .response
         .on_hover_text("Linetype");
+}
+
+/// A multiline style's settings as AutoCAD's New/Modify Multiline Style dialog lays them out: description, caps at
+/// each end, fill, and the lines with their offsets, colors and linetypes.
+fn mline_style_fields(ui: &mut egui::Ui, style: &mut MlineStyle, element: &mut usize) {
+    ui.horizontal(|ui| {
+        ui.label("Description");
+        ui.add(TextEdit::singleline(&mut style.description).desired_width(300.0));
+    });
+    ui.add_space(6.0);
+    ui.horizontal_top(|ui| {
+        egui::Grid::new("mline_caps").num_columns(3).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+            ui.label(RichText::new("Caps").color(theme::TEXT_DIM));
+            ui.label("Start");
+            ui.label("End");
+            ui.end_row();
+            for (name, start, end) in [
+                ("Line", &mut style.start_cap, &mut style.end_cap),
+                ("Outer arc", &mut style.start_round, &mut style.end_round),
+                ("Inner arcs", &mut style.start_inner_arcs, &mut style.end_inner_arcs),
+            ] {
+                ui.label(name);
+                ui.checkbox(start, "");
+                ui.checkbox(end, "");
+                ui.end_row();
+            }
+            ui.label("Display joints");
+            ui.checkbox(&mut style.joints, "");
+            ui.end_row();
+        });
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            let mut filled = style.fill.is_some();
+            if ui.checkbox(&mut filled, "Fill").changed() {
+                style.fill = filled.then_some(BY_LAYER);
+            }
+            if let Some(fill) = &mut style.fill {
+                mline_color_combo(ui, "mline_fill_color", fill);
+            }
+        });
+    });
+    ui.add_space(8.0);
+    ui.label(RichText::new("Elements").color(theme::TEXT_DIM));
+    egui::Grid::new("mline_elements").num_columns(3).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
+        ui.label("Offset");
+        ui.label("Color");
+        ui.label("Linetype");
+        ui.end_row();
+        for (index, line) in style.elements.iter().enumerate() {
+            let picked = *element == index;
+            if ui.selectable_label(picked, crate::commands::format_general(line.offset)).clicked() {
+                *element = index;
+            }
+            ui.label(color_name(line.color));
+            ui.label(&line.linetype);
+            ui.end_row();
+        }
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Add").clicked() {
+            style.elements.push(MlineElement { offset: 0.0, color: BY_LAYER, linetype: BYLAYER_LINETYPE.to_string() });
+            *element = style.elements.len() - 1;
+        }
+        if ui.add_enabled(style.elements.len() > 1, egui::Button::new("Delete")).clicked() {
+            style.elements.remove(*element);
+            *element = element.saturating_sub(1);
+        }
+    });
+    if let Some(line) = style.elements.get_mut(*element) {
+        ui.horizontal(|ui| {
+            ui.label("Offset");
+            ui.add(egui::DragValue::new(&mut line.offset).speed(0.05).max_decimals(6));
+            ui.label("Color");
+            mline_color_combo(ui, "mline_element_color", &mut line.color);
+            ui.label("Linetype");
+            egui::ComboBox::from_id_salt("mline_element_linetype").width(110.0).selected_text(line.linetype.clone()).show_ui(ui, |ui| {
+                for name in std::iter::once(BYLAYER_LINETYPE).chain(["ByBlock"]).chain(LINETYPES) {
+                    ui.selectable_value(&mut line.linetype, name.to_string(), name);
+                }
+            });
+        });
+    }
+    // The lines are listed from the top one down, as AutoCAD lists them, and the picked one stays picked.
+    let mut order: Vec<usize> = (0..style.elements.len()).collect();
+    order.sort_by(|&a, &b| style.elements[b].offset.total_cmp(&style.elements[a].offset));
+    if order.iter().enumerate().any(|(at, &i)| at != i) {
+        *element = order.iter().position(|&i| i == *element).unwrap_or(0);
+        style.elements = order.iter().map(|&i| style.elements[i].clone()).collect();
+    }
+}
+
+fn mline_color_combo(ui: &mut egui::Ui, id: &str, color: &mut i32) {
+    egui::ComboBox::from_id_salt(id).width(110.0).selected_text(swatch_text(Some(*color), &color_name(*color))).show_ui(ui, |ui| {
+        for choice in [BY_LAYER, BY_BLOCK].into_iter().chain(NAMED_COLORS.iter().take(7).map(|(c, _)| *c)) {
+            ui.selectable_value(color, choice, swatch_text(Some(choice), &color_name(choice)));
+        }
+    });
 }
 
 /// A lineweight choice as AutoCAD lists it: a sample of the line, then its name.
@@ -2435,6 +2534,81 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
             });
             if accept {
                 app.set_mleader_styles();
+            } else if cancel || modal.should_close() {
+                app.dialog = None;
+            }
+        }
+        Dialog::MlineStyles(form) => {
+            let (mut accept, mut cancel) = (false, false);
+            let modal = egui::Modal::new(Id::new("mline_styles")).show(ctx, |ui| {
+                ui.set_width(620.0);
+                ui.label(RichText::new("Multiline Style").strong().size(15.0));
+                ui.add_space(8.0);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(170.0);
+                        ui.label(RichText::new("Styles").color(theme::TEXT_DIM));
+                        for index in 0..form.styles.len() {
+                            let name = form.styles[index].name.clone();
+                            let shown = if name == form.current { format!("{name} (current)") } else { name };
+                            if ui.selectable_value(&mut form.selected, index, shown).clicked() {
+                                form.element = 0;
+                            }
+                        }
+                        ui.add_space(6.0);
+                        if ui.button("Set Current").clicked() {
+                            form.current = form.styles[form.selected].name.clone();
+                        }
+                        ui.add_space(6.0);
+                        ui.add(TextEdit::singleline(&mut form.new_name).hint_text("New style name").desired_width(160.0));
+                        ui.horizontal(|ui| {
+                            if ui.button("New").clicked() {
+                                let name = form.new_name.trim().to_string();
+                                if name.is_empty() {
+                                    form.error = "Type a name for the new style.".into();
+                                } else if name.len() > 31 || name.contains(char::is_whitespace) {
+                                    form.error = "A style name has up to 31 characters and no spaces.".into();
+                                } else if form.styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+                                    form.error = format!("There is already a style called {name}.");
+                                } else {
+                                    let copy = MlineStyle { name, ..form.styles[form.selected].clone() };
+                                    form.styles.push(copy);
+                                    form.selected = form.styles.len() - 1;
+                                    form.new_name.clear();
+                                    form.error.clear();
+                                }
+                            }
+                            if ui.button("Delete").clicked() {
+                                let name = form.styles[form.selected].name.clone();
+                                if name.eq_ignore_ascii_case("Standard") {
+                                    form.error = "The Standard style cannot be deleted.".into();
+                                } else if name == form.current {
+                                    form.error = "The current style cannot be deleted. Set another one current first.".into();
+                                } else if form.in_use.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                                    form.error = format!("{name} is used by multilines in the drawing, so it cannot be deleted.");
+                                } else {
+                                    form.styles.remove(form.selected);
+                                    form.selected = form.selected.saturating_sub(1);
+                                    form.element = 0;
+                                    form.error.clear();
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| mline_style_fields(ui, &mut form.styles[form.selected], &mut form.element));
+                });
+                if !form.error.is_empty() {
+                    ui.label(RichText::new(&form.error).color(theme::ERROR));
+                }
+                ui.add_space(10.0);
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    accept = ui.button("OK").clicked();
+                });
+            });
+            if accept {
+                app.set_mline_styles();
             } else if cancel || modal.should_close() {
                 app.dialog = None;
             }

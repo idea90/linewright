@@ -351,6 +351,7 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("LWEIGHT", "Lineweight settings"),
     ("STYLE", "Text style manager"),
     ("MLEADERSTYLE", "Multileader style manager"),
+    ("MLSTYLE", "Multiline style manager"),
     ("LWDISPLAY", "Show or hide lineweights"),
     ("MSPACE", "Model space through a viewport"),
     ("PSPACE", "Paper space"),
