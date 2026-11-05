@@ -1,11 +1,12 @@
 //! OVERKILL's clean-up: copies of an object lying on top of it are deleted, and lines along one line or arcs on one
-//! circle that overlap are combined into one object. Objects only count as the same when their layer, color,
-//! linetype and lineweight match, unless those are ignored.
+//! circle that overlap are combined into one object. Polylines are tidied of repeated vertices and of straight
+//! segments that run on along one line, and lines lying on one of their straight segments go. Objects only count as
+//! the same when their layer, color, linetype and lineweight match, unless those are ignored.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 
-use super::entities::{Entity, Shape};
+use super::entities::{Entity, Shape, Vertex};
 use super::geometry::{Point, modulo, sweep_degrees};
 use super::index::entity_extent;
 
@@ -22,6 +23,9 @@ pub struct OverkillSettings {
     pub combine_partial: bool,
     /// Lines or arcs that meet end to end, without overlapping, become one.
     pub combine_end_to_end: bool,
+    /// Polylines lose repeated vertices and straight segments that run on along one line, and lines lying on
+    /// their straight segments go.
+    pub optimize_polylines: bool,
 }
 
 impl Default for OverkillSettings {
@@ -34,6 +38,7 @@ impl Default for OverkillSettings {
             ignore_lineweight: false,
             combine_partial: true,
             combine_end_to_end: false,
+            optimize_polylines: true,
         }
     }
 }
@@ -53,8 +58,10 @@ const ANGLE_TOLERANCE: f64 = 1e-9;
 
 pub fn overkill(entities: &[Entity], settings: &OverkillSettings) -> Cleanup {
     let mut cleanup = Cleanup::default();
+    let working =
+        if settings.optimize_polylines { optimize_polylines(entities, settings.tolerance, &mut cleanup) } else { entities.to_vec() };
     let mut alike: HashMap<(String, i32, String, i16), Vec<&Entity>> = HashMap::new();
-    for entity in entities {
+    for entity in &working {
         let key = (
             if settings.ignore_layer { String::new() } else { entity.layer.clone() },
             if settings.ignore_color { 0 } else { entity.color },
@@ -70,11 +77,146 @@ pub fn overkill(entities: &[Entity], settings: &OverkillSettings) -> Cleanup {
         let (lines, rest): (Vec<&Entity>, Vec<&Entity>) = group.into_iter().partition(|e| matches!(e.shape, Shape::Line { .. }));
         let (round, rest): (Vec<&Entity>, Vec<&Entity>) =
             rest.into_iter().partition(|e| matches!(e.shape, Shape::Arc { .. } | Shape::Circle { .. }));
+        let (polylines, rest): (Vec<&Entity>, Vec<&Entity>) = rest.into_iter().partition(|e| matches!(e.shape, Shape::Polyline { .. }));
+        let lines =
+            if settings.optimize_polylines { lines_off_polylines(lines, &polylines, settings.tolerance, &mut cleanup) } else { lines };
         combine_lines(&lines, settings, &mut cleanup);
         combine_round(&round, settings, &mut cleanup);
-        delete_copies(&rest, settings.tolerance, &mut cleanup);
+        let others: Vec<&Entity> = polylines.into_iter().chain(rest).collect();
+        delete_copies(&others, settings.tolerance, &mut cleanup);
     }
+    // Polylines that changed stay in place, as long as they were not deleted as copies.
+    let gone: HashSet<_> = cleanup.remove.iter().map(|e| e.id).collect();
+    let reshaped: Vec<Entity> = working
+        .iter()
+        .zip(entities)
+        .filter(|(after, before)| after.shape != before.shape && !gone.contains(&after.id))
+        .map(|(after, _)| after.clone())
+        .collect();
+    cleanup.modify.extend(reshaped);
     cleanup
+}
+
+/// Each polyline with its segments tidied, the others as they are. Counts the vertices that go as overlaps.
+fn optimize_polylines(entities: &[Entity], tolerance: f64, cleanup: &mut Cleanup) -> Vec<Entity> {
+    entities
+        .iter()
+        .map(|entity| match &entity.shape {
+            Shape::Polyline { vertices, closed } => {
+                let mut vertices = vertices.clone();
+                cleanup.overlaps += tidy_vertices(&mut vertices, *closed, tolerance);
+                entity.with_shape(Shape::Polyline { vertices, closed: *closed })
+            }
+            _ => entity.clone(),
+        })
+        .collect()
+}
+
+/// Takes out the vertices that add nothing, and returns how many went. A straight segment no longer than the
+/// tolerance goes, and so does a vertex between two straight segments that run on in the same direction along one
+/// line. Arcs are never changed. A polyline keeps at least two vertices.
+fn tidy_vertices(vertices: &mut Vec<Vertex>, closed: bool, tolerance: f64) -> usize {
+    let mut removed = 0;
+    while vertices.len() > 2 {
+        let n = vertices.len();
+        let segments = if closed { n } else { n - 1 };
+        let short = (0..segments).find(|&i| {
+            let next = (i + 1) % n;
+            vertices[i].bulge == 0.0 && vertices[i].point().dist(vertices[next].point()) <= tolerance
+        });
+        if let Some(i) = short {
+            // The segment that follows the short one takes its place, bulge and end width.
+            let next = (i + 1) % n;
+            vertices[i].bulge = vertices[next].bulge;
+            vertices[i].end_width = vertices[next].end_width;
+            vertices.remove(next);
+        } else if let Some(m) = (0..n).find(|&m| straight_join(vertices, closed, m, tolerance).is_some()) {
+            let before = straight_join(vertices, closed, m, tolerance).unwrap_or(m);
+            vertices[before].end_width = vertices[m].end_width;
+            vertices.remove(m);
+        } else {
+            break;
+        }
+        removed += 1;
+    }
+    removed
+}
+
+/// The vertex before vertex `m` when both segments meeting at `m` are straight and run on along one line through
+/// it, so that `m` can go. None otherwise.
+fn straight_join(vertices: &[Vertex], closed: bool, m: usize, tolerance: f64) -> Option<usize> {
+    let n = vertices.len();
+    let before = if m > 0 {
+        m - 1
+    } else if closed {
+        n - 1
+    } else {
+        return None;
+    };
+    let after = if m + 1 < n {
+        m + 1
+    } else if closed {
+        0
+    } else {
+        return None;
+    };
+    if vertices[before].bulge != 0.0 || vertices[m].bulge != 0.0 {
+        return None;
+    }
+    let (a, b, c) = (vertices[before].point(), vertices[m].point(), vertices[after].point());
+    let length = a.dist(b);
+    if length <= tolerance {
+        return None;
+    }
+    let off_line = ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / length;
+    let forward = (b - a).dot(c - b) > 0.0;
+    (forward && off_line <= tolerance).then_some(before)
+}
+
+/// The lines of a group that lie wholly on one straight segment of the group's polylines. They go as overlaps; the
+/// lines left are returned.
+fn lines_off_polylines<'a>(lines: Vec<&'a Entity>, polylines: &[&Entity], tolerance: f64, cleanup: &mut Cleanup) -> Vec<&'a Entity> {
+    let segments: Vec<(Point, Point)> = polylines
+        .iter()
+        .flat_map(|entity| match &entity.shape {
+            Shape::Polyline { vertices, closed } => straight_segments(vertices, *closed).collect(),
+            _ => vec![],
+        })
+        .collect();
+    lines
+        .into_iter()
+        .filter(|line| {
+            let Shape::Line { start, end } = line.shape else { return true };
+            let on = segments.iter().any(|&(a, b)| lies_on(start, end, a, b, tolerance));
+            if on {
+                cleanup.overlaps += 1;
+                cleanup.remove.push((*line).clone());
+            }
+            !on
+        })
+        .collect()
+}
+
+/// The straight segments of a polyline, from each vertex to the next, as its start and end points.
+fn straight_segments(vertices: &[Vertex], closed: bool) -> impl Iterator<Item = (Point, Point)> + '_ {
+    let n = vertices.len();
+    let count = if closed { n } else { n.saturating_sub(1) };
+    (0..count).filter_map(move |i| {
+        let (v, w) = (&vertices[i], &vertices[(i + 1) % n]);
+        (v.bulge == 0.0).then_some((v.point(), w.point()))
+    })
+}
+
+/// Whether the line from `start` to `end` lies within the straight segment from `a` to `b`, to within the tolerance.
+fn lies_on(start: Point, end: Point, a: Point, b: Point, tolerance: f64) -> bool {
+    let length = a.dist(b);
+    if length <= tolerance {
+        return false;
+    }
+    let unit = (b - a) * (1.0 / length);
+    let along = |p: Point| (p - a).dot(unit);
+    let across = |p: Point| ((p - a).x * unit.y - (p - a).y * unit.x).abs();
+    [start, end].into_iter().all(|p| across(p) <= tolerance && along(p) >= -tolerance && along(p) <= length + tolerance)
 }
 
 /// A stretch of a line or arc, from `lo` to `hi` along it.
@@ -439,6 +581,65 @@ mod tests {
         let cleanup = run(&[a, b]);
         assert_eq!(cleanup.remove.len(), 1);
         assert_eq!(cleanup.modify[0].shape, Shape::Circle { center: pt(0.0, 0.0), radius: 1.0 });
+    }
+
+    #[test]
+    fn repeated_vertices_go_and_a_closed_polyline_stays_closed() {
+        let square = polyline_from(&[pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 0.0), pt(4.0, 4.0), pt(0.0, 4.0)], true);
+        let cleanup = run(std::slice::from_ref(&square));
+        assert_eq!((cleanup.duplicates, cleanup.overlaps), (0, 1));
+        assert!(cleanup.remove.is_empty());
+        let Shape::Polyline { vertices, closed } = &cleanup.modify[0].shape else { panic!("{:?}", cleanup.modify) };
+        assert!(*closed);
+        assert_eq!(vertices.len(), 4);
+        assert_eq!(cleanup.modify[0].id, square.id);
+    }
+
+    #[test]
+    fn straight_segments_that_run_on_join_and_keep_their_widths() {
+        let mut open = polyline_from(&[pt(0.0, 0.0), pt(2.0, 0.0), pt(5.0, 0.0), pt(5.0, 3.0)], false);
+        if let Shape::Polyline { vertices, .. } = &mut open.shape {
+            vertices[0].start_width = 0.5;
+            vertices[1].end_width = 0.7;
+        }
+        let cleanup = run(&[open]);
+        assert_eq!((cleanup.duplicates, cleanup.overlaps), (0, 1));
+        let Shape::Polyline { vertices, closed: false } = &cleanup.modify[0].shape else { panic!("{:?}", cleanup.modify) };
+        let points: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
+        assert_eq!(points, vec![pt(0.0, 0.0), pt(5.0, 0.0), pt(5.0, 3.0)]);
+        assert_eq!((vertices[0].start_width, vertices[0].end_width), (0.5, 0.7));
+    }
+
+    #[test]
+    fn corners_and_arcs_stay_and_polylines_are_never_split() {
+        let mut arc = polyline_from(&[pt(0.0, 0.0), pt(2.0, 0.0), pt(5.0, 0.0), pt(5.0, 3.0)], false);
+        if let Shape::Polyline { vertices, .. } = &mut arc.shape {
+            vertices[1].bulge = 1.0;
+        }
+        let corner = polyline_from(&[pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 4.0)], false);
+        let cleanup = run(&[arc, corner]);
+        assert!(cleanup.modify.is_empty() && cleanup.remove.is_empty(), "{cleanup:?}");
+        assert_eq!(cleanup.overlaps, 0);
+    }
+
+    #[test]
+    fn a_line_on_a_straight_segment_of_a_polyline_goes_and_one_sticking_out_stays() {
+        let pline = polyline_from(&[pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0)], false);
+        let inside = line(pt(2.0, 0.0), pt(7.0, 0.0));
+        let sticking_out = line(pt(8.0, 0.0), pt(12.0, 0.0));
+        let cleanup = run(&[pline.clone(), inside.clone(), sticking_out]);
+        assert_eq!((cleanup.duplicates, cleanup.overlaps), (0, 1));
+        assert_eq!(cleanup.remove.len(), 1);
+        assert_eq!(cleanup.remove[0].id, inside.id);
+        assert!(cleanup.modify.is_empty());
+    }
+
+    #[test]
+    fn polyline_optimization_can_be_turned_off() {
+        let square = polyline_from(&[pt(0.0, 0.0), pt(4.0, 0.0), pt(4.0, 0.0), pt(4.0, 4.0), pt(0.0, 4.0)], true);
+        let settings = OverkillSettings { optimize_polylines: false, ..OverkillSettings::default() };
+        let cleanup = overkill(&[square], &settings);
+        assert!(cleanup.modify.is_empty() && cleanup.overlaps == 0);
     }
 
     #[test]

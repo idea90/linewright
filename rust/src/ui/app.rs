@@ -11,6 +11,7 @@ use super::undo::Change;
 use super::{frame, layers, panels, theme};
 use crate::canvas::plot::{FIT, PAPER_SIZES, export_layout_pdf, export_pdf, format_scale, parse_scale};
 use crate::canvas::view::{Camera, ZOOM_STEP, viewport_camera, viewport_view};
+use crate::commands::format_general;
 use crate::commands::prompts::{PromptKind, ViewRequest};
 use crate::fonts::{self, FontFile};
 use crate::io::dxf::unit_names;
@@ -23,6 +24,7 @@ use crate::model::index::Bounds;
 use crate::model::lineweight;
 use crate::model::mtext::{RichText, Run, RunStyle, has_formatting, plain, serialize, valid_rich};
 use crate::model::multileader::MleaderStyle;
+use crate::model::overkill::OverkillSettings;
 use crate::model::properties::set_property;
 use crate::snap::resolve::SnapMode;
 
@@ -300,6 +302,13 @@ pub struct LineweightForm {
     pub show: bool,
 }
 
+/// The Delete Duplicate Objects dialog: the options being set, the tolerance as typed, and what is wrong with it.
+pub struct OverkillForm {
+    pub settings: OverkillSettings,
+    pub tolerance: String,
+    pub error: String,
+}
+
 pub enum Dialog {
     Message(String),
     Discard(Then),
@@ -324,6 +333,8 @@ pub enum Dialog {
     Purge(PurgeForm),
     Units(UnitsForm),
     Lineweight(LineweightForm),
+    /// Delete Duplicate Objects, which OVERKILL opens once the objects are picked.
+    Overkill(OverkillForm),
     MleaderStyles(MleaderStyleForm),
     TextStyles(TextStyleForm),
     Mtext(MtextForm),
@@ -1097,6 +1108,26 @@ impl LinewrightApp {
         ));
     }
 
+    /// Open Delete Duplicate Objects with the options last used.
+    pub fn open_overkill(&mut self) {
+        let settings = self.controller.defaults.borrow().overkill.clone();
+        let tolerance = format_general(settings.tolerance);
+        self.dialog = Some(Dialog::Overkill(OverkillForm { settings, tolerance, error: String::new() }));
+    }
+
+    /// OK in Delete Duplicate Objects: the options are remembered, and the clean-up runs with them.
+    pub fn set_overkill(&mut self, settings: OverkillSettings) {
+        self.dialog = None;
+        self.controller.defaults.borrow_mut().overkill = settings;
+        self.controller.accept_default();
+    }
+
+    /// Cancel in Delete Duplicate Objects: the command ends and the drawing is left as it was.
+    pub fn cancel_overkill(&mut self) {
+        self.dialog = None;
+        self.controller.cancel();
+    }
+
     /// OK in the Select Color dialog.
     pub fn color_chosen(&mut self) {
         let Some(Dialog::Color(form)) = self.dialog.take() else { return };
@@ -1809,6 +1840,9 @@ impl eframe::App for LinewrightApp {
         if self.zoom_extents_pending && self.canvas_rect.width() > 0.0 {
             self.zoom_extents_pending = false;
             self.zoom_extents();
+        }
+        if self.dialog.is_none() && self.controller.prompt().is_some_and(|p| p.kind == PromptKind::OverkillDialog) {
+            self.open_overkill();
         }
         panels::dialogs(self, ctx);
         if let Some(id) = self.controller.edit_text_request.take() {

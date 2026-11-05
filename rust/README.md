@@ -27,8 +27,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - `BOUNDARY` (`BO`): a closed polyline around each area clicked inside, and around its islands
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
-  `MATCHPROP` (`MA`), `OVERKILL` (`OV`; deletes duplicates and combines overlapping lines and arcs, with Tolerance,
-  Ignore properties, Partial overlap and End to end options)
+  `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
+  polylines, Partial overlap and End to end options; deletes duplicates, combines overlapping lines and arcs, and tidies
+  polylines), `-OVERKILL` (the same with command line options)
 - Blocks: `INSERT` (`I`, asks for attribute values), `BLOCK` (`B`); attributes edited with `TEXTEDIT` (`ED`)
 - Groups: `GROUP` (`G`; named or unnamed `*A1`, with a description), `UNGROUP`, `GROUPEDIT` (add, remove, rename),
   `PICKSTYLE` or Ctrl+Shift+A for group selection; groups load from and save to DXF

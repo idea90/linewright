@@ -14,7 +14,7 @@ use super::{frame, icons, theme};
 use crate::canvas::aci::{BY_BLOCK, BY_LAYER, NAMED_COLORS, color_name, color_rgb, is_true_color, parse_color, true_color};
 use crate::canvas::plot::{FIT, PAPER_SIZES};
 use crate::canvas::render::{self, Overlay, Screen};
-use crate::commands::parse::dynamic_entry;
+use crate::commands::parse::{dynamic_entry, parse_length};
 use crate::commands::prompts::PromptKind;
 use crate::commands::registry::{Suggestion, label, resolve, shortest_alias, suggestions};
 use crate::io::dxf::unit_names;
@@ -22,6 +22,7 @@ use crate::model::dimension::{Arrowhead, STANDARD_STYLE, Tolerance};
 use crate::model::entities::{EntityId, Shape};
 use crate::model::lineweight;
 use crate::model::multileader::MleaderStyle;
+use crate::model::overkill::OverkillSettings;
 use crate::model::properties::shared_properties;
 use crate::model::styles::{BYLAYER_LINETYPE, LINETYPES};
 use crate::snap::osnap::SnapKind;
@@ -2487,6 +2488,51 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
                 app.set_lineweights();
             } else if cancel || modal.should_close() {
                 app.dialog = None;
+            }
+        }
+        Dialog::Overkill(form) => {
+            let (mut accept, mut cancel) = (false, false);
+            let modal = egui::Modal::new(Id::new("delete_duplicates")).show(ctx, |ui| {
+                ui.set_width(400.0);
+                ui.label(RichText::new("Delete Duplicate Objects").strong().size(15.0));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Tolerance");
+                    ui.add(TextEdit::singleline(&mut form.tolerance).desired_width(120.0));
+                });
+                ui.add_space(8.0);
+                ui.label(RichText::new("Ignore object property").color(theme::TEXT_DIM));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut form.settings.ignore_color, "Color");
+                    ui.checkbox(&mut form.settings.ignore_layer, "Layer");
+                    ui.checkbox(&mut form.settings.ignore_linetype, "Linetype");
+                    ui.checkbox(&mut form.settings.ignore_lineweight, "Lineweight");
+                });
+                ui.add_space(8.0);
+                ui.label(RichText::new("Options").color(theme::TEXT_DIM));
+                ui.checkbox(&mut form.settings.optimize_polylines, "Optimize segments within polylines");
+                ui.checkbox(&mut form.settings.combine_partial, "Combine co-linear objects that partially overlap");
+                ui.checkbox(&mut form.settings.combine_end_to_end, "Combine co-linear objects when aligned end to end");
+                if !form.error.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&form.error).color(theme::ERROR));
+                }
+                ui.add_space(10.0);
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    accept = ui.button("OK").clicked();
+                });
+            });
+            if accept || ctx.input(|i| i.key_pressed(Key::Enter)) {
+                match parse_length(&form.tolerance) {
+                    Some(tolerance) => {
+                        let settings = OverkillSettings { tolerance, ..form.settings.clone() };
+                        app.set_overkill(settings);
+                    }
+                    None => form.error = "Enter a tolerance, zero or greater.".into(),
+                }
+            } else if cancel || modal.should_close() {
+                app.cancel_overkill();
             }
         }
         Dialog::SnapSettings => {

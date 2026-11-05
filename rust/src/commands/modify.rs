@@ -219,11 +219,29 @@ const IGNORE: &str = "I";
 const TOLERANCE: &str = "T";
 const PARTIAL: &str = "P";
 const END_TO_END: &str = "E";
+const OPTIMIZE: &str = "O";
 const YES: &str = "Y";
 const NO: &str = "N";
+const OK: &str = "OK";
 
-/// OVERKILL: deletes copies lying on top of other objects and combines lines and arcs that overlap, after the
-/// options are set as -OVERKILL asks for them.
+/// OVERKILL in the window: the Delete Duplicate Objects dialog gives the options, and the clean-up runs with them.
+/// The window shows the dialog for the prompt and saves its choices to the defaults before answering. Typed where
+/// there is no window, Enter takes the options remembered.
+pub async fn overkill_dialog_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
+    let objects = objects_to_edit(&io, selected).await;
+    if objects.is_empty() {
+        return;
+    }
+    let prompt = Prompt::new(PromptKind::OverkillDialog, "Delete Duplicate Objects").default(Answer::keyword(OK));
+    if io.ask(prompt).await.is_none() {
+        return;
+    }
+    let settings = defaults.borrow().overkill.clone();
+    clean_up(&io, &objects, &settings);
+}
+
+/// -OVERKILL: deletes copies lying on top of other objects and combines lines and arcs that overlap, after the
+/// options are set as the command line asks for them.
 pub async fn overkill_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
     let objects = objects_to_edit(&io, selected).await;
     if objects.is_empty() {
@@ -232,9 +250,10 @@ pub async fn overkill_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCel
     let mut settings = defaults.borrow().overkill.clone();
     loop {
         io.step(Step::Report(overkill_status(&settings)));
-        let prompt = Prompt::point("Enter an option to change [Done/Ignore/Tolerance/Partial overlap/End to end] <Done>:")
-            .options(&[DONE, IGNORE, TOLERANCE, PARTIAL, END_TO_END])
-            .default(Answer::keyword(DONE));
+        let prompt =
+            Prompt::point("Enter an option to change [Done/Ignore/Tolerance/Partial overlap/End to end/Optimize polylines] <Done>:")
+                .options(&[DONE, IGNORE, TOLERANCE, PARTIAL, END_TO_END, OPTIMIZE])
+                .default(Answer::keyword(DONE));
         match io.ask(prompt).await {
             Some(answer) if answer.is(DONE) => break,
             Some(answer) if answer.is(IGNORE) => {
@@ -263,6 +282,15 @@ pub async fn overkill_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCel
                     settings.tolerance = tolerance;
                 }
             }
+            Some(answer) if answer.is(OPTIMIZE) => {
+                let current = settings.optimize_polylines;
+                let prompt = Prompt::point(format!("Optimize polylines? [Yes/No] <{}>:", yes_no(current)))
+                    .options(&[YES, NO])
+                    .default(Answer::keyword(if current { YES } else { NO }));
+                if let Some(Answer::Keyword(choice)) = io.ask(prompt).await {
+                    settings.optimize_polylines = choice == YES;
+                }
+            }
             Some(answer) if answer.is(PARTIAL) || answer.is(END_TO_END) => {
                 let partial = answer.is(PARTIAL);
                 let current = if partial { settings.combine_partial } else { settings.combine_end_to_end };
@@ -280,7 +308,12 @@ pub async fn overkill_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCel
         }
     }
     defaults.borrow_mut().overkill = settings.clone();
-    let cleanup = overkill(&objects, &settings);
+    clean_up(&io, &objects, &settings);
+}
+
+/// Runs the clean-up with these settings, and makes its changes as one undo step.
+fn clean_up(io: &Io, objects: &[Entity], settings: &OverkillSettings) {
+    let cleanup = overkill(objects, settings);
     let mut steps = vec![];
     if !cleanup.remove.is_empty() {
         steps.push(Step::Remove(cleanup.remove));
@@ -312,11 +345,12 @@ fn overkill_status(settings: &OverkillSettings) -> String {
     .filter_map(|(on, name)| on.then_some(name))
     .collect();
     format!(
-        "Current settings: Tolerance={}, Ignore={}, Combine partial overlap={}, Combine end to end={}",
+        "Current settings: Tolerance={}, Ignore={}, Combine partial overlap={}, Combine end to end={}, Optimize polylines={}",
         format_general(settings.tolerance),
         if ignored.is_empty() { "None".to_string() } else { ignored.join(",") },
         yes_no(settings.combine_partial),
-        yes_no(settings.combine_end_to_end)
+        yes_no(settings.combine_end_to_end),
+        yes_no(settings.optimize_polylines)
     )
 }
 
