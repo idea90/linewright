@@ -1,9 +1,8 @@
 //! Tables: rows and columns of cells with text, drawn as their borders and centered text.
 
+use super::drawn::{Parts, TextSpec};
 use super::entities::{HAlign, Shape, TextAlign, VAlign};
-use super::geometry::{Point, pt};
-use super::index::Bounds;
-use super::parts::{Parts, TextSpec};
+use super::geometry::{Bounds, Point, pt};
 
 /// A table's size: its width and height.
 pub fn table_size(columns: &[f64], rows: &[f64]) -> (f64, f64) {

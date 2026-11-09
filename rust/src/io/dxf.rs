@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::canvas::aci::{index_of, is_true_color, true_color};
-use crate::model::annotation::{AnnotationKind, AnnotationText, angle_between_lines, annotation_measurement, annotation_parts};
-use crate::model::dimension::{Arrowhead, DimensionLook, DimensionStyle, Tolerance, dimension_parts};
+use crate::model::annotation::{AnnotationKind, angle_between_lines, annotation_measurement, annotation_parts};
+use crate::model::dimension::{AnnotationText, Arrowhead, DimensionLook, DimensionStyle, Tolerance, dimension_parts};
 use crate::model::document::{DEFAULT_LINETYPE, Document, Layer, Layout, ObjectGroup, PlotSettings, TextStyleDef};
 use crate::model::editing::explode;
 use crate::model::entities::vertex;

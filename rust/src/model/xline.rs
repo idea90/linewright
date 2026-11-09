@@ -1,7 +1,6 @@
 //! Construction lines: XLINE runs without end both ways, RAY one way from its base point.
 
-use super::geometry::Point;
-use super::index::Bounds;
+use super::geometry::{Bounds, Point};
 
 /// How far either way an endless line is taken for what needs ends: snapping, the index, plotting. Far beyond
 /// any drawing, yet small enough for coordinates to stay precise.

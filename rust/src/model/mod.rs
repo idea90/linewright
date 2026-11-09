@@ -3,6 +3,7 @@ pub mod audit;
 pub mod boundary;
 pub mod dimension;
 pub mod document;
+pub mod drawn;
 pub mod editing;
 pub mod entities;
 pub mod fillet;

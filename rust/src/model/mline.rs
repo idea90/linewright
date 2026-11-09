@@ -2,10 +2,8 @@
 
 use std::f64::consts::PI;
 
-use super::entities::BYLAYER;
-use super::geometry::{Point, pt};
-use super::parts::arc_points;
-use super::styles::BYLAYER_LINETYPE;
+use super::geometry::{Point, arc_points, pt};
+use super::styles::{BYLAYER_COLOR as BYLAYER, BYLAYER_LINETYPE};
 
 /// One of a multiline style's lines: how far it lies left of the path at scale 1, and how it looks.
 #[derive(Clone, Debug, PartialEq)]

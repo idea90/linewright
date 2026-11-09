@@ -72,8 +72,9 @@ rust/                the app (Cargo crate "linewright")
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
 | `model/entities.rs` | `Entity` (id, layer, color, linetype, lineweight, shape) and the `Shape` enum: every kind of object |
 | `model/document.rs` | `Document`: layers, layouts, blocks, styles, groups, units, and the entities of each space |
-| `model/geometry.rs` | `Point` and basic geometry helpers (angles, bulges, arcs through points) |
+| `model/geometry.rs` | `Point`, `Bounds` and basic geometry helpers (angles, bulges, arcs through points, `arc_points`) |
 | `model/parts.rs` | What an entity is made of (paths, filled areas, masks, points, texts) for drawing and plotting; `flatten` handles blocks |
+| `model/drawn.rs` | The types `parts` produces and painters read: `Parts`, `TextSpec`, `TextLook` (no other model logic, so any module can use them) |
 | `model/index.rs` | Spatial index for finding entities near a spot; `entity_extent` |
 | `model/editing.rs` | Geometry behind editing: explode, stretch, grips, join, closed loops |
 | `model/transform.rs` | Move/rotate/scale/mirror of shapes (`Similarity`) |
