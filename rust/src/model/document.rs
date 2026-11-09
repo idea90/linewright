@@ -7,7 +7,7 @@ use super::entities::{BYLAYER, BlockDef, BlockRef, DEFAULT_LAYER, Entity, Entity
 use super::geometry::Point;
 use super::index::{Bounds, SpatialIndex};
 use super::styles::BYLAYER_LINETYPE;
-use crate::io::dxf::DxfFile;
+use crate::io::dxf::file::DxfFile;
 
 pub const DEFAULT_LAYER_COLOR: i32 = 7;
 pub const DEFAULT_LINETYPE: &str = "Continuous";

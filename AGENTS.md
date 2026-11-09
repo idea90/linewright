@@ -100,7 +100,8 @@ rust/                the app (Cargo crate "linewright")
 | `commands/parse.rs` | Parsing typed numbers, lengths and points |
 | `commands/tests.rs` | Commands run start to finish against a `FakeHost` |
 | **`io/`** | **Files** |
-| `io/dxf.rs` | DXF read and write at the group-code level (R12 to R2018). Writing starts from the opened file (or `template.dxf`), so whatever Linewright cannot show is kept |
+| `io/dxf.rs` | DXF read and write: turning groups into a drawing and back (R12 to R2018). Writing starts from the opened file (or `template.dxf`), so whatever Linewright cannot show is kept |
+| `io/dxf/file.rs` | `DxfFile`: the file as code/value pairs and groups, its text encoding and header. Knows nothing of the drawing, so `Document` can keep the opened file |
 | `io/dxf/tests.rs` | DXF round-trip tests |
 | `io/files.rs` | Opening and saving drawings, DWG through the ODA File Converter |
 | `io/ctb.rs`, `pat.rs` | Plot style tables (.ctb) and hatch pattern files (.pat) |
