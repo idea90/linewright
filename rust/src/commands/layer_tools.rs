@@ -1,5 +1,5 @@
-//! AutoCAD's layer tools on the command line: LAYISO, LAYUNISO, LAYOFF, LAYON, LAYFRZ, LAYTHW, LAYMCUR, LAYLCK
-//! and LAYULK. Also the linetype scale commands LTSCALE, PSLTSCALE and CELTSCALE.
+//! AutoCAD's layer tools on the command line: LAYISO, LAYUNISO, LAYOFF, LAYON, LAYFRZ, LAYTHW, LAYMCUR, LAYMCH,
+//! LAYLCK and LAYULK. Also the linetype scale commands LTSCALE, PSLTSCALE and CELTSCALE.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -91,6 +91,41 @@ pub async fn make_current(io: Io, defaults: Rc<RefCell<Defaults>>) {
         io.step(Step::Layers { layers, current: Some(name.clone()) });
         io.step(Step::Report(format!("Layer \"{name}\" is now current.")));
     }
+}
+
+/// LAYMCH: the selected objects move to the layer of a picked object, or a layer given by name.
+pub async fn match_layer(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
+    let objects = if selected.is_empty() {
+        match io.ask(Prompt::new(PromptKind::Select, "Select objects to be changed:")).await {
+            Some(Answer::Objects(chosen)) => chosen,
+            _ => return,
+        }
+    } else {
+        selected
+    };
+    if objects.is_empty() {
+        return;
+    }
+    let prompt = Prompt::new(PromptKind::Pick, "Select object on destination layer or [Name]:").options(&["N"]);
+    let name = match io.ask(prompt).await {
+        Some(Answer::Picked(picked)) => picked.entity.layer,
+        Some(Answer::Keyword(_)) => {
+            let Some(Answer::Text(typed)) = io.ask(Prompt::new(PromptKind::Text, "Enter layer name:")).await else { return };
+            let (layers, _) = layers_of(&defaults);
+            match layers.into_iter().find(|l| l.name.eq_ignore_ascii_case(typed.trim())) {
+                Some(layer) => layer.name,
+                None => {
+                    io.step(Step::Report(format!("There is no layer named \"{}\".", typed.trim())));
+                    return;
+                }
+            }
+        }
+        _ => return,
+    };
+    let count = objects.len();
+    io.step(Step::Modify(objects.into_iter().map(|e| Entity { layer: name.clone(), ..e }).collect()));
+    let noun = if count == 1 { "object" } else { "objects" };
+    io.step(Step::Report(format!("{count} {noun} changed to layer \"{name}\".")));
 }
 
 /// LAYLCK: pick objects to lock their layers.

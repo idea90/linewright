@@ -44,7 +44,10 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Colors: all 255 index colors and true colors (RGB), from the Select Color dialog (`COLOR`, More colors…)
 - Annotate and measure: `DIMLINEAR`, `DIMALIGNED`, `DIMCONTINUE` (`DCO`), `DIMBASELINE` (`DBA`), `DIMRADIUS` (`DRA`), `DIMDIAMETER` (`DDI`), `DIMANGULAR` (`DAN`),
   `QLEADER`/`LEADER` (`LE`), `DIMSTYLE` (`D`; style manager), `-DIMSTYLE` (Save/Restore/STatus/Apply/?), `DIMSCALE`,
-  `DIMTXT`, `DIMASZ`, `DISTANCE`, `AREA`, `LIST` (`LI`), `ID`, `ZOOM` (`Z`)
+  `DIMTXT`, `DIMASZ`, `DISTANCE`, `AREA`, `MEASUREGEOM` (`MEA`; Distance, Radius, Angle between lines, of an arc or
+  at a vertex, and ARea, repeated until eXit), `LIST` (`LI`), `ID`, `ZOOM` (`Z`)
+- Calculator: `CAL` evaluates an expression (`+ - * / ^`, parentheses, `sqrt`, `abs`, `sin`/`cos`/`tan` in degrees,
+  `pi`); `QUICKCALC` (`QC`) runs the same command-line calculator rather than a palette
 - `HATCH` picks internal points (islands stay empty) or selected closed objects
 - File commands typed as in AutoCAD: `QSAVE`, `SAVEAS`, `OPEN`, `NEW`, `PLOT`
 - Autosave: `SAVETIME` sets the minutes between copies of a drawing with unsaved changes (default 10, 0 turns it
@@ -52,7 +55,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   After a crash or kill, the Drawing Recovery dialog at start-up (or `DRAWINGRECOVERY`) opens each copy as an
   unsaved "(recovered)" drawing, or deletes it. A copy goes once its drawing is saved or discarded.
 - AutoCAD habits: Space and right-click are Enter, Enter repeats the last command, grips on selected objects,
-  double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects, Ctrl+A, Ctrl+1 for the Properties palette
+  double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects (`COPYCLIP`, `CUTCLIP`, `PASTECLIP`), Ctrl+A
+  (`SELECTALL`, `AI_SELALL`), Ctrl+1 for the Properties palette
   (several objects of one kind change together; differing values show *VARIES*).
 - Object snaps (endpoint, midpoint, center, node, quadrant, intersection, insertion, perpendicular, nearest) chosen
   in Drafting Settings (`OSNAP`, `OS`), object snap tracking (F11) and dynamic input by the cursor (F12).
@@ -69,8 +73,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Points as `x,y`, `@dx,dy` or `@distance<angle`; `U`/`UNDO`, `REDO`, `ALL`.
 - Object snaps (endpoint, midpoint, center, intersection, perpendicular, node), grid snap, ortho and polar
   tracking: F3, F7–F10.
-- Layers with color, linetype, on/off and lock, and AutoCAD's layer tools `LAYISO`, `LAYUNISO`, `LAYOFF`, `LAYON`,
-  `LAYFRZ`, `LAYTHW`, `LAYMCUR`, `LAYLCK`, `LAYULK`; layers freeze and thaw, and can be kept off plots; per-object color and linetype; undo and redo of everything.
+- Layers with color, linetype, on/off and lock in the Layers palette (`LAYER`, `LA`), and AutoCAD's layer tools
+  `LAYISO`, `LAYUNISO`, `LAYOFF`, `LAYON`, `LAYFRZ`, `LAYTHW`, `LAYMCUR`, `LAYMCH`, `LAYLCK`, `LAYULK`; layers freeze and thaw, and can be kept off plots; per-object color and linetype; undo and redo of everything.
 - DXF open and save (R12 to R2018): lines, arcs, circles, polylines, ellipses, splines, points, solids, hatches,
   text and MTEXT (aligned, multi-line), dimensions with their styles, and blocks with attributes (nested,
   mirrored, stretched). Whatever Linewright cannot show yet is kept when saving.

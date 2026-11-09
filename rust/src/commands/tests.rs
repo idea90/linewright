@@ -1011,3 +1011,97 @@ fn mledit_cuts_one_line_and_welds_part_of_it_back() {
     mledit(&mut host, "WA", &[(cut, pt(6.0, 0.0))], &["7,0"]);
     assert_eq!(gaps_of(&host.entities[0]), vec![(0, 0, 5.0, 6.0), (0, 0, 7.0, 8.0)]);
 }
+
+#[test]
+fn laymch_moves_objects_to_a_picked_or_named_layer_in_one_step() {
+    use crate::model::document::Layer;
+    let mut door = line(pt(0.0, 5.0), pt(1.0, 5.0));
+    door.layer = "Doors".into();
+    let (a, b) = (line(pt(0.0, 0.0), pt(1.0, 0.0)), circle(pt(5.0, 5.0), 1.0));
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    defaults.borrow_mut().layers = vec![Layer::new("0"), Layer::new("Walls"), Layer::new("Doors")];
+    let mut host = FakeHost::with(vec![a.clone(), b.clone(), door.clone()]);
+    let mut session = start_with("LAYMCH", &mut host, vec![], defaults.clone());
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Select objects to be changed:");
+    session.submit_objects(vec![a.clone(), b], &mut host);
+    session.submit_pick(door, pt(0.5, 5.0), false, &mut host);
+    assert!(!session.active());
+    let layers: Vec<&str> = host.entities.iter().map(|e| e.layer.as_str()).collect();
+    assert_eq!(layers, vec!["Doors", "Doors", "Doors"]);
+    assert_eq!(host.reports, vec!["2 objects changed to layer \"Doors\"."]);
+    host.retract();
+    assert!(host.entities[..2].iter().all(|e| e.layer == "0"), "undone as one");
+
+    let mut session = start_with("LAYMCH", &mut host, vec![a], defaults);
+    typed(&mut session, &mut host, &["N", "walls"]);
+    assert!(!session.active());
+    assert_eq!(host.entities[0].layer, "Walls");
+    assert_eq!(host.reports[1], "1 object changed to layer \"Walls\".");
+}
+
+#[test]
+fn copyclip_and_cutclip_fill_the_clipboard_for_pasteclip() {
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let round = circle(pt(5.0, 5.0), 1.0);
+    let mut host = FakeHost::with(vec![round.clone()]);
+    let mut session = start_with("COPYCLIP", &mut host, vec![], defaults.clone());
+    session.submit_objects(vec![round.clone()], &mut host);
+    assert!(!session.active());
+    assert_eq!((defaults.borrow().clipboard.len(), defaults.borrow().clipboard_base), (1, pt(4.0, 4.0)));
+    assert_eq!(host.entities.len(), 1, "copying leaves the objects");
+
+    let session = start_with("CUTCLIP", &mut host, vec![round], defaults.clone());
+    assert!(!session.active(), "the selection is used without asking");
+    assert!(host.entities.is_empty(), "cutting erases them");
+    host.retract();
+    assert_eq!(host.entities.len(), 1, "undone");
+    let mut session = start_with("PASTECLIP", &mut host, vec![], defaults);
+    typed(&mut session, &mut host, &["100,100"]);
+    assert_eq!(host.shapes()[1], Shape::Circle { center: pt(101.0, 101.0), radius: 1.0 });
+}
+
+#[test]
+fn measuregeom_measures_until_exit() {
+    let arc = Entity::new(Shape::Arc { center: pt(0.0, 0.0), radius: 2.0, start_angle: 0.0, end_angle: 90.0 });
+    let (horizontal, diagonal) = (line(pt(0.0, 0.0), pt(10.0, 0.0)), line(pt(0.0, 0.0), pt(10.0, 10.0)));
+    let mut host = FakeHost::with(vec![arc.clone(), horizontal.clone(), diagonal.clone()]);
+    let mut session = start("MEASUREGEOM", &mut host, vec![]);
+    typed(&mut session, &mut host, &["", "0,0", "3,4"]);
+    assert_eq!(host.reports[0], "Distance = 5.0000, Angle in XY Plane = 53, Delta X = 3.0000, Delta Y = 4.0000");
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Enter an option [Distance/Radius/Angle/ARea/eXit] <eXit>:");
+    typed(&mut session, &mut host, &["R"]);
+    session.submit_pick(arc.clone(), pt(2.0, 0.0), false, &mut host);
+    assert_eq!(host.reports[1..], ["Radius = 2.0000", "Diameter = 4.0000"]);
+    typed(&mut session, &mut host, &["A"]);
+    session.submit_pick(arc, pt(2.0, 0.0), false, &mut host);
+    assert_eq!(host.reports[3], "Angle = 90°", "an arc's included angle");
+    typed(&mut session, &mut host, &["A"]);
+    session.submit_pick(horizontal, pt(5.0, 0.0), false, &mut host);
+    session.submit_pick(diagonal, pt(5.0, 5.0), false, &mut host);
+    assert_eq!(host.reports[4], "Angle = 45°", "between two lines");
+    typed(&mut session, &mut host, &["A", "", "0,0", "1,0", "0,1"]);
+    assert_eq!(host.reports[5], "Angle = 90°", "at a vertex");
+    typed(&mut session, &mut host, &["AR", "0,0", "4,0", "4,3", ""]);
+    assert_eq!(host.reports[6], "Area = 6.0000, Perimeter = 12.0000");
+    typed(&mut session, &mut host, &[""]);
+    assert!(!session.active(), "Enter is eXit");
+}
+
+#[test]
+fn cal_evaluates_an_expression() {
+    let mut host = FakeHost::default();
+    let cases = [
+        ("2*(3+4)^2", "98"),
+        ("sqrt(2)/2", "0.707107"),
+        ("-sin(30)", "-0.5"),
+        ("1/0", "Division by zero."),
+        ("2+*3", "Invalid expression."),
+    ];
+    for (expression, result) in cases {
+        let mut session = start("CAL", &mut host, vec![]);
+        assert_eq!(session.prompt.as_ref().unwrap().message, ">> Expression:");
+        typed(&mut session, &mut host, &[expression]);
+        assert!(!session.active());
+        assert_eq!(host.reports.last().unwrap(), result, "{expression}");
+    }
+}

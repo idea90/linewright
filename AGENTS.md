@@ -89,7 +89,7 @@ rust/                the app (Cargo crate "linewright")
 | `model/dimension.rs`, `annotation.rs`, `multileader.rs` | Dimensions, leaders and multileaders: their styles and what they draw |
 | `model/mtext.rs`, `table.rs` | MTEXT formatting codes and layout; tables |
 | `model/properties.rs` | Rows of the Properties palette, and setting a property by typing a value |
-| `model/spline.rs`, `xline.rs`, `viewport.rs`, `lineweight.rs`, `styles.rs`, `find.rs`, `measure.rs` | Smaller topics, named for what they hold |
+| `model/spline.rs`, `xline.rs`, `viewport.rs`, `lineweight.rs`, `styles.rs`, `find.rs`, `measure.rs`, `calc.rs` | Smaller topics, named for what they hold |
 | **`commands/`** | **Every command, each an `async fn`** |
 | `commands/prompts.rs` | How a command talks to the user: `Io::ask(Prompt)` returns an `Answer`; `Io::step(Step)` changes the drawing. `Session` drives a command; `Host` is the drawing side |
 | `commands/registry.rs` | `COMMANDS` (name, label), `ALIASES`, `create()` that builds a command by name, `WINDOW_COMMANDS` handled by the window, AutoComplete |
