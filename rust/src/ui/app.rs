@@ -1785,7 +1785,6 @@ impl LinewrightApp {
                 self.controller.start_command(name);
             }
             Action::Command("AUDIT") => self.audit_drawing(),
-            Action::Command("LAYER") => self.palette_open = true,
             Action::Command(name) => self.controller.start_command(name),
             // The answer to AUDIT's question: Y fixes, N or Enter leaves things, and anything else is a command.
             Action::Input(text) if self.audit_question => {

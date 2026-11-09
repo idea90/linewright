@@ -96,18 +96,13 @@ impl Tool {
             };
         }
         if let Some(&(name, _)) = WINDOW_COMMANDS.iter().find(|(c, _)| *c == command) {
-            return file_command(name).unwrap_or(Action::Command(name));
+            // Those the window has no action for are handled where typed input is, as SELECTALL.
+            return file_command(name).unwrap_or(Action::Input(name.to_string()));
         }
         if let Some(name) = resolve(command) {
             return Action::Command(name);
         }
         match (command, self.option) {
-            ("LAYER", _) => Action::Command("LAYER"),
-            ("SELECTALL", _) => Action::SelectAll,
-            ("COPYCLIP", _) => Action::Copy,
-            ("CUTCLIP", _) => Action::Cut,
-            ("MEASUREGEOM", Some("AR")) => Action::Command("AREA"),
-            ("MEASUREGEOM", _) => Action::Command("DISTANCE"),
             ("ZOOM_IN", _) => Action::ZoomIn,
             ("ZOOM_OUT", _) => Action::ZoomOut,
             ("PROPERTIES", _) => Action::ToggleProperties,
@@ -1080,9 +1075,9 @@ mod tests {
     }
 
     #[test]
-    fn every_ribbon_command_is_known_or_has_a_stand_in() {
-        // Commands that other work adds; until then the ribbon does what comes closest or says they are unknown.
-        const COMING: &[&str] = &["LAYMCH", "QUICKCALC"];
+    fn every_ribbon_command_is_known() {
+        // Buttons for window actions that have no command name.
+        const WINDOW_ONLY: &[&str] = &["ZOOM_IN", "ZOOM_OUT", "PROPERTIES"];
         let panels = TABS.iter().flat_map(|(_, panels)| panels.iter());
         for panel in panels {
             let parts = panel.parts.iter().flat_map(|part| match part {
@@ -1092,8 +1087,10 @@ mod tests {
                 Part::Properties => vec![],
             });
             for tool in parts.chain(panel.more.iter().copied()) {
-                let unknown = matches!(tool.action(), Action::Input(_));
-                assert!(!unknown || COMING.contains(&tool.command), "{} has no command", tool.command);
+                let known = COMMANDS.iter().chain(WINDOW_COMMANDS.iter()).any(|(c, _)| *c == tool.command)
+                    || resolve(tool.command).is_some()
+                    || WINDOW_ONLY.contains(&tool.command);
+                assert!(known, "{} has no command", tool.command);
             }
         }
     }
