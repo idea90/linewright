@@ -16,7 +16,7 @@ use crate::canvas::plot::{FIT, PAPER_SIZES};
 use crate::canvas::render::{self, Overlay, Screen};
 use crate::commands::parse::{dynamic_entry, parse_length};
 use crate::commands::prompts::PromptKind;
-use crate::commands::registry::{Suggestion, label, resolve, shortest_alias, suggestions};
+use crate::commands::registry::{Suggestion, label, resolve, suggestions};
 use crate::io::dxf::unit_names;
 use crate::io::files::unix_now;
 use crate::model::dimension::{Arrowhead, STANDARD_STYLE, Tolerance};
@@ -26,28 +26,16 @@ use crate::model::mline::{MlineElement, MlineStyle};
 use crate::model::multileader::MleaderStyle;
 use crate::model::overkill::OverkillSettings;
 use crate::model::properties::shared_properties;
-use crate::model::styles::{BYLAYER_LINETYPE, LINETYPES};
+use crate::model::styles::{BYLAYER_LINETYPE, LINETYPES, dash_pattern};
 use crate::snap::osnap::SnapKind;
 use crate::snap::resolve::SnapMode;
 
 const HEADER_HEIGHT: f32 = 40.0;
 const QUICK_ICON: f32 = 18.0;
-const LARGE_ICON: f32 = 28.0;
-const SMALL_ICON: f32 = 18.0;
-const SMALL_BUTTON_HEIGHT: f32 = 21.0;
-const MORE_BUTTON_WIDTH: f32 = 20.0;
-/// How far apart the buttons of a ribbon group are.
-const GROUP_SPACING: f32 = 2.0;
 const VARIES: &str = "*VARIES*";
 const HISTORY_LINES: usize = 3;
 const COORDS_WIDTH: f32 = 170.0;
 const SCALES: [&str; 11] = [FIT, "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100", "1:200", "1:500", "2:1"];
-
-/// Commands behind a large button: right-click it to see them.
-const MORE: &[(&str, &[&str])] = &[
-    ("DIMLINEAR", &["DIMALIGNED", "DIMCONTINUE", "DIMBASELINE", "QDIM", "DIMORDINATE", "DIMARC", "DIMJOGGED", "DIMTEDIT", "DIMSCALE"]),
-    ("MTEXT", &["TEXT", "MLEADER", "MLEADERADD", "MLEADERREMOVE"]),
-];
 
 const TOGGLES: [(&str, SnapMode, &str, &str); 7] = [
     ("Grid", SnapMode::ShowGrid, "F7", "GRID"),
@@ -58,13 +46,6 @@ const TOGGLES: [(&str, SnapMode, &str, &str); 7] = [
     ("Tracking", SnapMode::Tracking, "F11", "OTRACK"),
     ("Dynamic input", SnapMode::Dynamic, "F12", "DYN"),
 ];
-
-fn tool_tip(name: &str) -> String {
-    match shortest_alias(name) {
-        "" => format!("{} ({name})", label(name)),
-        alias => format!("{} ({alias})", label(name)),
-    }
-}
 
 fn icon_tint(hovered: bool, checked: bool, enabled: bool) -> Color32 {
     if !enabled {
@@ -93,65 +74,6 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, size: egui::Vec2, icon_size: f32, 
     let hovered = enabled && response.hovered();
     button_background(ui, rect, hovered, checked);
     icons::paint(ui, icon, rect, icon_size, icon_tint(hovered, checked, enabled));
-    response
-}
-
-/// The words on a ribbon button: the command's label, shortened where the ribbon has little room, as AutoCAD's does.
-fn ribbon_text(name: &str) -> &'static str {
-    match name {
-        "MTEXT" => "Text",
-        "BOUNDARY" => "Boundary",
-        "OVERKILL" => "Overkill",
-        "MATCHPROP" => "Match",
-        "DIMALIGNED" => "Aligned",
-        "DIMRADIUS" => "Radius",
-        "DIMDIAMETER" => "Diameter",
-        "DIMANGULAR" => "Angular",
-        "DIMSTYLE" => "Dim style",
-        "INSERT" => "Insert",
-        "BLOCK" => "Create",
-        "GROUPEDIT" => "Group edit",
-        "PICKSTYLE" => "Group select",
-        _ => label(name),
-    }
-}
-
-/// The width of a small ribbon button: the icon, then its words.
-fn small_button_width(ui: &egui::Ui, name: &str) -> f32 {
-    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
-    SMALL_ICON + galley.size().x + 18.0
-}
-
-/// A small ribbon button: the icon with its words beside it.
-fn small_button(ui: &mut egui::Ui, name: &str, width: f32, checked: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(width, SMALL_BUTTON_HEIGHT), Sense::click());
-    let hovered = response.hovered();
-    button_background(ui, rect, hovered, checked);
-    let tint = icon_tint(hovered, checked, true);
-    let icon_rect = egui::Rect::from_min_size(pos2(rect.left() + 4.0, rect.center().y - SMALL_ICON / 2.0), vec2(SMALL_ICON, SMALL_ICON));
-    icons::paint(ui, name, icon_rect, SMALL_ICON, tint);
-    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), tint));
-    ui.painter().galley(pos2(icon_rect.right() + 6.0, rect.center().y - galley.size().y / 2.0), galley, tint);
-    response
-}
-
-/// The width of a large button, which grows with the words under it.
-fn large_button_width(ui: &egui::Ui, name: &str) -> f32 {
-    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
-    (galley.size().x + 14.0).max(56.0)
-}
-
-/// A big ribbon button: the icon with its label underneath.
-fn large_button(ui: &mut egui::Ui, name: &str, checked: bool) -> egui::Response {
-    let text = ribbon_text(name);
-    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(12.0), theme::TEXT));
-    let size = vec2((galley.size().x + 14.0).max(56.0), 64.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let hovered = response.hovered();
-    button_background(ui, rect, hovered, checked);
-    let icon_rect = egui::Rect::from_center_size(pos2(rect.center().x, rect.top() + 22.0), vec2(LARGE_ICON, LARGE_ICON));
-    icons::paint(ui, name, icon_rect, LARGE_ICON, icon_tint(hovered, checked, true));
-    ui.painter().galley(pos2(rect.center().x - galley.size().x / 2.0, rect.bottom() - galley.size().y - 6.0), galley, theme::TEXT);
     response
 }
 
@@ -278,172 +200,21 @@ fn window_button(ui: &mut egui::Ui, icon: &str, tip: &str, close: bool) -> egui:
     response.on_hover_text(tip)
 }
 
-// ------------------------------------------------------------------------------------------------ ribbon
-
-/// A ribbon group: its buttons above its title. Returns the room it took.
-fn group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) -> Rect {
-    ui.vertical(|ui| {
-        ui.set_min_height(86.0);
-        let width = ui
-            .horizontal(|ui| {
-                ui.spacing_mut().item_spacing = vec2(GROUP_SPACING, 2.0);
-                ui.set_min_height(66.0);
-                content(ui);
-            })
-            .response
-            .rect
-            .width();
-        ui.allocate_ui_with_layout(vec2(width, 16.0), Layout::top_down(Align::Center), |ui| {
-            // The title keeps one line even when the group has room for fewer buttons than its name.
-            ui.add(egui::Label::new(theme::label(title, theme::TEXT_DIM)).wrap_mode(egui::TextWrapMode::Extend));
-        });
-    })
-    .response
-    .rect
-}
-
-fn large_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static str]) {
-    let running = app.controller.running_command();
-    for name in names {
-        let more = MORE.iter().find(|(command, _)| command == name).map(|(_, more)| more);
-        let mut tip = tool_tip(name);
-        if let Some(more) = more {
-            tip = format!("{tip}. Right-click for {}.", more.iter().map(|m| label(m)).collect::<Vec<_>>().join(" and "));
-        }
-        let checked = running == Some(*name) || more.is_some_and(|more| more.iter().any(|m| running == Some(*m)));
-        let response = large_button(ui, name, checked).on_hover_text(tip);
-        if response.clicked() {
-            app.actions.push(Action::Command(name));
-        }
-        if let Some(more) = more {
-            response.context_menu(|ui| {
-                for extra in more.iter() {
-                    if ui.button(label(extra)).clicked() {
-                        app.actions.push(Action::Command(extra));
-                        ui.close_menu();
-                    }
-                }
-            });
-        }
-    }
-}
-
-fn small_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static str], rows: usize) {
-    let running = app.controller.running_command();
-    for column in names.chunks(rows) {
-        let width = column.iter().map(|name| small_button_width(ui, name)).fold(0.0, f32::max);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
-            for name in column {
-                // The group selection button shows whether it is on, as AutoCAD's does.
-                let checked = if *name == "PICKSTYLE" { app.controller.document().group_selection } else { running == Some(*name) };
-                let response = small_button(ui, name, width, checked).on_hover_text(tool_tip(name));
-                if response.clicked() {
-                    app.actions.push(Action::Command(name));
-                }
-            }
-        });
-    }
-}
-
-/// The More button at the end of a group: a drop-down with the small buttons that do not fit on the ribbon.
-fn more_button(app: &mut LinewrightApp, ui: &mut egui::Ui, hidden: &[&'static str]) {
-    let (rect, response) = ui.allocate_exact_size(vec2(MORE_BUTTON_WIDTH, 31.0), Sense::click());
-    let id = response.id.with("more");
-    if response.clicked() {
-        ui.memory_mut(|m| m.toggle_popup(id));
-    }
-    let open = ui.memory(|m| m.is_popup_open(id));
-    let hovered = response.hovered();
-    button_background(ui, rect, hovered, open);
-    let center = rect.center();
-    let triangle = vec![pos2(center.x - 4.0, center.y - 2.0), pos2(center.x + 4.0, center.y - 2.0), pos2(center.x, center.y + 2.0)];
-    ui.painter().add(egui::Shape::convex_polygon(triangle, icon_tint(hovered, open, true), Stroke::NONE));
-    egui::popup::popup_below_widget(ui, id, &response, egui::popup::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        for &name in hidden {
-            let icon = icons::image(name, theme::TEXT).fit_to_exact_size(vec2(SMALL_ICON, SMALL_ICON));
-            if ui.add(egui::Button::image_and_text(icon, label(name))).on_hover_text(tool_tip(name)).clicked() {
-                app.actions.push(Action::Command(name));
-                ui.memory_mut(|m| m.close_popup());
-            }
-        }
-    });
-}
-
-/// A group of the ribbon: its large buttons, then its small buttons in columns of `rows`.
-struct RibbonGroup {
-    title: &'static str,
-    large: &'static [&'static str],
-    small: &'static [&'static str],
-    rows: usize,
-}
-
-/// The room a ribbon group's parts take, measured before anything is drawn.
-struct GroupSize {
-    large_width: f32,
-    large_count: usize,
-    title_width: f32,
-    /// The width of each column of small buttons, left to right.
-    column_widths: Vec<f32>,
-}
-
-impl GroupSize {
-    /// The width of the group with its first `columns` small columns, and the More button when some are hidden.
-    fn width(&self, columns: usize, more: bool, spacing: f32) -> f32 {
-        let items = self.large_count + columns + usize::from(more);
-        let small: f32 = self.column_widths[..columns].iter().sum();
-        let parts = self.large_width + small + if more { MORE_BUTTON_WIDTH } else { 0.0 };
-        (parts + spacing * items.saturating_sub(1) as f32).max(self.title_width)
-    }
-}
-
-impl RibbonGroup {
-    fn size(&self, ui: &egui::Ui) -> GroupSize {
-        GroupSize {
-            large_width: self.large.iter().map(|name| large_button_width(ui, name)).sum(),
-            large_count: self.large.len(),
-            title_width: {
-                let job = egui::WidgetText::from(theme::label(self.title, theme::TEXT_DIM)).into_layout_job(
-                    ui.style(),
-                    egui::FontSelection::Default,
-                    Align::Center,
-                );
-                ui.fonts(|f| f.layout_job(job)).size().x
-            },
-            column_widths: self
-                .small
-                .chunks(self.rows)
-                .map(|column| column.iter().map(|n| small_button_width(ui, n)).fold(0.0, f32::max))
-                .collect(),
-        }
-    }
-
-    /// Draws the group with its first `columns` small columns; the rest go in the More button.
-    fn show(&self, app: &mut LinewrightApp, ui: &mut egui::Ui, columns: usize) {
-        let (visible, hidden) = self.small.split_at((columns * self.rows).min(self.small.len()));
-        group(ui, self.title, |ui| {
-            large_buttons(app, ui, self.large);
-            small_buttons(app, ui, visible, self.rows);
-            if !hidden.is_empty() {
-                more_button(app, ui, hidden);
-            }
-        });
-    }
-}
+// ------------------------------------------------------------------------------------------------ general properties
 
 /// What the selection has in common, or what new objects get when nothing is selected: layer, color, linetype,
 /// linetype scale and lineweight. None where selected objects differ.
-struct GeneralValues {
-    layer: Option<String>,
-    color: Option<i32>,
-    linetype: Option<String>,
+pub(super) struct GeneralValues {
+    pub(super) layer: Option<String>,
+    pub(super) color: Option<i32>,
+    pub(super) linetype: Option<String>,
     linetype_scale: Option<f64>,
-    lineweight: Option<i16>,
+    pub(super) lineweight: Option<i16>,
     layers: Vec<(String, i32)>,
 }
 
 impl GeneralValues {
-    fn of(app: &LinewrightApp) -> GeneralValues {
+    pub(super) fn of(app: &LinewrightApp) -> GeneralValues {
         let document = app.controller.document();
         let selected = app.controller.selected();
         let any = !selected.is_empty();
@@ -499,7 +270,7 @@ fn layer_combo(ui: &mut egui::Ui, id: &str, width: f32, values: &GeneralValues, 
         .on_hover_text("Layer");
 }
 
-fn color_combo(ui: &mut egui::Ui, id: &str, width: f32, color: Option<i32>, actions: &mut Vec<Action>) {
+pub(super) fn color_combo(ui: &mut egui::Ui, id: &str, width: f32, color: Option<i32>, actions: &mut Vec<Action>) {
     egui::ComboBox::from_id_salt(id)
         .width(width)
         .selected_text(match color {
@@ -524,10 +295,42 @@ fn color_combo(ui: &mut egui::Ui, id: &str, width: f32, color: Option<i32>, acti
         .on_hover_text("Color");
 }
 
-fn linetype_combo(ui: &mut egui::Ui, id: &str, width: f32, linetype: &Option<String>, actions: &mut Vec<Action>) {
-    egui::ComboBox::from_id_salt(id)
+/// How long the sample of a line is before the name of a linetype or lineweight, as AutoCAD's drop-downs show them.
+const SAMPLE: f32 = 26.0;
+
+/// A name with room before it for a line sample.
+fn sample_text(text: &str) -> WidgetText {
+    let mut job = LayoutJob::default();
+    job.append(text, SAMPLE + 8.0, egui::TextFormat::simple(FontId::proportional(13.5), theme::TEXT));
+    job.into()
+}
+
+/// A line sample at the left of a drop-down: `dashes` in points, dash and gap in turn, empty for a solid line.
+fn paint_sample(ui: &egui::Ui, field: Rect, dashes: &[f32], thickness: f32) {
+    let (start, y) = (field.left() + ui.spacing().button_padding.x, field.center().y);
+    let stroke = Stroke::new(thickness, theme::TEXT);
+    if dashes.is_empty() {
+        ui.painter().line_segment([pos2(start, y), pos2(start + SAMPLE, y)], stroke);
+        return;
+    }
+    let mut x = start;
+    for (index, length) in dashes.iter().cycle().enumerate() {
+        if x >= start + SAMPLE {
+            break;
+        }
+        if index % 2 == 0 {
+            // A zero length is a dot.
+            let end = (x + length.max(1.0)).min(start + SAMPLE);
+            ui.painter().line_segment([pos2(x, y), pos2(end, y)], stroke);
+        }
+        x += length;
+    }
+}
+
+pub(super) fn linetype_combo(ui: &mut egui::Ui, id: &str, width: f32, linetype: &Option<String>, actions: &mut Vec<Action>) {
+    let response = egui::ComboBox::from_id_salt(id)
         .width(width)
-        .selected_text(linetype.clone().unwrap_or_else(|| VARIES.into()))
+        .selected_text(linetype.as_deref().map_or_else(|| VARIES.into(), sample_text))
         .show_ui(ui, |ui| {
             for name in std::iter::once(BYLAYER_LINETYPE).chain(LINETYPES) {
                 if ui.selectable_label(linetype.as_deref() == Some(name), name).clicked() {
@@ -535,8 +338,13 @@ fn linetype_combo(ui: &mut egui::Ui, id: &str, width: f32, linetype: &Option<Str
                 }
             }
         })
-        .response
-        .on_hover_text("Linetype");
+        .response;
+    if let Some(name) = linetype {
+        // The pattern in millimeters, drawn small enough that a few dashes fit.
+        let dashes: Vec<f32> = dash_pattern(name).iter().map(|mm| *mm as f32 * 0.4).collect();
+        paint_sample(ui, response.rect, &dashes, 1.0);
+    }
+    response.on_hover_text("Linetype");
 }
 
 /// A multiline style's settings as AutoCAD's New/Modify Multiline Style dialog lays them out: description, caps at
@@ -647,26 +455,30 @@ fn lineweight_choice(ui: &mut egui::Ui, value: i16, selected: bool) -> egui::Res
         let fill = if selected { theme::ACCENT_TINT } else { theme::PANEL_RAISED };
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
     }
-    let thickness = if value >= 0 { lineweight::model_pixels(value as f64 / 100.0).min(7.0) } else { 1.0 };
+    let thickness = lineweight_thickness(value);
     let (x, y) = (rect.left() + 6.0, rect.center().y);
     ui.painter().line_segment([pos2(x, y), pos2(x + SAMPLE, y)], Stroke::new(thickness, theme::TEXT));
     ui.painter().galley(pos2(x + SAMPLE + 10.0, y - galley.size().y / 2.0), galley, theme::TEXT);
     response
 }
 
-fn lineweight_combo(
+/// The lineweight drop-down; with `sample`, a sample of the line shows before its name where there is room for it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lineweight_combo(
     ui: &mut egui::Ui,
     id: &str,
     width: f32,
     current: Option<i16>,
     choices: impl Iterator<Item = i16>,
     pick: impl Fn(i16) -> Action,
+    sample: bool,
     actions: &mut Vec<Action>,
 ) {
-    egui::ComboBox::from_id_salt(id)
+    let text = |value: i16| if sample { sample_text(&lineweight::name(value)) } else { lineweight::name(value).into() };
+    let response = egui::ComboBox::from_id_salt(id)
         .width(width)
         .height(420.0)
-        .selected_text(current.map_or_else(|| VARIES.into(), lineweight::name))
+        .selected_text(current.map_or_else(|| VARIES.into(), text))
         .show_ui(ui, |ui| {
             for value in choices {
                 if lineweight_choice(ui, value, current == Some(value)).clicked() {
@@ -674,141 +486,16 @@ fn lineweight_combo(
                 }
             }
         })
-        .response
-        .on_hover_text("Lineweight");
-}
-
-fn properties(app: &mut LinewrightApp, ui: &mut egui::Ui) {
-    let values = GeneralValues::of(app);
-    let mut actions = vec![];
-    // Two rows without labels, so the ribbon keeps its tools in view; each control says what it is on hover.
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        ui.horizontal(|ui| {
-            layer_combo(ui, "layer_combo", 140.0, &values, &mut actions);
-            color_combo(ui, "color_combo", 100.0, values.color, &mut actions);
-        });
-        ui.horizontal(|ui| {
-            if icon_button(ui, "LAYERS", vec2(32.0, 28.0), 18.0, true, app.palette_open).on_hover_text("Layer Properties (LA)").clicked() {
-                actions.push(Action::TogglePalette);
-            }
-            linetype_combo(ui, "linetype_combo", 90.0, &values.linetype, &mut actions);
-            lineweight_combo(ui, "lineweight_combo", 90.0, values.lineweight, lineweight::choices(), Action::UseLineweight, &mut actions);
-        });
-    });
-    app.actions.extend(actions);
-}
-
-pub fn ribbon(app: &mut LinewrightApp, ctx: &egui::Context) {
-    let frame = Frame::new()
-        .fill(theme::PANEL)
-        .inner_margin(Margin { left: 10, right: 10, top: 8, bottom: 4 })
-        .stroke(Stroke::new(1.0_f32, theme::BORDER));
-    egui::TopBottomPanel::top("ribbon").frame(frame).show(ctx, |ui| {
-        ui.add_enabled_ui(!app.is_opening(), |ui| {
-            // Properties keeps its place at the right end; the tools take the room that is left and scroll
-            // sideways when the window is too narrow for them all.
-            ui.horizontal(|ui| {
-                // The Properties group's width as last drawn, so the tools leave room for it.
-                let width_id = Id::new("ribbon_properties_width");
-                let reserved = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(560.0) + 16.0;
-                let budget = (ui.available_width() - reserved).max(0.0);
-                ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
-                egui::ScrollArea::horizontal()
-                    .max_width(budget)
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                    .show(ui, |ui| ui.horizontal(|ui| tool_groups(app, ui, budget)));
-                divider(ui, 82.0);
-                let width = group(ui, "Properties", |ui| properties(app, ui)).width();
-                ui.data_mut(|d| d.insert_temp(width_id, width));
-            });
-        });
-    });
-}
-
-/// The ribbon's groups, left to right. `budget` is the width the tools have; each group keeps as many small
-/// buttons as fit in the room left for it, and the rest go in its More button.
-fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
-    let groups = [
-        RibbonGroup {
-            title: "Draw",
-            large: &["LINE", "PLINE"],
-            small: &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "BOUNDARY", "SPLINE", "POINT", "MLINE", "WIPEOUT"],
-            rows: 3,
-        },
-        RibbonGroup {
-            title: "Modify",
-            large: &[],
-            // In columns of three, the most used first, so a narrow ribbon keeps them out of the More menu.
-            small: &[
-                "MOVE",
-                "COPY",
-                "ROTATE",
-                "TRIM",
-                "OFFSET",
-                "ERASE",
-                "MIRROR",
-                "SCALE",
-                "FILLET",
-                "STRETCH",
-                "ARRAY",
-                "EXPLODE",
-                "EXTEND",
-                "CHAMFER",
-                "BREAK",
-                "JOIN",
-                "OVERKILL",
-                "MATCHPROP",
-                "LIST",
-            ],
-            rows: 3,
-        },
-        RibbonGroup {
-            title: "Annotation",
-            large: &["MTEXT", "DIMLINEAR"],
-            small: &["QLEADER", "DIMALIGNED", "DIMRADIUS", "DIMDIAMETER", "DIMANGULAR", "DIMSTYLE", "DISTANCE", "AREA"],
-            rows: 3,
-        },
-        RibbonGroup { title: "Blocks", large: &[], small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"], rows: 3 },
-    ];
-    // Buttons inside a group sit GROUP_SPACING apart (see `group`); the groups and dividers use the ribbon's spacing.
-    let spacing = GROUP_SPACING;
-    let outer = ui.spacing().item_spacing.x;
-    // Each divider is a 1 pixel line with the spacing on both sides.
-    let divider_width = 1.0 + 2.0 * outer;
-    let sizes: Vec<GroupSize> = groups.iter().map(|group| group.size(ui)).collect();
-    let room = budget - (groups.len() - 1) as f32 * divider_width;
-    for (index, (group, columns)) in groups.iter().zip(shared_columns(&sizes, room, spacing)).enumerate() {
-        if index > 0 {
-            divider(ui, 82.0);
-        }
-        group.show(app, ui, columns);
+        .response;
+    if let Some(value) = current.filter(|_| sample) {
+        paint_sample(ui, response.rect, &[], lineweight_thickness(value));
     }
+    response.on_hover_text("Lineweight");
 }
 
-/// How many small columns each group shows in `room`: one more column to each group in turn while they fit, so
-/// every group keeps some of its buttons on a narrow ribbon instead of the first groups taking it all.
-fn shared_columns(sizes: &[GroupSize], room: f32, spacing: f32) -> Vec<usize> {
-    let used = |columns: &[usize]| -> f32 {
-        sizes.iter().zip(columns).map(|(size, &n)| size.width(n, n < size.column_widths.len(), spacing)).sum()
-    };
-    let mut columns = vec![0; sizes.len()];
-    let mut grew = true;
-    while grew {
-        grew = false;
-        for index in 0..sizes.len() {
-            if columns[index] == sizes[index].column_widths.len() {
-                continue;
-            }
-            columns[index] += 1;
-            if used(&columns) <= room {
-                grew = true;
-            } else {
-                columns[index] -= 1;
-            }
-        }
-    }
-    columns
+/// How thick a lineweight's sample is drawn: as on screen, within what a list row holds.
+fn lineweight_thickness(value: i16) -> f32 {
+    if value >= 0 { lineweight::model_pixels(value as f64 / 100.0).min(7.0) } else { 1.0 }
 }
 
 // ------------------------------------------------------------------------------------------------ document tab
@@ -1267,6 +954,7 @@ pub fn layer_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
                         Some(layer.lineweight),
                         lineweight::choices().filter(|lw| *lw >= 0 || *lw == lineweight::DEFAULT),
                         move |lw| Action::LayerLineweight(layer_name.clone(), lw),
+                        false,
                         &mut actions,
                     );
                     if let Some(frozen) = &viewport_frozen {
@@ -1360,6 +1048,7 @@ pub fn properties_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
                     values.lineweight,
                     lineweight::choices(),
                     Action::UseLineweight,
+                    true,
                     &mut actions,
                 );
                 ui.end_row();
@@ -3322,25 +3011,5 @@ fn arrowhead_name(arrowhead: Arrowhead) -> &'static str {
         Arrowhead::Filled => "Closed filled",
         Arrowhead::Tick => "Architectural tick",
         Arrowhead::Dot => "Dot",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn size(columns: usize) -> GroupSize {
-        GroupSize { large_width: 0.0, large_count: 0, title_width: 0.0, column_widths: vec![100.0; columns] }
-    }
-
-    #[test]
-    fn a_narrow_ribbon_shares_its_columns_between_the_groups() {
-        let sizes = [size(4), size(7), size(3)];
-        // Room for six columns and the three More buttons: the first group no longer takes them all.
-        assert_eq!(shared_columns(&sizes, 6.0 * 100.0 + 3.0 * MORE_BUTTON_WIDTH, 0.0), vec![2, 2, 2]);
-        // Room for everything shows everything.
-        assert_eq!(shared_columns(&sizes, 1400.0, 0.0), vec![4, 7, 3]);
-        // No room at all leaves only the More buttons.
-        assert_eq!(shared_columns(&sizes, 0.0, 0.0), vec![0, 0, 0]);
     }
 }

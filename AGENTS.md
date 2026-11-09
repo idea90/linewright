@@ -118,7 +118,8 @@ rust/                the app (Cargo crate "linewright")
 | **`ui/`** | **The window** |
 | `ui/app.rs` | The main window, its state, each frame, and the actions buttons and keys trigger |
 | `ui/controller.rs` | Connects typed input and clicks to the running command, and its steps to the drawing |
-| `ui/panels.rs` | The ribbon, palettes, dialogs, command line and status bar |
+| `ui/panels.rs` | The header, palettes, dialogs, command line and status bar |
+| `ui/ribbon.rs` | The ribbon: its tabs, panels, flyouts, the layer drop-down and the Properties panel's drop-downs |
 | `ui/undo.rs` | Undo and redo: every change is a `Change` pushed here |
 | `ui/layers.rs`, `icons.rs`, `theme.rs`, `frame.rs`, `recent.rs`, `debug_capture.rs` | Layer edits, icons, colors, the custom window frame, recent files, screenshot aid |
 

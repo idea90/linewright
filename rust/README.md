@@ -17,6 +17,12 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 ## What it does
 
 - A start page when it opens without a file: new, open, recent drawings and first steps.
+- A ribbon laid out as AutoCAD's: Home, Insert, Annotate, View, Manage and Output tabs (double-click the open tab to
+  hide the panels). Home has AutoCAD's Modify, Layers, Annotation, Block, Properties, Draw, Groups, Utilities and
+  Clipboard panels. Buttons with a ▾ are flyouts: the button runs the tool used last, the ▾ lists the others (Circle
+  2-Point and 3-Point, Arc Center, Start, End, the dimension types and so on). The Layers panel's drop-down turns
+  layers on and off, freezes and locks them from their icons. Each panel's name strip opens its other tools, and the
+  columns that do not fit a narrow window move there too.
 
 - Draw: `LINE` (`L`), `PLINE` (`PL`), `RECTANGLE` (`REC`), `POLYGON` (`POL`), `MTEXT` (`MT`), `XLINE` (`XL`), `RAY`, `DONUT` (`DO`), `REVCLOUD`, `TABLE` (`TB`), `CIRCLE` (`C`), `ARC` (`A`), `ELLIPSE` (`EL`),
   `SPLINE` (`SPL`), `POINT` (`PO`), `HATCH` (`H`; SOLID, ANSI31, ANSI37, NET, LINE, DOTS, DASH), `TEXT` (`T`)
