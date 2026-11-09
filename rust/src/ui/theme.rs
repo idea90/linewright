@@ -34,6 +34,28 @@ pub const CLOSE_HOVER: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
 pub const LABEL: Color32 = Color32::from_rgb(0xf0, 0x8a, 0x5d);
 pub const OVERLAY: Color32 = Color32::from_rgba_premultiplied(17, 21, 23, 204); // the canvas at 80%
 
+// The ribbon, in the colors of AutoCAD's dark theme: a blue-grey slate under a darker strip of tabs.
+/// The panels, and the tab that is open.
+pub const RIBBON: Color32 = Color32::from_rgb(0x3b, 0x44, 0x53);
+/// The strip the tabs sit on.
+pub const RIBBON_TABS: Color32 = Color32::from_rgb(0x22, 0x29, 0x33);
+/// The title strip at the bottom of each panel.
+pub const RIBBON_TITLE: Color32 = Color32::from_rgb(0x33, 0x3b, 0x48);
+pub const RIBBON_TITLE_TEXT: Color32 = Color32::from_rgb(0xb4, 0xbc, 0xc8);
+/// The groove between panels and the ribbon's lower edge.
+pub const RIBBON_EDGE: Color32 = Color32::from_rgb(0x1d, 0x24, 0x2d);
+pub const RIBBON_TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xeb);
+pub const RIBBON_TAB_TEXT: Color32 = Color32::from_rgb(0xc4, 0xc9, 0xd1);
+/// A button under the pointer.
+pub const RIBBON_HOVER: Color32 = Color32::from_rgb(0x4a, 0x55, 0x68);
+pub const RIBBON_HOVER_EDGE: Color32 = Color32::from_rgb(0x62, 0x6e, 0x84);
+/// A button that is on, or whose command runs: AutoCAD's blue.
+pub const RIBBON_CHECKED: Color32 = Color32::from_rgb(0x46, 0x5d, 0x75);
+pub const RIBBON_CHECKED_EDGE: Color32 = Color32::from_rgb(0x74, 0xc8, 0xff);
+/// The drop-down lists of layers, colors, lineweights and linetypes.
+pub const RIBBON_FIELD: Color32 = Color32::from_rgb(0x4e, 0x5a, 0x6e);
+pub const RIBBON_FIELD_EDGE: Color32 = Color32::from_rgb(0x5c, 0x68, 0x7e);
+
 fn font_data(file: &FontFile) -> Option<FontData> {
     let bytes = fonts::load(file)?;
     let mut data = FontData::from_owned(bytes.as_ref().clone());

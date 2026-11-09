@@ -1784,6 +1784,7 @@ impl LinewrightApp {
                 self.controller.start_command(name);
             }
             Action::Command("AUDIT") => self.audit_drawing(),
+            Action::Command("LAYER") => self.palette_open = true,
             Action::Command(name) => self.controller.start_command(name),
             // The answer to AUDIT's question: Y fixes, N or Enter leaves things, and anything else is a command.
             Action::Input(text) if self.audit_question => {
@@ -2244,7 +2245,7 @@ impl eframe::App for LinewrightApp {
         self.on_window_edge = frame::resize_from_edges(ctx);
 
         panels::header(self, ctx);
-        panels::ribbon(self, ctx);
+        super::ribbon::ribbon(self, ctx);
         panels::document_tab(self, ctx);
         panels::status_bar(self, ctx);
         panels::command_panel(self, ctx);
