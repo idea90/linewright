@@ -584,6 +584,9 @@ fn draw_tracking(shapes: &mut Vec<Shape>, screen: &Screen, controller: &Controll
     }
 }
 
+/// Room kept free along the drawing area's right edge for the zoom buttons (`panels::navigation_bar`).
+const NAV_BAR_ROOM: f32 = 62.0;
+
 /// Dynamic input: by the cursor, what the command asks and, at a point prompt, two fields as AutoCAD shows them:
 /// length and angle from the base point, or X and Y. What is typed goes into the highlighted field; Tab moves on.
 fn draw_dynamic_input(
@@ -622,7 +625,7 @@ fn draw_dynamic_input(
     let height = message.size().y + 8.0 + extra;
     let mut top_left = pointer + vec2(18.0, 18.0);
     // Keep it inside the drawing area.
-    top_left.x = top_left.x.min(screen.rect.right() - width - 4.0);
+    top_left.x = top_left.x.min(screen.rect.right() - width - NAV_BAR_ROOM);
     top_left.y = top_left.y.min(screen.rect.bottom() - height - 4.0);
     let frame = Rect::from_min_size(top_left, vec2(width, height));
     shapes.push(Shape::rect_filled(frame, 4.0, theme::PANEL_RAISED.gamma_multiply(0.94)));

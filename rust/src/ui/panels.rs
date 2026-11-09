@@ -33,8 +33,8 @@ use crate::snap::resolve::SnapMode;
 const HEADER_HEIGHT: f32 = 40.0;
 const QUICK_ICON: f32 = 18.0;
 const LARGE_ICON: f32 = 28.0;
-const SMALL_ICON: f32 = 20.0;
-const SMALL_BUTTON_WIDTH: f32 = 32.0;
+const SMALL_ICON: f32 = 18.0;
+const SMALL_BUTTON_HEIGHT: f32 = 21.0;
 const MORE_BUTTON_WIDTH: f32 = 20.0;
 /// How far apart the buttons of a ribbon group are.
 const GROUP_SPACING: f32 = 2.0;
@@ -96,20 +96,54 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, size: egui::Vec2, icon_size: f32, 
     response
 }
 
-/// The words under a large button. AutoCAD calls its multiline text button just Text.
-fn large_text(name: &str) -> &'static str {
-    if name == "MTEXT" { "Text" } else { label(name) }
+/// The words on a ribbon button: the command's label, shortened where the ribbon has little room, as AutoCAD's does.
+fn ribbon_text(name: &str) -> &'static str {
+    match name {
+        "MTEXT" => "Text",
+        "BOUNDARY" => "Boundary",
+        "OVERKILL" => "Overkill",
+        "MATCHPROP" => "Match",
+        "DIMALIGNED" => "Aligned",
+        "DIMRADIUS" => "Radius",
+        "DIMDIAMETER" => "Diameter",
+        "DIMANGULAR" => "Angular",
+        "DIMSTYLE" => "Dim style",
+        "INSERT" => "Insert",
+        "BLOCK" => "Create",
+        "GROUPEDIT" => "Group edit",
+        "PICKSTYLE" => "Group select",
+        _ => label(name),
+    }
+}
+
+/// The width of a small ribbon button: the icon, then its words.
+fn small_button_width(ui: &egui::Ui, name: &str) -> f32 {
+    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
+    SMALL_ICON + galley.size().x + 18.0
+}
+
+/// A small ribbon button: the icon with its words beside it.
+fn small_button(ui: &mut egui::Ui, name: &str, width: f32, checked: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, SMALL_BUTTON_HEIGHT), Sense::click());
+    let hovered = response.hovered();
+    button_background(ui, rect, hovered, checked);
+    let tint = icon_tint(hovered, checked, true);
+    let icon_rect = egui::Rect::from_min_size(pos2(rect.left() + 4.0, rect.center().y - SMALL_ICON / 2.0), vec2(SMALL_ICON, SMALL_ICON));
+    icons::paint(ui, name, icon_rect, SMALL_ICON, tint);
+    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), tint));
+    ui.painter().galley(pos2(icon_rect.right() + 6.0, rect.center().y - galley.size().y / 2.0), galley, tint);
+    response
 }
 
 /// The width of a large button, which grows with the words under it.
 fn large_button_width(ui: &egui::Ui, name: &str) -> f32 {
-    let galley = ui.fonts(|f| f.layout_no_wrap(large_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
+    let galley = ui.fonts(|f| f.layout_no_wrap(ribbon_text(name).to_string(), FontId::proportional(12.0), theme::TEXT));
     (galley.size().x + 14.0).max(56.0)
 }
 
 /// A big ribbon button: the icon with its label underneath.
 fn large_button(ui: &mut egui::Ui, name: &str, checked: bool) -> egui::Response {
-    let text = large_text(name);
+    let text = ribbon_text(name);
     let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(12.0), theme::TEXT));
     let size = vec2((galley.size().x + 14.0).max(56.0), 64.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -297,12 +331,13 @@ fn large_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static s
 fn small_buttons(app: &mut LinewrightApp, ui: &mut egui::Ui, names: &[&'static str], rows: usize) {
     let running = app.controller.running_command();
     for column in names.chunks(rows) {
+        let width = column.iter().map(|name| small_button_width(ui, name)).fold(0.0, f32::max);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
             for name in column {
                 // The group selection button shows whether it is on, as AutoCAD's does.
                 let checked = if *name == "PICKSTYLE" { app.controller.document().group_selection } else { running == Some(*name) };
-                let response = icon_button(ui, name, vec2(32.0, 31.0), SMALL_ICON, true, checked).on_hover_text(tool_tip(name));
+                let response = small_button(ui, name, width, checked).on_hover_text(tool_tip(name));
                 if response.clicked() {
                     app.actions.push(Action::Command(name));
                 }
@@ -348,23 +383,17 @@ struct GroupSize {
     large_width: f32,
     large_count: usize,
     title_width: f32,
-    columns: usize,
+    /// The width of each column of small buttons, left to right.
+    column_widths: Vec<f32>,
 }
 
 impl GroupSize {
     /// The width of the group with its first `columns` small columns, and the More button when some are hidden.
     fn width(&self, columns: usize, more: bool, spacing: f32) -> f32 {
         let items = self.large_count + columns + usize::from(more);
-        let parts = self.large_width + columns as f32 * SMALL_BUTTON_WIDTH + if more { MORE_BUTTON_WIDTH } else { 0.0 };
+        let small: f32 = self.column_widths[..columns].iter().sum();
+        let parts = self.large_width + small + if more { MORE_BUTTON_WIDTH } else { 0.0 };
         (parts + spacing * items.saturating_sub(1) as f32).max(self.title_width)
-    }
-
-    /// The most small columns that fit in `room`. When some are hidden, the More button takes room too.
-    fn columns_that_fit(&self, room: f32, spacing: f32) -> usize {
-        if self.width(self.columns, false, spacing) <= room {
-            return self.columns;
-        }
-        (0..self.columns).rev().find(|&k| self.width(k, true, spacing) <= room).unwrap_or(0)
     }
 }
 
@@ -381,7 +410,11 @@ impl RibbonGroup {
                 );
                 ui.fonts(|f| f.layout_job(job)).size().x
             },
-            columns: self.small.len().div_ceil(self.rows),
+            column_widths: self
+                .small
+                .chunks(self.rows)
+                .map(|column| column.iter().map(|n| small_button_width(ui, n)).fold(0.0, f32::max))
+                .collect(),
         }
     }
 
@@ -701,41 +734,42 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
             title: "Draw",
             large: &["LINE", "PLINE"],
             small: &["CIRCLE", "ARC", "RECTANGLE", "POLYGON", "ELLIPSE", "HATCH", "BOUNDARY", "SPLINE", "POINT", "MLINE", "WIPEOUT"],
-            rows: 2,
+            rows: 3,
         },
         RibbonGroup {
             title: "Modify",
             large: &[],
+            // In columns of three, the most used first, so a narrow ribbon keeps them out of the More menu.
             small: &[
                 "MOVE",
-                "MIRROR",
                 "COPY",
-                "OFFSET",
-                "SCALE",
-                "FILLET",
                 "ROTATE",
                 "TRIM",
+                "OFFSET",
                 "ERASE",
-                "EXTEND",
+                "MIRROR",
+                "SCALE",
+                "FILLET",
                 "STRETCH",
-                "CHAMFER",
                 "ARRAY",
-                "BREAK",
                 "EXPLODE",
+                "EXTEND",
+                "CHAMFER",
+                "BREAK",
                 "JOIN",
                 "OVERKILL",
                 "MATCHPROP",
                 "LIST",
             ],
-            rows: 2,
+            rows: 3,
         },
         RibbonGroup {
             title: "Annotation",
             large: &["MTEXT", "DIMLINEAR"],
             small: &["QLEADER", "DIMALIGNED", "DIMRADIUS", "DIMDIAMETER", "DIMANGULAR", "DIMSTYLE", "DISTANCE", "AREA"],
-            rows: 2,
+            rows: 3,
         },
-        RibbonGroup { title: "Blocks", large: &[], small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"], rows: 2 },
+        RibbonGroup { title: "Blocks", large: &[], small: &["INSERT", "BLOCK", "GROUP", "UNGROUP", "GROUPEDIT", "PICKSTYLE"], rows: 3 },
     ];
     // Buttons inside a group sit GROUP_SPACING apart (see `group`); the groups and dividers use the ribbon's spacing.
     let spacing = GROUP_SPACING;
@@ -743,20 +777,38 @@ fn tool_groups(app: &mut LinewrightApp, ui: &mut egui::Ui, budget: f32) {
     // Each divider is a 1 pixel line with the spacing on both sides.
     let divider_width = 1.0 + 2.0 * outer;
     let sizes: Vec<GroupSize> = groups.iter().map(|group| group.size(ui)).collect();
-    let last = groups.len() - 1;
-    let mut used = 0.0;
-    for (index, (group, size)) in groups.iter().zip(&sizes).enumerate() {
+    let room = budget - (groups.len() - 1) as f32 * divider_width;
+    for (index, (group, columns)) in groups.iter().zip(shared_columns(&sizes, room, spacing)).enumerate() {
         if index > 0 {
             divider(ui, 82.0);
-            used += divider_width;
         }
-        // The groups after this one keep at least their large buttons, and the dividers still to come take room.
-        let later: f32 = sizes[index + 1..].iter().map(|s| s.width(0, s.columns > 0, spacing)).sum();
-        let room = budget - used - later - (last - index) as f32 * divider_width;
-        let columns = size.columns_that_fit(room, spacing);
-        used += size.width(columns, columns < size.columns, spacing);
         group.show(app, ui, columns);
     }
+}
+
+/// How many small columns each group shows in `room`: one more column to each group in turn while they fit, so
+/// every group keeps some of its buttons on a narrow ribbon instead of the first groups taking it all.
+fn shared_columns(sizes: &[GroupSize], room: f32, spacing: f32) -> Vec<usize> {
+    let used = |columns: &[usize]| -> f32 {
+        sizes.iter().zip(columns).map(|(size, &n)| size.width(n, n < size.column_widths.len(), spacing)).sum()
+    };
+    let mut columns = vec![0; sizes.len()];
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for index in 0..sizes.len() {
+            if columns[index] == sizes[index].column_widths.len() {
+                continue;
+            }
+            columns[index] += 1;
+            if used(&columns) <= room {
+                grew = true;
+            } else {
+                columns[index] -= 1;
+            }
+        }
+    }
+    columns
 }
 
 // ------------------------------------------------------------------------------------------------ document tab
@@ -956,7 +1008,7 @@ pub fn command_panel(app: &mut LinewrightApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!app.is_opening(), |ui| {
                         ui.label(RichText::new(">_").monospace().color(theme::TEXT_DIM));
-                        ui.label(RichText::new(prompt).strong().color(theme::TEXT));
+                        ui.label(RichText::new(prompt).monospace().strong().color(theme::TEXT));
                         // AutoComplete, at the Command: prompt only, as in AutoCAD.
                         let offered = if app.controller.prompt().is_none() { suggestions(&app.input, MAX_SUGGESTIONS) } else { vec![] };
                         if app.suggestion_for != app.input {
@@ -1616,7 +1668,6 @@ pub fn canvas(app: &mut LinewrightApp, ctx: &egui::Context) {
         };
         render::paint(ui, &screen, &app.controller, &overlay);
         navigation_bar(app, ctx, rect);
-        prompt_hint(app, ctx, rect);
         if let Some(name) = app.opening_name().map(str::to_string) {
             loading_overlay(ui, ctx, rect, &name);
         }
@@ -1971,29 +2022,6 @@ fn navigation_bar(app: &mut LinewrightApp, ctx: &egui::Context, canvas: egui::Re
                 }
             });
     });
-}
-
-/// A chip in the corner of the drawing area naming the running command and what it asks for.
-fn prompt_hint(app: &LinewrightApp, ctx: &egui::Context, canvas: egui::Rect) {
-    let (Some(command), Some(prompt)) = (app.controller.running_command(), app.controller.prompt()) else { return };
-    egui::Area::new(Id::new("prompt_hint"))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .fixed_pos(canvas.min + vec2(16.0, 16.0))
-        .show(ctx, |ui| {
-            Frame::new()
-                .fill(theme::PANEL.gamma_multiply(0.94))
-                .stroke(Stroke::new(1.0_f32, theme::BORDER_STRONG))
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(Margin { left: 12, right: 14, top: 7, bottom: 7 })
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(icons::image(command, theme::ACCENT).fit_to_exact_size(vec2(16.0, 16.0)));
-                        ui.label(RichText::new(label(command)).strong().color(theme::TEXT));
-                        ui.label(RichText::new(format!("· {}", prompt.message.trim_end_matches(':'))).color(theme::TEXT_DIM));
-                    });
-                });
-        });
 }
 
 /// Covers the drawing area with a message and a spinner while a file is opening.
@@ -3294,5 +3322,25 @@ fn arrowhead_name(arrowhead: Arrowhead) -> &'static str {
         Arrowhead::Filled => "Closed filled",
         Arrowhead::Tick => "Architectural tick",
         Arrowhead::Dot => "Dot",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn size(columns: usize) -> GroupSize {
+        GroupSize { large_width: 0.0, large_count: 0, title_width: 0.0, column_widths: vec![100.0; columns] }
+    }
+
+    #[test]
+    fn a_narrow_ribbon_shares_its_columns_between_the_groups() {
+        let sizes = [size(4), size(7), size(3)];
+        // Room for six columns and the three More buttons: the first group no longer takes them all.
+        assert_eq!(shared_columns(&sizes, 6.0 * 100.0 + 3.0 * MORE_BUTTON_WIDTH, 0.0), vec![2, 2, 2]);
+        // Room for everything shows everything.
+        assert_eq!(shared_columns(&sizes, 1400.0, 0.0), vec![4, 7, 3]);
+        // No room at all leaves only the More buttons.
+        assert_eq!(shared_columns(&sizes, 0.0, 0.0), vec![0, 0, 0]);
     }
 }
