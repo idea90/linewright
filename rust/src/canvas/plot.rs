@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::aci::{BY_BLOCK, BY_LAYER, color_rgb, index_of};
-use super::pdf::{PdfPage, helvetica_width};
+use super::pdf::{Page, PdfPage, helvetica_width};
 use super::shapes::{Styled, TextSpec, flatten, resolve_color};
 use crate::commands::format_significant;
 use crate::fonts::{self, FontFile, PathOp};
@@ -111,15 +111,28 @@ pub fn plot_page(
 
     let mut page = PdfPage::new(page_width, page_height);
     page.clip(margin, margin, printable.0, printable.1);
-    let pens = Pens::new(document, &document.model_plot);
     let tolerance = CHORD_MM * points_per_mm / per_unit;
+    draw_model(&mut page, document, &layout.source, &place, per_unit, tolerance);
+    Ok((page, layout))
+}
+
+/// The visible objects of the open space that reach into `source`, each point placed by `place`, which makes
+/// `per_unit` page units of a drawing unit. Curves are drawn in chords no further than `tolerance` from them.
+pub fn draw_model(
+    page: &mut dyn Page,
+    document: &Document,
+    source: &Bounds,
+    place: &dyn Fn(Point) -> Point,
+    per_unit: f64,
+    tolerance: f64,
+) {
+    let pens = Pens::new(document, &document.model_plot);
     for entity in document.entities() {
-        if !document.is_visible(entity) || !document.bounds_of(entity.id).is_some_and(|b| b.touches(&layout.source)) {
+        if !document.is_visible(entity) || !document.bounds_of(entity.id).is_some_and(|b| b.touches(source)) {
             continue;
         }
-        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens, per_unit * document.ltscale);
+        plot_entity(page, document, entity, place, per_unit, tolerance, &pens, per_unit * document.ltscale);
     }
-    Ok((page, layout))
 }
 
 /// How a plot inks what it prints, as the page setup says: through a plot style table or not, with objects'
@@ -161,7 +174,7 @@ impl Pens {
 /// is how long a unit of a linetype's pattern is on the page, in points, before the entity's own linetype scale.
 #[allow(clippy::too_many_arguments)]
 fn plot_entity(
-    page: &mut PdfPage,
+    page: &mut dyn Page,
     document: &Document,
     entity: &Entity,
     place: &dyn Fn(Point) -> Point,
@@ -226,7 +239,7 @@ fn plot_entity(
 
 /// A picture on the page, read from its file (beside the drawing when its path is relative). Its transparent parts
 /// print white. A file that cannot be read leaves just the frame.
-fn plot_image(page: &mut PdfPage, document: &Document, path: &str, corner: Point, along: Point, up: Point) {
+fn plot_image(page: &mut dyn Page, document: &Document, path: &str, corner: Point, along: Point, up: Point) {
     let written = std::path::Path::new(path);
     let file = match document.path.as_deref().and_then(std::path::Path::parent) {
         Some(folder) if written.is_relative() => folder.join(written),
@@ -247,15 +260,26 @@ fn plot_image(page: &mut PdfPage, document: &Document, path: &str, corner: Point
 /// An open layout's sheet as a page of the same size, at 1:1: what is drawn on it, and in each viewport the part
 /// of model space it shows, cut off at its frame. Sheets are in millimeters, or inches when they are that small.
 pub fn plot_layout_page(document: &Document) -> Result<PdfPage, &'static str> {
-    let index = document.shown_layout().ok_or(NOTHING_TO_PLOT)?;
-    let layout = document.layouts.get(index).ok_or(NOTHING_TO_PLOT)?;
-    let sheet = layout.sheet();
+    let sheet = open_sheet(document).ok_or(NOTHING_TO_PLOT)?;
     let mm_per_unit = if sheet.width().max(sheet.height()) < 50.0 { MM_PER_INCH } else { 1.0 };
     let per_unit = POINTS_PER_INCH / MM_PER_INCH * mm_per_unit;
     let place = |p: Point| (p - pt(sheet.x0, sheet.y0)) * per_unit;
     let mut page = PdfPage::new(sheet.width() * per_unit, sheet.height() * per_unit);
+    draw_sheet(&mut page, document, &place, per_unit, CHORD_MM / mm_per_unit);
+    Ok(page)
+}
+
+/// The sheet of the layout on screen, if one is.
+pub fn open_sheet(document: &Document) -> Option<Bounds> {
+    document.shown_layout().and_then(|index| document.layouts.get(index)).map(|layout| layout.sheet())
+}
+
+/// What is drawn on the open layout's sheet, and in each viewport the part of model space it shows, cut off at its
+/// frame. `place` puts sheet points on the page at `per_unit` page units a sheet unit.
+pub fn draw_sheet(page: &mut dyn Page, document: &Document, place: &dyn Fn(Point) -> Point, per_unit: f64, tolerance: f64) {
+    let Some(index) = document.shown_layout() else { return };
+    let Some(layout) = document.layouts.get(index) else { return };
     let pens = Pens::new(document, &layout.plot);
-    let tolerance = CHORD_MM / mm_per_unit;
     let model = document.model();
     for entity in document.space_entities(Some(index)).iter().filter(|e| document.is_visible(e)) {
         if let Shape::Viewport { center, width, height, view_center, view_height, frozen, .. } = &entity.shape {
@@ -263,9 +287,9 @@ pub fn plot_layout_page(document: &Document) -> Result<PdfPage, &'static str> {
             let frame = Bounds::around(frame_corners(*center, *width, *height));
             let half = pt(width / scale / 2.0, view_height / 2.0);
             let seen = Bounds::from_corners(*view_center - half, *view_center + half);
-            let low = place(pt(frame.x0, frame.y0));
+            let (low, high) = (place(pt(frame.x0, frame.y0)), place(pt(frame.x1, frame.y1)));
             page.save();
-            page.clip(low.x, low.y, frame.width() * per_unit, frame.height() * per_unit);
+            page.clip(low.x.min(high.x), low.y.min(high.y), (high.x - low.x).abs(), (high.y - low.y).abs());
             let into_sheet = |m: Point| place(*center + (m - *view_center) * scale);
             for id in model.ids_in(&seen) {
                 let Some(shown) = model.get(id) else { continue };
@@ -273,14 +297,13 @@ pub fn plot_layout_page(document: &Document) -> Result<PdfPage, &'static str> {
                     // PSLTSCALE keeps model space dashes as long on the sheet as paper space ones; otherwise they grow with the view.
                     let divisor = if document.psltscale { scale } else { 1.0 };
                     let dash_points = per_unit * scale * document.ltscale / divisor;
-                    plot_entity(&mut page, document, shown, &into_sheet, per_unit * scale, tolerance / scale, &pens, dash_points);
+                    plot_entity(page, document, shown, &into_sheet, per_unit * scale, tolerance / scale, &pens, dash_points);
                 }
             }
             page.restore();
         }
-        plot_entity(&mut page, document, entity, &place, per_unit, tolerance, &pens, per_unit * document.ltscale);
+        plot_entity(page, document, entity, place, per_unit, tolerance, &pens, per_unit * document.ltscale);
     }
-    Ok(page)
 }
 
 pub fn export_layout_pdf(document: &Document, path: &Path) -> Result<(), String> {
@@ -314,7 +337,7 @@ fn font_chain(font: &str) -> Vec<FontFile> {
 /// its glyphs, from the font the drawing asks for and the fallback fonts, so every script prints as it shows on
 /// screen. Without any fonts on the computer it falls back to the PDF's Helvetica. Runs with looks of their own
 /// print one by one, and bold is the letters printed twice, a little apart.
-fn plot_text(page: &mut PdfPage, spec: &TextSpec, rgb: (u8, u8, u8), weight: f64) {
+fn plot_text(page: &mut dyn Page, spec: &TextSpec, rgb: (u8, u8, u8), weight: f64) {
     if let Some(rich) = &spec.rich {
         let run_font = |style: &RunStyle| style.font.clone().unwrap_or_else(|| spec.font.clone());
         let run_look = |style: &RunStyle| TextLook { bold: style.bold, italic: style.italic, ..spec.look };

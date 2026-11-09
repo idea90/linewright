@@ -41,6 +41,8 @@ Notes:
 - A debug build keeps dependencies at `opt-level = 2` without debug info so large drawings still draw smoothly
   and `target/` stays small. `target/` can still grow to many GB; `cargo clean` is safe.
 - `LINEWRIGHT_CAPTURE=out.png` (debug builds) saves a screenshot of the window, useful for checking the UI.
+- `.mcp.json` registers `linewright --mcp` with Claude Code: its `command` and `render` tools let you draw in the real
+  app and look at the result, a quick way to check a change to a command or to drawing.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
 
 ## Releasing
@@ -66,7 +68,8 @@ rust/                the app (Cargo crate "linewright")
 
 | Path | What it holds |
 |---|---|
-| `main.rs`, `lib.rs` | Entry point (opens a file given on the command line) and the module list |
+| `main.rs`, `lib.rs` | Entry point (opens a file given on the command line, or `--mcp` serves MCP) and the module list |
+| `mcp.rs` | The MCP server for AI agents: tools that type at the command line through `ui::controller::Controller`, render PNGs and open and save |
 | `fonts.rs` | Fonts for text in any script: the drawing's fonts, system fallbacks, legacy code pages |
 | `shx.rs` | AutoCAD SHX stroke fonts (romans, simplex, txt…), read from AutoCAD's font folders |
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
@@ -108,7 +111,7 @@ rust/                the app (Cargo crate "linewright")
 | `io/template.dxf` | The drawing a new document is saved from |
 | **`canvas/`** | **Showing and printing** |
 | `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor |
-| `canvas/plot.rs`, `pdf.rs` | Plotting to a PDF page at a scale |
+| `canvas/plot.rs`, `pdf.rs` | Plotting at a scale onto a `Page`: a PDF page, or `raster.rs`'s PNG picture |
 | `canvas/view.rs`, `aci.rs`, `shapes.rs` | Camera, AutoCAD color index palette, colors parts draw in |
 | **`snap/`** | Object snaps (`osnap.rs`), tracking and drafting aids, built on `model/primitives.rs` and `model/intersect.rs` |
 | **`selection/`** | The selection and what an entity looks like to the mouse |

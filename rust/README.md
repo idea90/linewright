@@ -117,6 +117,35 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   as does Layer Properties' VP Freeze column; `MVIEW` Lock (or Display locked in Properties) keeps a viewport's
   scale from changing.
 
+## Use it from Claude Code (MCP)
+
+`linewright --mcp` runs no window: it is a [Model Context Protocol](https://modelcontextprotocol.io) server on
+standard input and output, so an AI agent such as Claude Code can draw, edit, look at and save drawings. The
+repository's `.mcp.json` starts it with `cargo run --release -- --mcp`, so Claude Code offers it when opened in this
+folder. To use it elsewhere, point an MCP client at the binary:
+
+```sh
+claude mcp add linewright -- /path/to/linewright --mcp
+```
+
+Its tools:
+
+- `command`: type at the command line, one entry per line: `["LINE", "0,0", "100,0", "@0,50", ""]`. `""` is
+  Enter. Entries can also be `click x,y` (a mouse click: a point, or picking an object), `box x1,y1 x2,y2` (a
+  window or crossing box), `select <id>…` and `esc`. `U` and `REDO` undo and redo. The reply has the command line's
+  messages, the ids of objects added, changed and erased, and what the command waits for next. A waiting command
+  keeps running into the next call.
+- `render`: a PNG of the drawing as it plots (dark lines on white), of model space, the open layout's sheet or a
+  window, with the area shown and its pixels per unit.
+- `list_entities`: objects with their id, kind, layer, color and main geometry, filtered by layer, kind or area.
+- `drawing_info`: units, extent, layers, layouts, blocks, counts of each kind, and the prompt waiting.
+- `layer`: make or change a layer (color, linetype, on, frozen, locked, plot) and make it current.
+- `set_property`: set Layer, Color, Linetype or any property the Properties palette edits, on objects by id.
+- `open_drawing`, `new_drawing`, `save_drawing`, `list_commands`.
+
+Commands that open a dialog or file box in the window (QSAVE, PLOT, MTEXT, STYLE…) are refused, pointing to the tool
+that does the same.
+
 ## Layout
 
 | Module | Role |
@@ -125,5 +154,6 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 | `commands` | Each command as an `async fn` that awaits the user's answers; the session that drives it |
 | `snap`, `selection` | Object snaps and tracking; picking and window/crossing selection |
 | `io` | DXF reading and writing at the group-code level, DWG through the ODA converter |
-| `canvas` | Camera, rendering with egui, PDF plotting |
+| `canvas` | Camera, rendering with egui, PDF plotting, PNG pictures |
 | `ui` | The window: controller, undo stack, layers, panels |
+| `mcp` | The MCP server (`--mcp`) that drives the controller for an AI agent |

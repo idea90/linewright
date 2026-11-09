@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "linewright": {
+      "command": "cargo",
+      "args": ["run", "--release", "--quiet", "--manifest-path", "rust/Cargo.toml", "--", "--mcp"]
+    }
+  }
+}
