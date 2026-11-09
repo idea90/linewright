@@ -14,7 +14,7 @@ behave, do what AutoCAD does.
 - It was first written in Python with Qt (PySide6 + ezdxf). That version was removed after 1.0 Alpha 3 and lives
   only in the git history (tag `v1.0.0-alpha.3` and earlier).
 - License: MIT. Releases are published on GitHub (`idea90/linewright`) as pre-releases with Linux and Windows
-  binaries; the current version is `1.0.0-alpha.1`.
+  binaries; the current version is `1.0.0-alpha.6`.
 
 `rust/README.md` lists every command and feature. Keep it up to date when adding user-facing behaviour.
 
@@ -41,6 +41,8 @@ Notes:
 - A debug build keeps dependencies at `opt-level = 2` without debug info so large drawings still draw smoothly
   and `target/` stays small. `target/` can still grow to many GB; `cargo clean` is safe.
 - `LINEWRIGHT_CAPTURE=out.png` (debug builds) saves a screenshot of the window, useful for checking the UI.
+- `.mcp.json` registers `linewright --mcp` with Claude Code: its `command` and `render` tools let you draw in the real
+  app and look at the result, a quick way to check a change to a command or to drawing.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
 
 ## Releasing
@@ -66,7 +68,8 @@ rust/                the app (Cargo crate "linewright")
 
 | Path | What it holds |
 |---|---|
-| `main.rs`, `lib.rs` | Entry point (opens a file given on the command line) and the module list |
+| `main.rs`, `lib.rs` | Entry point (opens a file given on the command line, or `--mcp` serves MCP) and the module list |
+| `mcp.rs` | The MCP server for AI agents: tools that type at the command line through `ui::controller::Controller`, render PNGs and open and save |
 | `fonts.rs` | Fonts for text in any script: the drawing's fonts, system fallbacks, legacy code pages |
 | `shx.rs` | AutoCAD SHX stroke fonts (romans, simplex, txt…), read from AutoCAD's font folders |
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
@@ -86,7 +89,7 @@ rust/                the app (Cargo crate "linewright")
 | `model/dimension.rs`, `annotation.rs`, `multileader.rs` | Dimensions, leaders and multileaders: their styles and what they draw |
 | `model/mtext.rs`, `table.rs` | MTEXT formatting codes and layout; tables |
 | `model/properties.rs` | Rows of the Properties palette, and setting a property by typing a value |
-| `model/spline.rs`, `xline.rs`, `viewport.rs`, `lineweight.rs`, `styles.rs`, `find.rs`, `measure.rs` | Smaller topics, named for what they hold |
+| `model/spline.rs`, `xline.rs`, `viewport.rs`, `lineweight.rs`, `styles.rs`, `find.rs`, `measure.rs`, `calc.rs` | Smaller topics, named for what they hold |
 | **`commands/`** | **Every command, each an `async fn`** |
 | `commands/prompts.rs` | How a command talks to the user: `Io::ask(Prompt)` returns an `Answer`; `Io::step(Step)` changes the drawing. `Session` drives a command; `Host` is the drawing side |
 | `commands/registry.rs` | `COMMANDS` (name, label), `ALIASES`, `create()` that builds a command by name, `WINDOW_COMMANDS` handled by the window, AutoComplete |
@@ -108,14 +111,15 @@ rust/                the app (Cargo crate "linewright")
 | `io/template.dxf` | The drawing a new document is saved from |
 | **`canvas/`** | **Showing and printing** |
 | `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor |
-| `canvas/plot.rs`, `pdf.rs` | Plotting to a PDF page at a scale |
+| `canvas/plot.rs`, `pdf.rs` | Plotting at a scale onto a `Page`: a PDF page, or `raster.rs`'s PNG picture |
 | `canvas/view.rs`, `aci.rs`, `shapes.rs` | Camera, AutoCAD color index palette, colors parts draw in |
 | **`snap/`** | Object snaps (`osnap.rs`), tracking and drafting aids, built on `model/primitives.rs` and `model/intersect.rs` |
 | **`selection/`** | The selection and what an entity looks like to the mouse |
 | **`ui/`** | **The window** |
 | `ui/app.rs` | The main window, its state, each frame, and the actions buttons and keys trigger |
 | `ui/controller.rs` | Connects typed input and clicks to the running command, and its steps to the drawing |
-| `ui/panels.rs` | The ribbon, palettes, dialogs, command line and status bar |
+| `ui/panels.rs` | The header, palettes, dialogs, command line and status bar |
+| `ui/ribbon.rs` | The ribbon: its tabs, panels, flyouts, the layer drop-down and the Properties panel's drop-downs |
 | `ui/undo.rs` | Undo and redo: every change is a `Change` pushed here |
 | `ui/layers.rs`, `icons.rs`, `theme.rs`, `frame.rs`, `recent.rs`, `debug_capture.rs` | Layer edits, icons, colors, the custom window frame, recent files, screenshot aid |
 

@@ -56,6 +56,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("LAYFRZ", "Freeze layer"),
     ("LAYTHW", "Thaw all layers"),
     ("LAYMCUR", "Make object's layer current"),
+    ("LAYMCH", "Change objects to another object's layer"),
     ("LAYLCK", "Lock layer"),
     ("LAYULK", "Unlock layer"),
     ("GROUP", "Group"),
@@ -86,6 +87,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("DIMSTYLE", "Dimension style manager"),
     ("DISTANCE", "Distance"),
     ("AREA", "Area"),
+    ("MEASUREGEOM", "Measure distance, radius, angle or area"),
+    ("CAL", "Calculator"),
     ("ELLIPSE", "Ellipse"),
     ("SPLINE", "Spline"),
     ("POINT", "Point"),
@@ -102,6 +105,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("MATCHPROP", "Match properties"),
     ("INSERT", "Insert block"),
     ("BLOCK", "Create block"),
+    ("COPYCLIP", "Copy to clipboard"),
+    ("CUTCLIP", "Cut to clipboard"),
     ("PASTECLIP", "Paste"),
     ("LIST", "List"),
     ("ID", "Point coordinates"),
@@ -181,6 +186,10 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("DI", "DISTANCE"),
     ("DIST", "DISTANCE"),
     ("AA", "AREA"),
+    ("MEA", "MEASUREGEOM"),
+    // AutoCAD's QuickCalc is a palette; here it is the command line calculator.
+    ("QUICKCALC", "CAL"),
+    ("QC", "CAL"),
     ("EL", "ELLIPSE"),
     ("SPL", "SPLINE"),
     ("PO", "POINT"),
@@ -211,6 +220,9 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("ATTEDIT", "TEXTEDIT"),
     ("ATE", "TEXTEDIT"),
     ("LTS", "LTSCALE"),
+    ("LA", "LAYER"),
+    ("DDLMODES", "LAYER"),
+    ("AI_SELALL", "SELECTALL"),
 ];
 
 pub fn label(name: &str) -> &'static str {
@@ -231,6 +243,11 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "TEXT" => Box::pin(draw::text_command(io, defaults)),
             "DISTANCE" => Box::pin(measuring::distance(io)),
             "AREA" => Box::pin(measuring::area(io)),
+            "MEASUREGEOM" => Box::pin(measuring::measuregeom(io)),
+            "CAL" => Box::pin(measuring::cal(io)),
+            "COPYCLIP" => Box::pin(blocks::copyclip_command(io, selected, defaults, false)),
+            "CUTCLIP" => Box::pin(blocks::copyclip_command(io, selected, defaults, true)),
+            "LAYMCH" => Box::pin(layer_tools::match_layer(io, selected, defaults)),
             "ERASE" => Box::pin(edit::erase(io, selected, defaults)),
             "OOPS" => Box::pin(edit::oops(io, defaults)),
             "MOVE" => Box::pin(edit::move_command(io, selected)),
@@ -369,6 +386,8 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("LWDISPLAY", "Show or hide lineweights"),
     ("MSPACE", "Model space through a viewport"),
     ("PSPACE", "Paper space"),
+    ("LAYER", "Layer properties"),
+    ("SELECTALL", "Select all objects"),
 ];
 
 /// A command AutoComplete offers for what is typed.

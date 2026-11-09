@@ -1,8 +1,13 @@
 use super::draw::line_preview;
+use super::format_general;
 use super::prompts::{Answer, Io, Prompt, PromptKind, Step};
-use crate::model::entities::{polyline_from, vertex};
+use crate::model::calc::evaluate;
+use crate::model::entities::{Shape, polyline_from, vertex};
 use crate::model::geometry::Point;
-use crate::model::measure::{area_report, distance_report, measure_entity, polygon};
+use crate::model::measure::{
+    angle_at, angle_between_lines, angle_report, area_report, distance_report, included_angle, measure_entity, polygon, radius_of,
+    radius_report,
+};
 
 const OBJECT: &str = "O";
 const NO_AREA: &str = "That object has no area.";
@@ -59,4 +64,102 @@ async fn area_of_object(io: &Io) {
         }
         message = format!("{NO_AREA} Select objects:");
     }
+}
+
+const DISTANCE: &str = "D";
+const RADIUS: &str = "R";
+const ANGLE: &str = "A";
+const AREA: &str = "AR";
+const EXIT: &str = "X";
+const VERTEX: &str = "V";
+
+/// MEASUREGEOM: distance, radius, angle or area, one after another until eXit.
+pub async fn measuregeom(io: Io) {
+    let mut measured = false;
+    loop {
+        let prompt = if measured {
+            Prompt::point("Enter an option [Distance/Radius/Angle/ARea/eXit] <eXit>:")
+                .options(&[DISTANCE, RADIUS, ANGLE, AREA, EXIT])
+                .default(Answer::keyword(EXIT))
+        } else {
+            Prompt::point("Enter an option [Distance/Radius/Angle/ARea] <Distance>:")
+                .options(&[DISTANCE, RADIUS, ANGLE, AREA])
+                .default(Answer::keyword(DISTANCE))
+        };
+        match io.ask(prompt).await {
+            Some(Answer::Keyword(option)) => match option.as_str() {
+                DISTANCE => distance(io.clone()).await,
+                RADIUS => measure_radius(&io).await,
+                ANGLE => measure_angle(&io).await,
+                AREA => area(io.clone()).await,
+                _ => return,
+            },
+            Some(_) => continue,
+            None => return,
+        }
+        measured = true;
+    }
+}
+
+async fn measure_radius(io: &Io) {
+    let mut message = "Select arc or circle:";
+    loop {
+        let Some(Answer::Picked(picked)) = io.ask(Prompt::new(PromptKind::Pick, message)).await else { return };
+        if let Some(radius) = radius_of(&picked.entity.shape) {
+            for line in radius_report(radius).lines() {
+                io.step(Step::Report(line.to_string()));
+            }
+            return;
+        }
+        message = "Object must be an arc or a circle. Select arc or circle:";
+    }
+}
+
+async fn measure_angle(io: &Io) {
+    let prompt = Prompt::new(PromptKind::Pick, "Select arc, circle, line, or <specify vertex>:").default(Answer::keyword(VERTEX));
+    let angle = match io.ask(prompt).await {
+        Some(Answer::Picked(picked)) => match picked.entity.shape {
+            Shape::Arc { start_angle, end_angle, .. } => Some(included_angle(start_angle, end_angle)),
+            Shape::Circle { center, .. } => match io.ask(Prompt::point("Specify second angle endpoint:").base(center)).await {
+                Some(Answer::Point(second)) => Some(angle_at(center, picked.point, second)),
+                _ => None,
+            },
+            Shape::Line { start, end } => loop {
+                let Some(Answer::Picked(other)) = io.ask(Prompt::new(PromptKind::Pick, "Select second line:")).await else { break None };
+                if let Shape::Line { start: other_start, end: other_end } = other.entity.shape {
+                    break Some(angle_between_lines((start, end), picked.point, (other_start, other_end), other.point));
+                }
+                io.step(Step::Report("Object must be a line.".into()));
+            },
+            _ => {
+                io.step(Step::Report("Object must be an arc, a circle or a line.".into()));
+                None
+            }
+        },
+        Some(_) => angle_from_points(io).await,
+        None => None,
+    };
+    if let Some(angle) = angle {
+        io.step(Step::Report(angle_report(angle)));
+    }
+}
+
+/// The angle at a vertex between two endpoints.
+async fn angle_from_points(io: &Io) -> Option<f64> {
+    let Some(Answer::Point(vertex)) = io.ask(Prompt::point("Specify angle vertex:")).await else { return None };
+    let prompt = Prompt::point("Specify first angle endpoint:").base(vertex).preview(line_preview(vertex));
+    let Some(Answer::Point(first)) = io.ask(prompt).await else { return None };
+    let prompt = Prompt::point("Specify second angle endpoint:").base(vertex).preview(line_preview(vertex));
+    let Some(Answer::Point(second)) = io.ask(prompt).await else { return None };
+    Some(angle_at(vertex, first, second))
+}
+
+/// CAL: evaluates an arithmetic expression on the command line.
+pub async fn cal(io: Io) {
+    let Some(Answer::Text(expression)) = io.ask(Prompt::new(PromptKind::Text, ">> Expression:")).await else { return };
+    let message = match evaluate(&expression) {
+        Ok(value) => format_general(value),
+        Err(error) => error.message().to_string(),
+    };
+    io.step(Step::Report(message));
 }

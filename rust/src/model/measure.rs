@@ -2,6 +2,7 @@ use std::f64::consts::PI;
 
 use super::entities::{Entity, Shape, Vertex};
 use super::geometry::{Point, bulge_arc, modulo};
+use super::intersect::line_line_meeting;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Measured {
@@ -54,6 +55,48 @@ pub fn area_report(measured: Measured) -> String {
     format!("Area = {:.4}, Perimeter = {:.4}", measured.area, measured.perimeter)
 }
 
+/// The radius of an arc or circle, as MEASUREGEOM's Radius option finds it.
+pub fn radius_of(shape: &Shape) -> Option<f64> {
+    match shape {
+        Shape::Circle { radius, .. } | Shape::Arc { radius, .. } => Some(*radius),
+        _ => None,
+    }
+}
+
+pub fn radius_report(radius: f64) -> String {
+    format!("Radius = {radius:.4}\nDiameter = {:.4}", radius * 2.0)
+}
+
+/// The angle in degrees, 0 to 180, between the directions from a vertex to two points.
+pub fn angle_at(vertex: Point, first: Point, second: Point) -> f64 {
+    let (a, b) = (first - vertex, second - vertex);
+    a.cross(b).atan2(a.dot(b)).abs().to_degrees()
+}
+
+/// The angle between two lines, each given by its ends and the point it was picked at: measured from where the
+/// lines meet, on the sides that were picked, as AutoCAD does. Parallel lines are 0°.
+pub fn angle_between_lines(first: (Point, Point), first_pick: Point, second: (Point, Point), second_pick: Point) -> f64 {
+    let Some(meet) = line_line_meeting(first.0, first.1, second.0, second.1) else { return 0.0 };
+    let picked_side = |(start, end): (Point, Point), pick: Point| {
+        let along = end - start;
+        let side = (pick - meet).dot(along);
+        // Picked right where the lines meet: the side the line lies on.
+        let side = if side.abs() > 1e-12 { side } else { (start + along * 0.5 - meet).dot(along) };
+        if side < 0.0 { meet - along } else { meet + along }
+    };
+    angle_at(meet, picked_side(first, first_pick), picked_side(second, second_pick))
+}
+
+/// The angle an arc sweeps through, in degrees.
+pub fn included_angle(start_angle: f64, end_angle: f64) -> f64 {
+    let sweep = modulo(end_angle - start_angle, 360.0);
+    if sweep == 0.0 { 360.0 } else { sweep }
+}
+
+pub fn angle_report(degrees: f64) -> String {
+    format!("Angle = {degrees:.0}°")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +117,31 @@ mod tests {
         assert_eq!(measure_entity(&square), Some(Measured { area: 4.0, perimeter: 8.0 }));
         let round = measure_entity(&circle(pt(0.0, 0.0), 1.0)).unwrap();
         assert!((round.area - PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn angles_between_lines_arcs_and_points() {
+        let horizontal = (pt(0.0, 0.0), pt(10.0, 0.0));
+        let diagonal = (pt(0.0, 0.0), pt(10.0, 10.0));
+        assert!((angle_between_lines(horizontal, pt(5.0, 0.0), diagonal, pt(5.0, 5.0)) - 45.0).abs() < 1e-9);
+        // Lines that do not touch are measured where they would meet, on the picked sides.
+        let left = (pt(-10.0, 0.0), pt(-1.0, 0.0));
+        let up = (pt(0.0, 2.0), pt(0.0, 9.0));
+        assert!((angle_between_lines(left, pt(-5.0, 0.0), up, pt(0.0, 5.0)) - 90.0).abs() < 1e-9);
+        let reversed = (pt(10.0, 0.0), pt(0.0, 0.0));
+        assert!(
+            (angle_between_lines(reversed, pt(5.0, 0.0), diagonal, pt(5.0, 5.0)) - 45.0).abs() < 1e-9,
+            "the ends' order does not matter"
+        );
+        let through = (pt(-10.0, 0.0), pt(10.0, 0.0));
+        assert!((angle_between_lines(through, pt(-5.0, 0.0), diagonal, pt(5.0, 5.0)) - 135.0).abs() < 1e-9, "the picked side counts");
+        assert_eq!(angle_between_lines(horizontal, pt(1.0, 0.0), (pt(0.0, 1.0), pt(5.0, 1.0)), pt(1.0, 1.0)), 0.0, "parallel");
+        assert!((angle_at(pt(0.0, 0.0), pt(1.0, 0.0), pt(-1.0, 1.0)) - 135.0).abs() < 1e-9);
+        assert!((angle_at(pt(0.0, 0.0), pt(1.0, 0.0), pt(0.0, -1.0)) - 90.0).abs() < 1e-9, "the smaller side");
+        assert_eq!(included_angle(350.0, 20.0), 30.0);
+        assert_eq!(angle_report(45.0), "Angle = 45°");
+        assert_eq!(radius_report(2.5), "Radius = 2.5000\nDiameter = 5.0000");
+        assert_eq!(radius_of(&circle(pt(0.0, 0.0), 3.0).shape), Some(3.0));
     }
 
     #[test]

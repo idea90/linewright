@@ -15,7 +15,7 @@ use crate::model::document::{Document, DrawOrder, Layer, Layout, ObjectGroup};
 use crate::model::editing::grip_points;
 use crate::model::entities::{BlockRef, Entity, EntityId, Shape, VAlign};
 use crate::model::geometry::Point;
-use crate::model::index::{Bounds, entity_extent};
+use crate::model::index::Bounds;
 use crate::selection::Selection;
 use crate::selection::picking::{pick_entity, select_in_box};
 use crate::snap::osnap::SnapKind;
@@ -26,6 +26,8 @@ pub const IDLE_HINT: &str = "Type a command, e.g. line, circle, move";
 const UNDO_WORDS: [&str; 2] = ["U", "UNDO"];
 const REDO_WORDS: [&str; 1] = ["REDO"];
 const SELECT_ALL_WORD: &str = "ALL";
+/// SELECTALL and its alias: every object in the current space, as Ctrl+A.
+const SELECT_ALL_COMMANDS: [&str; 2] = ["SELECTALL", "AI_SELALL"];
 const SNAP_APERTURE_PIXELS: f64 = 12.0;
 const PICK_APERTURE_PIXELS: f64 = 8.0;
 const DRAG_THRESHOLD_PIXELS: f64 = 4.0;
@@ -608,24 +610,9 @@ impl Controller {
             .min_by(|a, b| a.2.dist(point).total_cmp(&b.2.dist(point)))
     }
 
-    /// Copy the selected objects to the clipboard, to paste with PASTECLIP. Cutting erases them too.
+    /// Ctrl+C and Ctrl+X: COPYCLIP or CUTCLIP, on the selected objects or those it asks for.
     pub fn copy_selection(&mut self, cut: bool) {
-        let objects = self.selected();
-        if objects.is_empty() {
-            return;
-        }
-        let corner =
-            objects.iter().map(entity_extent).reduce(Bounds::union).map_or(Point::default(), |b| crate::model::geometry::pt(b.x0, b.y0));
-        let count = objects.len();
-        {
-            let mut defaults = self.defaults.borrow_mut();
-            defaults.clipboard = objects;
-            defaults.clipboard_base = corner;
-        }
-        self.drawing.print(format!("{count} object(s) copied to the clipboard."));
-        if cut {
-            self.start_command("ERASE");
-        }
+        self.start_command(if cut { "CUTCLIP" } else { "COPYCLIP" });
     }
 
     /// A double click edits what was clicked: a text, an insert's attributes, a dimension's text.
@@ -680,7 +667,7 @@ impl Controller {
             self.undo();
         } else if REDO_WORDS.contains(&word.as_str()) {
             self.redo();
-        } else if word == SELECT_ALL_WORD {
+        } else if word == SELECT_ALL_WORD || SELECT_ALL_COMMANDS.contains(&word.as_str()) {
             self.select_all();
         } else {
             let name = if word.is_empty() { self.last_command } else { resolve(&word) };
@@ -1242,6 +1229,16 @@ mod tests {
         run(&mut controller, &["i", "bolt", "10,0", "2", "90"]);
         let Shape::Insert { block, position, scale_x, rotation, .. } = &shapes(&controller)[1] else { panic!() };
         assert_eq!((block.0.name.as_str(), *position, *scale_x, *rotation), ("Bolt", pt(10.0, 0.0), 2.0, 90.0));
+    }
+
+    #[test]
+    fn selectall_then_cutclip_erases_and_undo_brings_back() {
+        let mut controller = controller_with(vec![circle(pt(5.0, 5.0), 1.0), circle(pt(9.0, 5.0), 1.0)]);
+        run(&mut controller, &["selectall", "cutclip"]);
+        assert!(shapes(&controller).is_empty());
+        run(&mut controller, &["u"]);
+        assert_eq!(shapes(&controller).len(), 2);
+        assert_eq!(controller.defaults.borrow().clipboard.len(), 2);
     }
 
     #[test]

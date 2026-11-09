@@ -215,6 +215,55 @@ impl PdfPage {
     }
 }
 
+/// A surface the plot draws on: a PDF page, or a picture. Units are the page's own, y up.
+pub trait Page {
+    /// Remember the clipping, to go back to it with `restore`.
+    fn save(&mut self);
+    fn restore(&mut self);
+    /// Everything drawn after this is cut off outside the rectangle.
+    fn clip(&mut self, x: f64, y: f64, width: f64, height: f64);
+    fn stroke(&mut self, points: &[Point], rgb: (u8, u8, u8), width: f64, dashes: &[f64]);
+    fn fill(&mut self, corners: &[Point], rgb: (u8, u8, u8));
+    /// Fill a shape made of lines and curves, such as the outlines of text, by the nonzero winding rule.
+    fn fill_path(&mut self, ops: &[PathOp], rgb: (u8, u8, u8));
+    /// Fill an area of loops, leaving holes where loops lie inside loops (the even-odd rule).
+    fn fill_area(&mut self, loops: &[Vec<Point>], rgb: (u8, u8, u8));
+    /// Text in the page's own font, for when the computer has no fonts to draw outlines from.
+    fn text(&mut self, origin: Point, rotation: f64, size: f64, value: &str, rgb: (u8, u8, u8));
+    /// A picture stretched over a parallelogram, its pixels row by row from the top.
+    fn image(&mut self, corner: Point, along: Point, up: Point, size: (u32, u32), rgb: &[u8]);
+}
+
+impl Page for PdfPage {
+    fn save(&mut self) {
+        PdfPage::save(self)
+    }
+    fn restore(&mut self) {
+        PdfPage::restore(self)
+    }
+    fn clip(&mut self, x: f64, y: f64, width: f64, height: f64) {
+        PdfPage::clip(self, x, y, width, height)
+    }
+    fn stroke(&mut self, points: &[Point], rgb: (u8, u8, u8), width: f64, dashes: &[f64]) {
+        PdfPage::stroke(self, points, rgb, width, dashes)
+    }
+    fn fill(&mut self, corners: &[Point], rgb: (u8, u8, u8)) {
+        PdfPage::fill(self, corners, rgb)
+    }
+    fn fill_path(&mut self, ops: &[PathOp], rgb: (u8, u8, u8)) {
+        PdfPage::fill_path(self, ops, rgb)
+    }
+    fn fill_area(&mut self, loops: &[Vec<Point>], rgb: (u8, u8, u8)) {
+        PdfPage::fill_area(self, loops, rgb)
+    }
+    fn text(&mut self, origin: Point, rotation: f64, size: f64, value: &str, rgb: (u8, u8, u8)) {
+        PdfPage::text(self, origin, rotation, size, value, rgb)
+    }
+    fn image(&mut self, corner: Point, along: Point, up: Point, size: (u32, u32), rgb: &[u8]) {
+        PdfPage::image(self, corner, along, up, size, rgb)
+    }
+}
+
 fn color((r, g, b): (u8, u8, u8)) -> String {
     format!("{} {} {}", num(r as f64 / 255.0), num(g as f64 / 255.0), num(b as f64 / 255.0))
 }

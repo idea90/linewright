@@ -1700,6 +1700,7 @@ impl LinewrightApp {
                 self.dialog = Some(Dialog::Units(UnitsForm { units, precision: document.precision }));
             }
             Action::Command("SELECTSIMILAR") => self.select_similar(),
+            Action::Command("LAYER") => self.palette_open = true,
             Action::Command("XATTACH") => self.attach_xref(),
             Action::Command("BEDIT") => {
                 let picked = self.controller.selected().iter().find_map(|e| match &e.shape {
@@ -2244,7 +2245,7 @@ impl eframe::App for LinewrightApp {
         self.on_window_edge = frame::resize_from_edges(ctx);
 
         panels::header(self, ctx);
-        panels::ribbon(self, ctx);
+        super::ribbon::ribbon(self, ctx);
         panels::document_tab(self, ctx);
         panels::status_bar(self, ctx);
         panels::command_panel(self, ctx);
@@ -2357,6 +2358,7 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "PSPACE" | "PS" => Action::Command("PSPACE"),
         "LWDISPLAY" | "LWT" => Action::ToggleLineweights,
         "SELECTSIMILAR" => Action::Command("SELECTSIMILAR"),
+        "LAYER" | "LA" | "DDLMODES" => Action::Command("LAYER"),
         "SAVETIME" => Action::Command("SAVETIME"),
         "DRAWINGRECOVERY" => Action::Command("DRAWINGRECOVERY"),
         "COLOR" | "COL" | "COLOUR" | "DDCOLOR" => Action::ChooseColor(ColorTarget::Current),

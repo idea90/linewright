@@ -1,4 +1,4 @@
-//! Blocks and the clipboard: placing blocks, making them, and pasting what was copied.
+//! Blocks and the clipboard: placing blocks, making them, copying or cutting objects, and pasting what was copied.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,7 +9,8 @@ use super::edit::{MAX_PREVIEW_ENTITIES, copies, objects_to_edit};
 use super::format_general;
 use super::prompts::{Answer, Io, Prompt, PromptKind, Step};
 use crate::model::entities::{Attribute, AttributeInfo, BlockDef, BlockRef, Entity, Shape, attribute_of};
-use crate::model::geometry::Point;
+use crate::model::geometry::{Point, pt};
+use crate::model::index::{Bounds, entity_extent};
 use crate::model::transform::{insert_transform, transform_shape, translation};
 
 const LIST: &str = "?";
@@ -125,6 +126,23 @@ pub async fn block_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<D
     defaults.borrow_mut().last_erased = objects.clone();
     io.step(Step::Compound(vec![Step::Remove(objects), Step::Drawn(vec![insert_of(&block, base, 1.0, 0.0, vec![])])]));
     io.step(Step::Report(format!("Block {name} made.")));
+}
+
+/// COPYCLIP and CUTCLIP: the objects go to the clipboard, to paste with PASTECLIP by their lower left corner.
+/// Cutting erases them too.
+pub async fn copyclip_command(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>, cut: bool) {
+    let objects = objects_to_edit(&io, selected).await;
+    let Some(extent) = objects.iter().map(entity_extent).reduce(Bounds::union) else { return };
+    let count = objects.len();
+    {
+        let mut defaults = defaults.borrow_mut();
+        defaults.clipboard = objects.clone();
+        defaults.clipboard_base = pt(extent.x0, extent.y0);
+    }
+    io.step(Step::Report(format!("{count} object(s) copied to the clipboard.")));
+    if cut {
+        io.step(Step::Remove(objects));
+    }
 }
 
 pub async fn paste_command(io: Io, defaults: Rc<RefCell<Defaults>>) {

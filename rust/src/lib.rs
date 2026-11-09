@@ -6,6 +6,7 @@ pub mod canvas;
 pub mod commands;
 pub mod fonts;
 pub mod io;
+pub mod mcp;
 pub mod model;
 pub mod selection;
 pub mod shx;

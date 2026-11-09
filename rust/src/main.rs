@@ -7,7 +7,16 @@ use eframe::egui;
 use linewright::ui::app::{LinewrightApp, WINDOW_NAME};
 
 fn main() -> eframe::Result {
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    let first = std::env::args_os().nth(1);
+    // `linewright --mcp` runs no window: it serves the Model Context Protocol on standard input and output.
+    if first.as_deref() == Some(std::ffi::OsStr::new("--mcp")) {
+        if let Err(error) = linewright::mcp::serve() {
+            eprintln!("linewright --mcp: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    let path = first.map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(WINDOW_NAME)

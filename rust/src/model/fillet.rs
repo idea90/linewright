@@ -1,4 +1,4 @@
-use super::entities::{Entity, Shape, arc};
+use super::entities::{Entity, Shape, Vertex, arc};
 use super::geometry::{Point, modulo};
 use crate::model::intersect::line_line_meeting;
 
@@ -97,6 +97,155 @@ pub fn chamfer_lines(
     Ok((new_first, new_second, bevel))
 }
 
+/// What filleting a whole polyline did: the polyline with its corners rounded, how many corners were rounded and
+/// how many had segments too short for the radius.
+pub struct PolylineFillet {
+    pub polyline: Entity,
+    pub filleted: usize,
+    pub too_short: usize,
+}
+
+/// A corner of a polyline that can be rounded: the vertex where two straight segments meet at an angle, with the
+/// length cut from each segment for the radius and the bulge of the arc that replaces the corner.
+struct Corner {
+    index: usize,
+    tangent_length: f64,
+    bulge: f64,
+}
+
+/// The polyline's segment from vertex `index` to the next one, if it has one.
+fn segment_end(vertices: &[Vertex], closed: bool, index: usize) -> Option<usize> {
+    if index + 1 < vertices.len() { Some(index + 1) } else { (closed && vertices.len() > 2).then_some(0) }
+}
+
+/// The corner at vertex `index` for this radius, if two straight segments that are not in line meet there.
+fn corner_at(vertices: &[Vertex], closed: bool, index: usize, radius: f64) -> Option<Corner> {
+    let count = vertices.len();
+    let previous = if index > 0 {
+        index - 1
+    } else if closed && count > 2 {
+        count - 1
+    } else {
+        return None;
+    };
+    let next = segment_end(vertices, closed, index)?;
+    if vertices[previous].bulge != 0.0 || vertices[index].bulge != 0.0 {
+        return None;
+    }
+    let (before, at, after) = (vertices[previous].point(), vertices[index].point(), vertices[next].point());
+    let (incoming, outgoing) = (at - before, after - at);
+    if incoming.length() < EPSILON || outgoing.length() < EPSILON {
+        return None;
+    }
+    let sweep = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
+    if sweep.abs() < EPSILON || sweep.abs() > std::f64::consts::PI - EPSILON {
+        return None;
+    }
+    Some(Corner { index, tangent_length: radius * (sweep.abs() / 2.0).tan(), bulge: (sweep / 4.0).tan() })
+}
+
+/// Rounds the given corners, each with an arc of the radius they were found for. Each corner becomes two vertices,
+/// the tangent points, with the arc between them; the arc segment takes the corner's starting width.
+fn round_corners(polyline: &Entity, vertices: &[Vertex], closed: bool, corners: &[Corner]) -> Entity {
+    let mut rounded = Vec::with_capacity(vertices.len() + corners.len());
+    for (index, vertex) in vertices.iter().enumerate() {
+        let Some(corner) = corners.iter().find(|c| c.index == index) else {
+            rounded.push(*vertex);
+            continue;
+        };
+        let previous = if index > 0 { index - 1 } else { vertices.len() - 1 };
+        let next = segment_end(vertices, closed, index).unwrap();
+        let at = vertex.point();
+        let back = (vertices[previous].point() - at) * (1.0 / vertices[previous].point().dist(at));
+        let ahead = (vertices[next].point() - at) * (1.0 / vertices[next].point().dist(at));
+        let (first, second) = (at + back * corner.tangent_length, at + ahead * corner.tangent_length);
+        let width = vertex.start_width;
+        rounded.push(Vertex { x: first.x, y: first.y, bulge: corner.bulge, start_width: width, end_width: width });
+        rounded.push(Vertex { x: second.x, y: second.y, ..*vertex });
+    }
+    polyline.with_shape(Shape::Polyline { vertices: rounded, closed })
+}
+
+/// The polyline's vertices, or a message that the object is not a polyline.
+fn polyline_vertices(polyline: &Entity) -> Result<(&[Vertex], bool), String> {
+    match &polyline.shape {
+        Shape::Polyline { vertices, closed } => Ok((vertices, *closed)),
+        _ => Err("The object is not a polyline.".into()),
+    }
+}
+
+/// Rounds every corner of a polyline where two straight segments meet, as FILLET's Polyline option does. A corner
+/// is left as it is when the segments are too short for the radius, counting the arcs already put at their other
+/// ends.
+pub fn fillet_polyline(polyline: &Entity, radius: f64) -> Result<PolylineFillet, String> {
+    let (vertices, closed) = polyline_vertices(polyline)?;
+    let lengths: Vec<f64> = (0..vertices.len())
+        .map(|i| segment_end(vertices, closed, i).map_or(0.0, |next| vertices[i].point().dist(vertices[next].point())))
+        .collect();
+    // How much of each segment's start and end the arcs rounded so far have taken.
+    let (mut used_start, mut used_end) = (vec![0.0; vertices.len()], vec![0.0; vertices.len()]);
+    let (mut corners, mut too_short) = (Vec::new(), 0);
+    for index in 0..vertices.len() {
+        let Some(corner) = corner_at(vertices, closed, index, radius) else { continue };
+        let previous = if index > 0 { index - 1 } else { vertices.len() - 1 };
+        let fits = corner.tangent_length + used_start[previous] <= lengths[previous] + EPSILON
+            && corner.tangent_length + used_end[index] <= lengths[index] + EPSILON;
+        if !fits {
+            too_short += 1;
+            continue;
+        }
+        used_end[previous] = corner.tangent_length;
+        used_start[index] = corner.tangent_length;
+        corners.push(corner);
+    }
+    let filleted = if radius > 0.0 { corners.len() } else { 0 };
+    let polyline = if filleted > 0 { round_corners(polyline, vertices, closed, &corners) } else { polyline.clone() };
+    Ok(PolylineFillet { polyline, filleted, too_short })
+}
+
+/// The index of the polyline's segment nearest a point, and whether it is straight.
+fn nearest_segment(vertices: &[Vertex], closed: bool, point: Point) -> Option<(usize, bool)> {
+    let distance = |a: Point, b: Point| {
+        let along = b - a;
+        let t = if along.length() < EPSILON { 0.0 } else { ((point - a).dot(along) / along.dot(along)).clamp(0.0, 1.0) };
+        point.dist(a + along * t)
+    };
+    (0..vertices.len())
+        .filter_map(|i| segment_end(vertices, closed, i).map(|next| (i, distance(vertices[i].point(), vertices[next].point()))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| (i, vertices[i].bulge == 0.0))
+}
+
+/// Rounds the corner between two neighbouring straight segments of a polyline, each picked at a point.
+pub fn fillet_polyline_corner(polyline: &Entity, first_pick: Point, second_pick: Point, radius: f64) -> Result<Entity, String> {
+    let (vertices, closed) = polyline_vertices(polyline)?;
+    let (first, first_straight) = nearest_segment(vertices, closed, first_pick).ok_or("The polyline has no segments.")?;
+    let (second, second_straight) = nearest_segment(vertices, closed, second_pick).ok_or("The polyline has no segments.")?;
+    if !first_straight || !second_straight {
+        return Err("Cannot fillet an arc segment of a polyline.".into());
+    }
+    let corner = if segment_end(vertices, closed, first) == Some(second) {
+        second
+    } else if segment_end(vertices, closed, second) == Some(first) {
+        first
+    } else {
+        return Err("Select two segments of the polyline that meet.".into());
+    };
+    let corner = corner_at(vertices, closed, corner, radius).ok_or("The segments are in line.")?;
+    let previous = if corner.index > 0 { corner.index - 1 } else { vertices.len() - 1 };
+    let next = segment_end(vertices, closed, corner.index).unwrap();
+    let at = vertices[corner.index].point();
+    if corner.tangent_length > at.dist(vertices[previous].point()) + EPSILON
+        || corner.tangent_length > at.dist(vertices[next].point()) + EPSILON
+    {
+        return Err("The segments are too short for that radius.".into());
+    }
+    if radius == 0.0 {
+        return Ok(polyline.clone());
+    }
+    Ok(round_corners(polyline, vertices, closed, &[corner]))
+}
+
 /// The short arc from one tangent point to the other, as a counter-clockwise arc.
 fn arc_between(center: Point, radius: f64, tangent_first: Point, tangent_second: Point) -> Entity {
     let (a, b) = (tangent_first - center, tangent_second - center);
@@ -108,7 +257,7 @@ fn arc_between(center: Point, radius: f64, tangent_first: Point, tangent_second:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::entities::line;
+    use crate::model::entities::{line, polyline_from};
     use crate::model::geometry::pt;
 
     #[test]
@@ -154,5 +303,34 @@ mod tests {
         let c = line(pt(0.0, 0.5), pt(0.0, 1.0));
         let message = fillet_lines(&a, pt(1.0, 0.0), &c, pt(0.0, 0.8), 3.0).err().unwrap();
         assert!(message.contains("too short"), "{message}");
+    }
+
+    #[test]
+    fn polyline_corners_too_short_for_the_radius_are_left_and_counted() {
+        // A 10 by 4 rectangle: a radius of 3 needs 6 along each short side, so only two corners on one side fit.
+        let rectangle = polyline_from(&[pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 4.0), pt(0.0, 4.0)], true);
+        let result = fillet_polyline(&rectangle, 3.0).unwrap();
+        assert_eq!((result.filleted, result.too_short), (2, 2));
+        let result = fillet_polyline(&rectangle, 2.0).unwrap();
+        assert_eq!((result.filleted, result.too_short), (4, 0));
+    }
+
+    #[test]
+    fn an_open_polyline_rounds_only_its_inner_corners_and_turns_the_right_way() {
+        // A clockwise bend: the arc's bulge is negative.
+        let bend = polyline_from(&[pt(0.0, 0.0), pt(0.0, 10.0), pt(10.0, 10.0)], false);
+        let result = fillet_polyline(&bend, 1.0).unwrap();
+        assert_eq!(result.filleted, 1);
+        let Shape::Polyline { vertices, closed: false } = result.polyline.shape else { panic!() };
+        assert_eq!(vertices.len(), 4);
+        assert!(vertices[1].point().dist(pt(0.0, 9.0)) < 1e-9 && vertices[2].point().dist(pt(1.0, 10.0)) < 1e-9);
+        assert!(vertices[1].bulge < 0.0);
+    }
+
+    #[test]
+    fn polyline_segments_that_do_not_meet_are_refused() {
+        let rectangle = polyline_from(&[pt(0.0, 0.0), pt(20.0, 0.0), pt(20.0, 10.0), pt(0.0, 10.0)], true);
+        let message = fillet_polyline_corner(&rectangle, pt(10.0, 0.0), pt(10.0, 10.0), 1.0).err().unwrap();
+        assert!(message.contains("meet"), "{message}");
     }
 }

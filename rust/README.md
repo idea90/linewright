@@ -17,6 +17,12 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 ## What it does
 
 - A start page when it opens without a file: new, open, recent drawings and first steps.
+- A ribbon laid out as AutoCAD's: Home, Insert, Annotate, View, Manage and Output tabs (double-click the open tab to
+  hide the panels). Home has AutoCAD's Modify, Layers, Annotation, Block, Properties, Draw, Groups, Utilities and
+  Clipboard panels. Buttons with a ▾ are flyouts: the button runs the tool used last, the ▾ lists the others (Circle
+  2-Point and 3-Point, Arc Center, Start, End, the dimension types and so on). The Layers panel's drop-down turns
+  layers on and off, freezes and locks them from their icons. Each panel's name strip opens its other tools, and the
+  columns that do not fit a narrow window move there too.
 
 - Draw: `LINE` (`L`), `PLINE` (`PL`), `RECTANGLE` (`REC`), `POLYGON` (`POL`), `MTEXT` (`MT`), `XLINE` (`XL`), `RAY`, `DONUT` (`DO`), `REVCLOUD`, `TABLE` (`TB`), `CIRCLE` (`C`), `ARC` (`A`), `ELLIPSE` (`EL`),
   `SPLINE` (`SPL`), `POINT` (`PO`), `HATCH` (`H`; SOLID, ANSI31, ANSI37, NET, LINE, DOTS, DASH), `TEXT` (`T`)
@@ -32,7 +38,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   become arc segments
 - `OOPS`: brings back the objects the last `ERASE` or `BLOCK` took out, as one undo step, and forgets them. Delete
   does the same erase as `ERASE`.
-- Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
+- Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET` (`F`;
+  two lines, or two segments of a polyline that meet; Polyline rounds every corner), `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
   polylines, Partial overlap and End to end options; deletes duplicates, combines overlapping lines and arcs, and tidies
@@ -43,7 +50,10 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Colors: all 255 index colors and true colors (RGB), from the Select Color dialog (`COLOR`, More colors…)
 - Annotate and measure: `DIMLINEAR`, `DIMALIGNED`, `DIMCONTINUE` (`DCO`), `DIMBASELINE` (`DBA`), `DIMRADIUS` (`DRA`), `DIMDIAMETER` (`DDI`), `DIMANGULAR` (`DAN`),
   `QLEADER`/`LEADER` (`LE`), `DIMSTYLE` (`D`; style manager), `-DIMSTYLE` (Save/Restore/STatus/Apply/?), `DIMSCALE`,
-  `DIMTXT`, `DIMASZ`, `DISTANCE`, `AREA`, `LIST` (`LI`), `ID`, `ZOOM` (`Z`)
+  `DIMTXT`, `DIMASZ`, `DISTANCE`, `AREA`, `MEASUREGEOM` (`MEA`; Distance, Radius, Angle between lines, of an arc or
+  at a vertex, and ARea, repeated until eXit), `LIST` (`LI`), `ID`, `ZOOM` (`Z`)
+- Calculator: `CAL` evaluates an expression (`+ - * / ^`, parentheses, `sqrt`, `abs`, `sin`/`cos`/`tan` in degrees,
+  `pi`); `QUICKCALC` (`QC`) runs the same command-line calculator rather than a palette
 - `HATCH` picks internal points (islands stay empty) or selected closed objects
 - File commands typed as in AutoCAD: `QSAVE`, `SAVEAS`, `OPEN`, `NEW`, `PLOT`
 - Autosave: `SAVETIME` sets the minutes between copies of a drawing with unsaved changes (default 10, 0 turns it
@@ -51,7 +61,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   After a crash or kill, the Drawing Recovery dialog at start-up (or `DRAWINGRECOVERY`) opens each copy as an
   unsaved "(recovered)" drawing, or deletes it. A copy goes once its drawing is saved or discarded.
 - AutoCAD habits: Space and right-click are Enter, Enter repeats the last command, grips on selected objects,
-  double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects, Ctrl+A, Ctrl+1 for the Properties palette
+  double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects (`COPYCLIP`, `CUTCLIP`, `PASTECLIP`), Ctrl+A
+  (`SELECTALL`, `AI_SELALL`), Ctrl+1 for the Properties palette
   (several objects of one kind change together; differing values show *VARIES*).
 - Object snaps (endpoint, midpoint, center, node, quadrant, intersection, insertion, perpendicular, nearest) chosen
   in Drafting Settings (`OSNAP`, `OS`), object snap tracking (F11) and dynamic input by the cursor (F12).
@@ -68,8 +79,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Points as `x,y`, `@dx,dy` or `@distance<angle`; `U`/`UNDO`, `REDO`, `ALL`.
 - Object snaps (endpoint, midpoint, center, intersection, perpendicular, node), grid snap, ortho and polar
   tracking: F3, F7–F10.
-- Layers with color, linetype, on/off and lock, and AutoCAD's layer tools `LAYISO`, `LAYUNISO`, `LAYOFF`, `LAYON`,
-  `LAYFRZ`, `LAYTHW`, `LAYMCUR`, `LAYLCK`, `LAYULK`; layers freeze and thaw, and can be kept off plots; per-object color and linetype; undo and redo of everything.
+- Layers with color, linetype, on/off and lock in the Layers palette (`LAYER`, `LA`), and AutoCAD's layer tools
+  `LAYISO`, `LAYUNISO`, `LAYOFF`, `LAYON`, `LAYFRZ`, `LAYTHW`, `LAYMCUR`, `LAYMCH`, `LAYLCK`, `LAYULK`; layers freeze and thaw, and can be kept off plots; per-object color and linetype; undo and redo of everything.
 - DXF open and save (R12 to R2018): lines, arcs, circles, polylines, ellipses, splines, points, solids, hatches,
   text and MTEXT (aligned, multi-line), dimensions with their styles, and blocks with attributes (nested,
   mirrored, stretched). Whatever Linewright cannot show yet is kept when saving.
@@ -117,6 +128,35 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   as does Layer Properties' VP Freeze column; `MVIEW` Lock (or Display locked in Properties) keeps a viewport's
   scale from changing.
 
+## Use it from Claude Code (MCP)
+
+`linewright --mcp` runs no window: it is a [Model Context Protocol](https://modelcontextprotocol.io) server on
+standard input and output, so an AI agent such as Claude Code can draw, edit, look at and save drawings. The
+repository's `.mcp.json` starts it with `cargo run --release -- --mcp`, so Claude Code offers it when opened in this
+folder. To use it elsewhere, point an MCP client at the binary:
+
+```sh
+claude mcp add linewright -- /path/to/linewright --mcp
+```
+
+Its tools:
+
+- `command`: type at the command line, one entry per line: `["LINE", "0,0", "100,0", "@0,50", ""]`. `""` is
+  Enter. Entries can also be `click x,y` (a mouse click: a point, or picking an object), `box x1,y1 x2,y2` (a
+  window or crossing box), `select <id>…` and `esc`. `U` and `REDO` undo and redo. The reply has the command line's
+  messages, the ids of objects added, changed and erased, and what the command waits for next. A waiting command
+  keeps running into the next call.
+- `render`: a PNG of the drawing as it plots (dark lines on white), of model space, the open layout's sheet or a
+  window, with the area shown and its pixels per unit.
+- `list_entities`: objects with their id, kind, layer, color and main geometry, filtered by layer, kind or area.
+- `drawing_info`: units, extent, layers, layouts, blocks, counts of each kind, and the prompt waiting.
+- `layer`: make or change a layer (color, linetype, on, frozen, locked, plot) and make it current.
+- `set_property`: set Layer, Color, Linetype or any property the Properties palette edits, on objects by id.
+- `open_drawing`, `new_drawing`, `save_drawing`, `list_commands`.
+
+Commands that open a dialog or file box in the window (QSAVE, PLOT, MTEXT, STYLE…) are refused, pointing to the tool
+that does the same.
+
 ## Layout
 
 | Module | Role |
@@ -125,5 +165,6 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 | `commands` | Each command as an `async fn` that awaits the user's answers; the session that drives it |
 | `snap`, `selection` | Object snaps and tracking; picking and window/crossing selection |
 | `io` | DXF reading and writing at the group-code level, DWG through the ODA converter |
-| `canvas` | Camera, rendering with egui, PDF plotting |
+| `canvas` | Camera, rendering with egui, PDF plotting, PNG pictures |
 | `ui` | The window: controller, undo stack, layers, panels |
+| `mcp` | The MCP server (`--mcp`) that drives the controller for an AI agent |
