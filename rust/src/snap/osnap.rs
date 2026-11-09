@@ -1,7 +1,7 @@
-use super::intersect::intersections;
-use super::primitives::{Primitive, arc_point, distance_to, lerp, line_parameter, on_primitive, primitives};
 use crate::model::entities::{Entity, Shape};
 use crate::model::geometry::{Point, sweep_degrees};
+use crate::model::intersect::intersections;
+use crate::model::primitives::{Primitive, arc_point, distance_to, lerp, line_parameter, on_primitive, primitives};
 
 const MAX_INTERSECTION_PRIMITIVES: usize = 40;
 

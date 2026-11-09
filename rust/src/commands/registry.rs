@@ -326,7 +326,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "ID" => Box::pin(inquiry::id_command(io)),
             "ZOOM" => Box::pin(inquiry::zoom_command(io)),
             "TEXTEDIT" => Box::pin(inquiry::textedit_command(io, selected)),
-            "SAVETIME" => Box::pin(crate::ui::settings::savetime_command(io, defaults)),
+            "SAVETIME" => Box::pin(super::settings::savetime_command(io, defaults)),
             other => panic!("unknown command {other}"),
         }
     }

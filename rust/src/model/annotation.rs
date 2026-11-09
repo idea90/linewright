@@ -3,9 +3,8 @@
 
 use std::f64::consts::{PI, TAU};
 
-use super::dimension::{Arrowhead, DimensionLook, HALF_CHARACTER_WIDTH, Segment, end_mark, normal, readable};
-use super::geometry::{Point, direction, modulo, pt};
-use super::parts::arc_points;
+use super::dimension::{AnnotationText, Arrowhead, DimensionLook, HALF_CHARACTER_WIDTH, Segment, end_mark, normal, readable};
+use super::geometry::{Point, arc_points, direction, modulo, pt};
 
 /// What an annotation is, and what its points mean.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,16 +40,6 @@ impl AnnotationKind {
             AnnotationKind::JoggedRadius => "Jogged radius dimension",
         }
     }
-}
-
-/// Text a dimension shows.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AnnotationText {
-    pub text: String,
-    pub height: f64,
-    pub anchor: Point, // middle of the baseline
-    pub middle: Point,
-    pub angle: f64, // degrees, readable
 }
 
 /// Everything an annotation draws, in drawing units.

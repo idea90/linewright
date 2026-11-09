@@ -72,12 +72,14 @@ rust/                the app (Cargo crate "linewright")
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
 | `model/entities.rs` | `Entity` (id, layer, color, linetype, lineweight, shape) and the `Shape` enum: every kind of object |
 | `model/document.rs` | `Document`: layers, layouts, blocks, styles, groups, units, and the entities of each space |
-| `model/geometry.rs` | `Point` and basic geometry helpers (angles, bulges, arcs through points) |
+| `model/geometry.rs` | `Point`, `Bounds` and basic geometry helpers (angles, bulges, arcs through points, `arc_points`) |
 | `model/parts.rs` | What an entity is made of (paths, filled areas, masks, points, texts) for drawing and plotting; `flatten` handles blocks |
+| `model/drawn.rs` | The types `parts` produces and painters read: `Parts`, `TextSpec`, `TextLook` (no other model logic, so any module can use them) |
 | `model/index.rs` | Spatial index for finding entities near a spot; `entity_extent` |
 | `model/editing.rs` | Geometry behind editing: explode, stretch, grips, join, closed loops |
 | `model/transform.rs` | Move/rotate/scale/mirror of shapes (`Similarity`) |
 | `model/trimming.rs`, `fillet.rs`, `offset.rs` | TRIM/EXTEND/BREAK, FILLET/CHAMFER, OFFSET geometry |
+| `model/primitives.rs`, `intersect.rs` | Each entity as lines, arcs and circles (`Primitive`), and where they cross: used by snaps, TRIM, OFFSET and FILLET |
 | `model/boundary.rs` | Finding the closed area around a clicked point (HATCH and BOUNDARY) |
 | `model/overkill.rs` | OVERKILL's duplicate and overlap clean-up |
 | `model/mline.rs` | Multiline styles and the geometry of multilines |
@@ -93,11 +95,13 @@ rust/                the app (Cargo crate "linewright")
 | `commands/edit.rs`, `modify.rs`, `reshape.rs` | Editing commands (MOVE, COPY, TRIM, FILLET, ARRAY, JOIN, OVERKILL, LENGTHEN, PEDIT…) |
 | `commands/dimension.rs`, `qdim.rs` | Dimension and leader commands |
 | `commands/blocks.rs`, `groups.rs`, `layer_tools.rs`, `layout.rs` | Blocks and clipboard, groups, LAY* tools, layouts and viewports |
+| `commands/settings.rs` | Commands that change the program's own settings (SAVETIME); `ui/settings.rs` keeps them in the settings file |
 | `commands/inquiry.rs`, `measuring.rs` | LIST, ID, ZOOM, text edit, grip dragging; DISTANCE and AREA |
 | `commands/parse.rs` | Parsing typed numbers, lengths and points |
 | `commands/tests.rs` | Commands run start to finish against a `FakeHost` |
 | **`io/`** | **Files** |
-| `io/dxf.rs` | DXF read and write at the group-code level (R12 to R2018). Writing starts from the opened file (or `template.dxf`), so whatever Linewright cannot show is kept |
+| `io/dxf.rs` | DXF read and write: turning groups into a drawing and back (R12 to R2018). Writing starts from the opened file (or `template.dxf`), so whatever Linewright cannot show is kept |
+| `io/dxf/file.rs` | `DxfFile`: the file as code/value pairs and groups, its text encoding and header. Knows nothing of the drawing, so `Document` can keep the opened file |
 | `io/dxf/tests.rs` | DXF round-trip tests |
 | `io/files.rs` | Opening and saving drawings, DWG through the ODA File Converter |
 | `io/ctb.rs`, `pat.rs` | Plot style tables (.ctb) and hatch pattern files (.pat) |
@@ -106,7 +110,7 @@ rust/                the app (Cargo crate "linewright")
 | `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor |
 | `canvas/plot.rs`, `pdf.rs` | Plotting to a PDF page at a scale |
 | `canvas/view.rs`, `aci.rs`, `shapes.rs` | Camera, AutoCAD color index palette, colors parts draw in |
-| **`snap/`** | Object snaps (`osnap.rs`), the snap geometry of each entity (`primitives.rs`), intersections, tracking, drafting aids |
+| **`snap/`** | Object snaps (`osnap.rs`), tracking and drafting aids, built on `model/primitives.rs` and `model/intersect.rs` |
 | **`selection/`** | The selection and what an entity looks like to the mouse |
 | **`ui/`** | **The window** |
 | `ui/app.rs` | The main window, its state, each frame, and the actions buttons and keys trigger |
@@ -136,7 +140,7 @@ rust/                the app (Cargo crate "linewright")
 Add a variant to `Shape` in `model/entities.rs`, then let the compiler's non-exhaustive match errors guide you.
 Places that usually need it, beyond those errors: `Shape::kind`, `index::entity_extent`, `parts::entity_parts`
 (and `flatten_into` if parts have their own colors), `transform::transform_shape`, `editing.rs` (stretch, grip
-points, grip moves, explode, `closed_loop`), `snap/primitives.rs`, `properties.rs` (rows and setters),
+points, grip moves, explode, `closed_loop`), `model/primitives.rs`, `properties.rs` (rows and setters),
 `commands/inquiry.rs` (LIST), and `io/dxf.rs` (reading in the entity match, writing in `Writer::entity`, with an
 R12 fallback, plus any CLASS or OBJECTS entries AutoCAD needs). Add a DXF round-trip test in `io/dxf/tests.rs`.
 

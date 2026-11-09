@@ -1,8 +1,7 @@
 //! Viewports: frames on a layout that show model space at a scale.
 
 use super::entities::Shape;
-use super::geometry::{Point, pt};
-use super::index::Bounds;
+use super::geometry::{Bounds, Point, pt};
 
 /// The frame's corners, counter-clockwise from the lower left.
 pub fn frame_corners(center: Point, width: f64, height: f64) -> [Point; 4] {

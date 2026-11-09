@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn a_circle_loop_becomes_two_half_circle_arcs() {
-        let points = super::super::parts::arc_points(pt(15.0, 5.0), 1.0, 0.0, TAU, 2.9e-3);
+        let points = super::super::geometry::arc_points(pt(15.0, 5.0), 1.0, 0.0, TAU, 2.9e-3);
         let vertices = fit_arcs(&points, true);
         assert_eq!(vertices.len(), 2);
         assert!(vertices.iter().all(|v| (v.bulge.abs() - 1.0).abs() < 1e-6), "{vertices:?}");
@@ -667,7 +667,7 @@ mod tests {
     fn a_rounded_corner_keeps_its_lines_and_becomes_one_arc() {
         // A 10 by 10 rectangle whose lower right corner is rounded with radius 2, the arc sampled as parts do.
         let mut points = vec![pt(0.0, 0.0)];
-        points.extend(super::super::parts::arc_points(pt(8.0, 2.0), 2.0, -PI / 2.0, PI / 2.0, 2.0 * 1e-3));
+        points.extend(super::super::geometry::arc_points(pt(8.0, 2.0), 2.0, -PI / 2.0, PI / 2.0, 2.0 * 1e-3));
         points.extend([pt(10.0, 10.0), pt(0.0, 10.0)]);
         let vertices = fit_arcs(&points, true);
         assert_eq!(vertices.len(), 5);

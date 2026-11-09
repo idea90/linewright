@@ -1,7 +1,7 @@
 use super::entities::{Entity, Shape, vertex};
 use super::geometry::{Point, pt};
-use crate::snap::intersect::line_line_meeting;
-use crate::snap::primitives::{distance_to, seg};
+use crate::model::intersect::line_line_meeting;
+use crate::model::primitives::{distance_to, seg};
 
 /// A copy moved sideways by the distance, toward the side point. None if it cannot be offset.
 pub fn offset_entity(entity: &Entity, distance: f64, side: Point) -> Option<Entity> {

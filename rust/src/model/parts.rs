@@ -7,175 +7,19 @@ use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use super::annotation::annotation_parts;
-use super::dimension::dimension_parts;
-use super::entities::{Entity, Gradient, HAlign, LINE_PITCH, PatternLine, Shape, TextAlign, VAlign, Vertex};
-use super::geometry::{Point, bulge_arc, direction, modulo, pt};
-use super::mtext::{RichText, valid_rich};
+use super::dimension::{AnnotationText, dimension_parts};
+pub use super::drawn::{BOLD_OFFSET, Parts, TextLook, TextSpec};
+use super::entities::{Entity, Gradient, HAlign, PatternLine, Shape, TextAlign, VAlign, Vertex};
+use super::geometry::{MAX_ARC_SEGMENTS, Point, arc_points, bulge_arc, direction, modulo, pt};
+use super::mtext::valid_rich;
 use super::transform::{IDENTITY, Similarity, insert_transform};
 use super::viewport::frame_corners;
 
-const MAX_ARC_SEGMENTS: f64 = 2048.0;
 const MAX_SPLINE_SAMPLES: usize = 4096;
 const MAX_HATCH_SEGMENTS: usize = 20000;
 const MAX_BLOCK_DEPTH: usize = 16;
 pub const BYBLOCK_COLOR: i32 = 0;
 pub const BYBLOCK_LINETYPE: &str = "ByBlock";
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextSpec {
-    /// The point the text is aligned on, as `align` says.
-    pub origin: Point,
-    pub rotation: f64, // degrees, counter-clockwise
-    pub height: f64,
-    pub text: String,
-    pub align: TextAlign,
-    pub line_spacing: f64,
-    /// The font the drawing asks for, empty for the interface font.
-    pub font: String,
-    pub look: TextLook,
-    /// Runs with looks of their own, in place of `text` when there are any.
-    pub rich: Option<Arc<RichText>>,
-}
-
-/// How letters are shaped: width, lean, bold and italic.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TextLook {
-    pub width_factor: f64,
-    pub oblique: f64,
-    pub bold: bool,
-    pub italic: bool,
-}
-
-impl Default for TextLook {
-    fn default() -> Self {
-        TextLook { width_factor: 1.0, oblique: 0.0, bold: false, italic: false }
-    }
-}
-
-impl TextLook {
-    /// How far a letter's top leans over per its height. Italic leans 15 degrees more.
-    pub fn shear(&self) -> f64 {
-        (self.oblique + if self.italic { 15.0 } else { 0.0 }).to_radians().tan()
-    }
-
-    pub fn is_plain(&self) -> bool {
-        *self == TextLook::default()
-    }
-}
-
-/// Fake bold: how far the letters are drawn again to the side, per the text's height.
-pub const BOLD_OFFSET: f64 = 0.035;
-
-impl TextSpec {
-    /// Where each line's baseline starts, given how wide each line is: lines step down from the first, and each
-    /// lines up on the origin as the alignment says.
-    pub fn line_origins(&self, widths: &[f64]) -> Vec<Point> {
-        let lines = widths.len().max(1) as f64;
-        let pitch = self.height * LINE_PITCH * self.line_spacing;
-        let first = match self.align.v {
-            VAlign::Baseline => 0.0,
-            VAlign::Bottom => (lines - 1.0) * pitch,
-            VAlign::Middle => (self.height + (lines - 1.0) * pitch) / 2.0 - self.height,
-            VAlign::Top => -self.height,
-        };
-        let (along, up) = (direction(self.rotation), direction(self.rotation + 90.0));
-        widths
-            .iter()
-            .enumerate()
-            .map(|(i, width)| {
-                let back = match self.align.h {
-                    HAlign::Left => 0.0,
-                    HAlign::Center => width / 2.0,
-                    HAlign::Right => *width,
-                };
-                self.origin + up * (first - i as f64 * pitch) - along * back
-            })
-            .collect()
-    }
-
-    /// The corners of a box around the text, guessing each character `char_width` heights wide. Generous below
-    /// the baseline for descenders.
-    pub fn bounding_box(&self, char_width: f64) -> [Point; 4] {
-        let lines: Vec<&str> = self.text.split('\n').collect();
-        let widths: Vec<f64> = lines.iter().map(|l| l.chars().count().max(1) as f64 * char_width * self.height).collect();
-        let origins = self.line_origins(&widths);
-        let (along, up) = (direction(self.rotation), direction(self.rotation + 90.0));
-        let descent = 0.3 * self.height;
-        let local = |p: Point| ((p - self.origin).dot(along), (p - self.origin).dot(up));
-        let (mut u0, mut v0, mut u1, mut v1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-        for (origin, width) in origins.iter().zip(&widths) {
-            let (u, v) = local(*origin);
-            u0 = u0.min(u);
-            u1 = u1.max(u + width);
-            v0 = v0.min(v - descent);
-            v1 = v1.max(v + self.height);
-        }
-        [(u0, v0), (u1, v0), (u1, v1), (u0, v1)].map(|(u, v)| self.origin + along * u + up * v)
-    }
-
-    /// The text after a transform. Mirrored text turns round and lines up from the other side, so it stays
-    /// readable where the mirrored text would be.
-    fn mapped(&self, transform: &Similarity) -> TextSpec {
-        let along = transform.linear(direction(self.rotation));
-        let up = transform.linear(direction(self.rotation + 90.0));
-        let mut rotation = along.y.atan2(along.x).to_degrees();
-        let mut align = self.align;
-        if transform.reflects() {
-            rotation += 180.0;
-            align.h = match align.h {
-                HAlign::Left => HAlign::Right,
-                HAlign::Right => HAlign::Left,
-                HAlign::Center => HAlign::Center,
-            };
-        }
-        TextSpec { origin: transform.point(self.origin), rotation, height: self.height * up.length(), align, ..self.clone() }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Parts {
-    pub paths: Vec<Vec<Point>>,
-    /// Filled triangles, such as arrowheads.
-    pub fills: Vec<[Point; 3]>,
-    /// Filled areas, each a set of loops where loops inside loops are holes.
-    pub areas: Vec<Vec<Vec<Point>>>,
-    pub points: Vec<Point>,
-    pub texts: Vec<TextSpec>,
-    /// Gradient fills: the loops, as for areas, and the colors.
-    pub gradients: Vec<(Vec<Vec<Point>>, Gradient)>,
-    /// Areas painted in the background color, each framed on screen but not on paper: wipeouts.
-    pub masks: Vec<Vec<Point>>,
-}
-
-impl Parts {
-    fn map(mut self, transform: &Similarity) -> Parts {
-        let point = |p: &mut Point| *p = transform.point(*p);
-        self.paths.iter_mut().flatten().for_each(point);
-        self.fills.iter_mut().flatten().for_each(point);
-        self.areas.iter_mut().flatten().flatten().for_each(point);
-        self.masks.iter_mut().flatten().for_each(point);
-        self.points.iter_mut().for_each(point);
-        for (loops, gradient) in &mut self.gradients {
-            loops.iter_mut().flatten().for_each(point);
-            let along = transform.linear(direction(gradient.angle));
-            gradient.angle = along.y.atan2(along.x).to_degrees();
-        }
-        self.texts = self.texts.iter().map(|t| t.mapped(transform)).collect();
-        self
-    }
-}
-
-/// Points along an arc, close enough to it that no chord strays more than `tolerance` from it.
-pub fn arc_points(center: Point, radius: f64, start: f64, sweep: f64, tolerance: f64) -> Vec<Point> {
-    let step = if radius > tolerance { 2.0 * (1.0 - tolerance / radius).acos() } else { TAU };
-    let count = (sweep.abs() / step.max(1e-9)).ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize;
-    (0..=count)
-        .map(|i| {
-            let angle = start + sweep * i as f64 / count as f64;
-            pt(center.x + radius * angle.cos(), center.y + radius * angle.sin())
-        })
-        .collect()
-}
 
 /// The point of an ellipse at a parameter (radians).
 pub fn ellipse_point(center: Point, major: Point, ratio: f64, t: f64) -> Point {
@@ -566,7 +410,7 @@ pub fn gradient_strips(loops: &[Vec<Point>], gradient: &Gradient, step: f64) -> 
 }
 
 /// A piece of a dimension's text, centered on the middle of its baseline.
-pub fn dimension_text(text: &super::annotation::AnnotationText) -> TextSpec {
+pub fn dimension_text(text: &AnnotationText) -> TextSpec {
     TextSpec {
         origin: text.anchor,
         rotation: text.angle,
@@ -635,7 +479,7 @@ fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, toleran
             if let Some(color) = mline_style.fill.filter(|color| *color != super::entities::BYLAYER) {
                 piece.color = color;
             }
-            out.push((piece, Parts { areas: vec![loops], ..Parts::default() }.map(transform)));
+            out.push((piece, map_parts(Parts { areas: vec![loops], ..Parts::default() }, transform)));
         }
         // Each line in its element's color and linetype; ByLayer ones, and the caps, follow the multiline itself.
         for (element, path) in super::mline::mline_paths(vertices, *closed, *justification, *scale, mline_style, gaps) {
@@ -648,7 +492,7 @@ fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, toleran
                     piece.linetype = element.linetype.clone();
                 }
             }
-            let parts = Parts { paths: vec![path], ..Parts::default() }.map(transform);
+            let parts = map_parts(Parts { paths: vec![path], ..Parts::default() }, transform);
             out.push((piece, parts));
         }
         return;
@@ -656,7 +500,7 @@ fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, toleran
     let Shape::Insert { block, position, scale_x, scale_y, rotation, attributes } = &entity.shape else {
         // The chords must stay close to the curve after the transform has scaled it.
         let local = tolerance / transform.determinant().abs().sqrt().max(1e-300);
-        out.push((style.clone(), entity_parts(entity, local).map(transform)));
+        out.push((style.clone(), map_parts(entity_parts(entity, local), transform)));
         return;
     };
     if depth >= MAX_BLOCK_DEPTH {
@@ -670,6 +514,41 @@ fn flatten_into(entity: &Entity, style: &Styled, transform: &Similarity, toleran
         let shown = Entity { layer: attribute.layer.clone(), color: attribute.color, shape: attribute.text.clone(), ..entity.clone() };
         flatten_into(&shown, &Styled::inside(&shown, style), transform, tolerance, depth + 1, out);
     }
+}
+
+/// The parts after a transform.
+fn map_parts(mut parts: Parts, transform: &Similarity) -> Parts {
+    let point = |p: &mut Point| *p = transform.point(*p);
+    parts.paths.iter_mut().flatten().for_each(point);
+    parts.fills.iter_mut().flatten().for_each(point);
+    parts.areas.iter_mut().flatten().flatten().for_each(point);
+    parts.masks.iter_mut().flatten().for_each(point);
+    parts.points.iter_mut().for_each(point);
+    for (loops, gradient) in &mut parts.gradients {
+        loops.iter_mut().flatten().for_each(point);
+        let along = transform.linear(direction(gradient.angle));
+        gradient.angle = along.y.atan2(along.x).to_degrees();
+    }
+    parts.texts = parts.texts.iter().map(|t| mapped_text(t, transform)).collect();
+    parts
+}
+
+/// The text after a transform. Mirrored text turns round and lines up from the other side, so it stays
+/// readable where the mirrored text would be.
+fn mapped_text(text: &TextSpec, transform: &Similarity) -> TextSpec {
+    let along = transform.linear(direction(text.rotation));
+    let up = transform.linear(direction(text.rotation + 90.0));
+    let mut rotation = along.y.atan2(along.x).to_degrees();
+    let mut align = text.align;
+    if transform.reflects() {
+        rotation += 180.0;
+        align.h = match align.h {
+            HAlign::Left => HAlign::Right,
+            HAlign::Right => HAlign::Left,
+            HAlign::Center => HAlign::Center,
+        };
+    }
+    TextSpec { origin: transform.point(text.origin), rotation, height: text.height * up.length(), align, ..text.clone() }
 }
 
 #[cfg(test)]

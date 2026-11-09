@@ -8,7 +8,7 @@ use super::defaults::Defaults;
 use super::edit::{MAX_PREVIEW_ENTITIES, copies, objects_to_edit};
 use super::format_general;
 use super::prompts::{Answer, Io, Prompt, PromptKind, Step};
-use crate::model::entities::{Attribute, AttributeInfo, BlockDef, BlockRef, Entity, Shape};
+use crate::model::entities::{Attribute, AttributeInfo, BlockDef, BlockRef, Entity, Shape, attribute_of};
 use crate::model::geometry::Point;
 use crate::model::transform::{insert_transform, transform_shape, translation};
 
@@ -143,37 +143,6 @@ pub async fn paste_command(io: Io, defaults: Rc<RefCell<Defaults>>) {
         io.step(Step::Commit(copies(&objects, &translation(target.x - base.x, target.y - base.y))));
         io.step(Step::Report(format!("{} object(s) pasted at {},{}.", objects.len(), format_general(target.x), format_general(target.y))));
     }
-}
-
-/// An attribute definition as a block keeps it: the tag its text shows, the default value as its text.
-pub fn attribute_of(entity: &Entity) -> Option<Attribute> {
-    let info = entity.attribute.as_ref()?;
-    let Shape::Text { text, .. } = &entity.shape else { return None };
-    let mut shape = entity.shape.clone();
-    if let Shape::Text { text: value, .. } = &mut shape {
-        *value = info.default.clone();
-    }
-    Some(Attribute {
-        tag: text.trim().to_uppercase(),
-        prompt: info.prompt.clone(),
-        layer: entity.layer.clone(),
-        color: entity.color,
-        text: shape,
-        invisible: info.invisible,
-    })
-}
-
-/// A block's attribute as an attribute definition to edit: text showing its tag.
-pub fn definition_of(attribute: &Attribute) -> Entity {
-    let mut shape = attribute.text.clone();
-    let default = match &mut shape {
-        Shape::Text { text, .. } => std::mem::replace(text, attribute.tag.clone()),
-        _ => String::new(),
-    };
-    let mut entity = Entity::new(shape);
-    (entity.layer, entity.color) = (attribute.layer.clone(), attribute.color);
-    entity.attribute = Some(AttributeInfo { prompt: attribute.prompt.clone(), default, invisible: attribute.invisible });
-    entity
 }
 
 const INVISIBLE: &str = "I";

@@ -17,6 +17,7 @@ pub mod prompts;
 pub mod qdim;
 pub mod registry;
 pub mod reshape;
+pub mod settings;
 pub mod shapes;
 
 #[cfg(test)]

@@ -1,4 +1,3 @@
-use super::annotation::AnnotationText;
 use super::geometry::{Point, direction, modulo, pt};
 
 // Drawing units. These match the metric defaults of the DXF dimension style Linewright writes.
@@ -13,6 +12,16 @@ pub const STANDARD_STYLE: &str = "Standard";
 const ARROW_WIDTH_RATIO: f64 = 1.0 / 6.0; // half an arrowhead's width, per length of it
 const DOT_RADIUS_RATIO: f64 = 0.125; // a small dot's radius, per arrowhead size
 const DOT_SIDES: usize = 12;
+
+/// Text a dimension shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnotationText {
+    pub text: String,
+    pub height: f64,
+    pub anchor: Point, // middle of the baseline
+    pub middle: Point,
+    pub angle: f64, // degrees, readable
+}
 
 /// What marks the ends of the dimension line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

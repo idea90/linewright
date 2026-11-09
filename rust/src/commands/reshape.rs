@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::defaults::Defaults;
+use super::defaults::{Defaults, Lengthen};
 use super::edit::{copies, objects_to_edit};
 use super::format_general;
 use super::prompts::{Answer, Io, Picked, Prompt, PromptKind, Step};
@@ -21,14 +21,6 @@ const UNDO: &str = "U";
 const WIDTH: &str = "W";
 const YES: &str = "Y";
 const NO: &str = "N";
-
-/// How LENGTHEN changes what it is given.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Lengthen {
-    Delta(f64),
-    Percent(f64),
-    Total(f64),
-}
 
 /// A line's or an arc's length.
 fn length(shape: &Shape) -> Option<f64> {

@@ -73,7 +73,7 @@ fn circle_circle(c1: Point, r1: f64, c2: Point, r2: f64) -> Vec<Point> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snap::primitives::seg;
+    use crate::model::primitives::seg;
 
     #[test]
     fn crossing_lines() {
