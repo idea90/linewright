@@ -32,7 +32,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   become arc segments
 - `OOPS`: brings back the objects the last `ERASE` or `BLOCK` took out, as one undo step, and forgets them. Delete
   does the same erase as `ERASE`.
-- Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET`, `CHAMFER`
+- Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET` (`F`;
+  two lines, or two segments of a polyline that meet; Polyline rounds every corner), `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
   polylines, Partial overlap and End to end options; deletes duplicates, combines overlapping lines and arcs, and tidies

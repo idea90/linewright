@@ -5,7 +5,7 @@ use super::defaults::Defaults;
 use super::format_general;
 use super::prompts::{Answer, Io, Picked, Prompt, PromptKind, Step};
 use crate::model::entities::{Entity, Shape};
-use crate::model::fillet::fillet_lines;
+use crate::model::fillet::{fillet_lines, fillet_polyline, fillet_polyline_corner};
 use crate::model::geometry::Point;
 use crate::model::offset::offset_entity;
 use crate::model::transform::{Similarity, reflection, rotation, scaling, transform_entity, transform_shape, translation};
@@ -16,6 +16,7 @@ const UNDO: &str = "U";
 const YES: &str = "Y";
 const NO: &str = "N";
 const RADIUS: &str = "R";
+const POLYLINE: &str = "P";
 const TRIM_PROMPT: &str = "Select object to trim or shift-select to extend or [Undo]:";
 const EXTEND_PROMPT: &str = "Select object to extend or shift-select to trim or [Undo]:";
 
@@ -269,8 +270,16 @@ pub async fn extend(io: Io, selected: Vec<Entity>) {
 
 fn fillet_step(first: &Picked, second: &Picked, radius: f64) -> Result<Step, String> {
     let is_line = |p: &Picked| matches!(p.entity.shape, Shape::Line { .. });
+    let is_polyline = |p: &Picked| matches!(p.entity.shape, Shape::Polyline { .. });
+    if is_polyline(first) && is_polyline(second) {
+        if first.entity.id != second.entity.id {
+            return Err("Fillet joins two polylines only at segments of the same polyline for now.".into());
+        }
+        let rounded = fillet_polyline_corner(&first.entity, first.point, second.point, radius)?;
+        return Ok(Step::Modify(vec![rounded]));
+    }
     if !is_line(first) || !is_line(second) {
-        return Err("Fillet works on lines only for now.".into());
+        return Err("Fillet works on lines and polylines for now.".into());
     }
     if first.entity.id == second.entity.id {
         return Err("Select two different lines.".into());
@@ -283,12 +292,38 @@ fn fillet_step(first: &Picked, second: &Picked, radius: f64) -> Result<Step, Str
     })
 }
 
+/// FILLET's Polyline option: rounds every corner of a picked polyline and says how many it rounded.
+async fn fillet_whole_polyline(io: &Io, radius: f64) -> Result<(), String> {
+    let Some(Answer::Picked(picked)) = io.ask(Prompt::new(PromptKind::Pick, "Select 2D polyline:")).await else { return Ok(()) };
+    let result = fillet_polyline(&picked.entity, radius)?;
+    if result.filleted > 0 {
+        io.step(Step::Modify(vec![result.polyline]));
+    }
+    let lines = if result.filleted == 1 { "line was" } else { "lines were" };
+    let mut message = format!("{} {lines} filleted", result.filleted);
+    if result.too_short > 0 {
+        message += &format!(", {} {} too short", result.too_short, if result.too_short == 1 { "was" } else { "were" });
+    }
+    io.step(Step::Report(message));
+    Ok(())
+}
+
 pub async fn fillet(io: Io, defaults: Rc<RefCell<Defaults>>) {
-    let first_prompt = |radius: f64| format!("Select first line (radius {}) or [Radius]:", format_general(radius));
+    let first_prompt = |radius: f64| format!("Select first object (radius {}) or [Polyline/Radius]:", format_general(radius));
     let mut message = first_prompt(defaults.borrow().fillet_radius);
     loop {
-        let first = match io.ask(Prompt::new(PromptKind::Pick, message.clone()).options(&[RADIUS])).await {
+        let first = match io.ask(Prompt::new(PromptKind::Pick, message.clone()).options(&[POLYLINE, RADIUS])).await {
             Some(Answer::Picked(picked)) => picked,
+            Some(answer) if answer.is(POLYLINE) => {
+                let radius = defaults.borrow().fillet_radius;
+                match fillet_whole_polyline(&io, radius).await {
+                    Ok(()) => return,
+                    Err(error) => {
+                        message = format!("{error} Select first object or [Polyline/Radius]:");
+                        continue;
+                    }
+                }
+            }
             Some(Answer::Keyword(_)) => {
                 let current = defaults.borrow().fillet_radius;
                 let prompt = Prompt::new(PromptKind::Length, format!("Specify fillet radius <{}>:", format_general(current)))
@@ -301,13 +336,13 @@ pub async fn fillet(io: Io, defaults: Rc<RefCell<Defaults>>) {
             }
             _ => return,
         };
-        let Some(Answer::Picked(second)) = io.ask(Prompt::new(PromptKind::Pick, "Select second line:")).await else { return };
+        let Some(Answer::Picked(second)) = io.ask(Prompt::new(PromptKind::Pick, "Select second object:")).await else { return };
         match fillet_step(&first, &second, defaults.borrow().fillet_radius) {
             Ok(step) => {
                 io.step(step);
                 return;
             }
-            Err(error) => message = format!("{error} Select first line or [Radius]:"),
+            Err(error) => message = format!("{error} Select first object or [Polyline/Radius]:"),
         }
     }
 }

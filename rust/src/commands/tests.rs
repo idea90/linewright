@@ -6,7 +6,7 @@ use std::rc::Rc;
 use super::defaults::Defaults;
 use super::prompts::{Host, PromptKind, ScaleSetting, Session};
 use super::registry::create;
-use crate::model::entities::{Entity, Shape, circle, line};
+use crate::model::entities::{Entity, Shape, circle, line, polyline_from};
 use crate::model::geometry::{Point, pt};
 use crate::model::index::{Bounds, entity_extent};
 
@@ -295,7 +295,7 @@ fn fillet_remembers_its_radius() {
     let mut host = FakeHost::with(vec![horizontal.clone(), vertical.clone()]);
     let mut session = start_with("FILLET", &mut host, vec![], defaults.clone());
     typed(&mut session, &mut host, &["r", "2"]);
-    assert_eq!(session.prompt.as_ref().unwrap().message, "Select first line (radius 2) or [Radius]:");
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Select first object (radius 2) or [Polyline/Radius]:");
     session.submit_pick(horizontal, pt(5.0, 0.0), false, &mut host);
     session.submit_pick(vertical, pt(0.0, 5.0), false, &mut host);
     assert!(!session.active());
@@ -303,6 +303,34 @@ fn fillet_remembers_its_radius() {
     assert_eq!(defaults.borrow().fillet_radius, 2.0);
     host.retract();
     assert_eq!(host.entities.len(), 2, "the fillet undoes as one step");
+}
+
+#[test]
+fn fillet_rounds_a_corner_of_a_rectangle() {
+    let rectangle = polyline_from(&[pt(0.0, 0.0), pt(20.0, 0.0), pt(20.0, 10.0), pt(0.0, 10.0)], true);
+    let mut host = FakeHost::with(vec![rectangle.clone()]);
+    let mut session = start("FILLET", &mut host, vec![]);
+    typed(&mut session, &mut host, &["r", "2"]);
+    session.submit_pick(rectangle.clone(), pt(0.0, 5.0), false, &mut host);
+    session.submit_pick(rectangle, pt(10.0, 0.0), false, &mut host);
+    assert!(!session.active());
+    let Shape::Polyline { vertices, closed: true } = &host.shapes()[0] else { panic!("{:?}", host.shapes()) };
+    assert_eq!(vertices.len(), 5, "the corner became two tangent points");
+    assert!(vertices[0].point().dist(pt(0.0, 2.0)) < 1e-9 && vertices[1].point().dist(pt(2.0, 0.0)) < 1e-9);
+    assert!((vertices[0].bulge - (std::f64::consts::PI / 8.0).tan()).abs() < 1e-9, "a quarter turn counter-clockwise");
+}
+
+#[test]
+fn fillet_polyline_option_rounds_every_corner() {
+    let rectangle = polyline_from(&[pt(0.0, 0.0), pt(20.0, 0.0), pt(20.0, 10.0), pt(0.0, 10.0)], true);
+    let mut host = FakeHost::with(vec![rectangle.clone()]);
+    let mut session = start("FILLET", &mut host, vec![]);
+    typed(&mut session, &mut host, &["r", "3", "p"]);
+    session.submit_pick(rectangle, pt(10.0, 0.0), false, &mut host);
+    assert!(!session.active());
+    let Shape::Polyline { vertices, .. } = &host.shapes()[0] else { panic!() };
+    assert_eq!(vertices.len(), 8);
+    assert_eq!(host.reports, vec!["4 lines were filleted"]);
 }
 
 #[test]
