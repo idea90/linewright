@@ -1,6 +1,6 @@
 use super::entities::{Entity, Shape, arc};
 use super::geometry::{Point, modulo};
-use crate::snap::intersect::line_line_meeting;
+use crate::model::intersect::line_line_meeting;
 
 const EPSILON: f64 = 1e-9;
 

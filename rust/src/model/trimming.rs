@@ -1,7 +1,7 @@
 use super::entities::{Entity, Shape, vertex};
 use super::geometry::{Point, modulo, sweep_degrees};
-use crate::snap::intersect::intersections;
-use crate::snap::primitives::{Primitive, distance_to, lerp, line_parameter, primitives, seg};
+use crate::model::intersect::intersections;
+use crate::model::primitives::{Primitive, distance_to, lerp, line_parameter, primitives, seg};
 
 const PARAMETER_EPSILON: f64 = 1e-9; // in the units of the parameter: fractions of a line, or degrees
 const DISTANCE_EPSILON: f64 = 1e-9;

@@ -363,6 +363,37 @@ pub struct AttributeInfo {
     pub invisible: bool,
 }
 
+/// An attribute definition as a block keeps it: the tag its text shows, the default value as its text.
+pub fn attribute_of(entity: &Entity) -> Option<Attribute> {
+    let info = entity.attribute.as_ref()?;
+    let Shape::Text { text, .. } = &entity.shape else { return None };
+    let mut shape = entity.shape.clone();
+    if let Shape::Text { text: value, .. } = &mut shape {
+        *value = info.default.clone();
+    }
+    Some(Attribute {
+        tag: text.trim().to_uppercase(),
+        prompt: info.prompt.clone(),
+        layer: entity.layer.clone(),
+        color: entity.color,
+        text: shape,
+        invisible: info.invisible,
+    })
+}
+
+/// A block's attribute as an attribute definition to edit: text showing its tag.
+pub fn definition_of(attribute: &Attribute) -> Entity {
+    let mut shape = attribute.text.clone();
+    let default = match &mut shape {
+        Shape::Text { text, .. } => std::mem::replace(text, attribute.tag.clone()),
+        _ => String::new(),
+    };
+    let mut entity = Entity::new(shape);
+    (entity.layer, entity.color) = (attribute.layer.clone(), attribute.color);
+    entity.attribute = Some(AttributeInfo { prompt: attribute.prompt.clone(), default, invisible: attribute.invisible });
+    entity
+}
+
 impl Entity {
     /// A brand-new object on layer 0, by layer.
     pub fn new(shape: Shape) -> Entity {

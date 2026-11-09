@@ -591,7 +591,7 @@ impl Document {
         }
         // Its attributes open as attribute definitions, showing their tags.
         let mut opened = block.0.entities.clone();
-        opened.extend(block.0.attribute_defs.iter().map(crate::commands::blocks::definition_of));
+        opened.extend(block.0.attribute_defs.iter().map(super::entities::definition_of));
         let store = std::mem::replace(&mut self.store, EntityStore::with(opened));
         self.block_edit = Some(BlockEdit { block, store, layout: self.active_layout });
         self.active_layout = None;
@@ -607,7 +607,7 @@ impl Document {
             return None;
         }
         let (definitions, entities): (Vec<Entity>, Vec<Entity>) = entities.into_iter().partition(|e| e.attribute.is_some());
-        let attribute_defs = definitions.iter().filter_map(crate::commands::blocks::attribute_of).collect();
+        let attribute_defs = definitions.iter().filter_map(super::entities::attribute_of).collect();
         let block = BlockRef(std::sync::Arc::new(BlockDef { entities, attribute_defs, ..(*edit.block.0).clone() }));
         self.blocks.insert(block.0.name.to_uppercase(), block.clone());
         self.replace_block(block.clone());

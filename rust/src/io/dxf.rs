@@ -21,6 +21,7 @@ use crate::model::geometry::{Point, bulge_arc, direction, pt, sweep_degrees};
 use crate::model::index::{Bounds, entity_extent};
 use crate::model::lineweight;
 use crate::model::mline::{Justification, MlineElement, MlineGap, MlineStyle, dedup, element_distances, miters};
+use crate::model::mtext::decode_percent_codes;
 use crate::model::multileader::MleaderStyle;
 use crate::model::parts::{BYBLOCK_LINETYPE, TextSpec, clamped_knots, ellipse_point, entity_parts, spline_points};
 use crate::model::styles::{BYLAYER_LINETYPE, canonical_linetype};
@@ -256,42 +257,6 @@ fn decode_escapes(text: &str) -> String {
             out.push('\\');
             rest = &tail[1..];
         }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// AutoCAD's special codes in text: %%c diameter, %%d degree, %%p plus/minus, %%nnn a character by number. The
-/// underline and overline switches (%%u, %%o) are dropped.
-pub fn decode_percent_codes(text: &str) -> String {
-    if !text.contains("%%") {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find("%%") {
-        out.push_str(&rest[..at]);
-        let tail = &rest[at + 2..];
-        let mut next = tail.chars();
-        match next.next().map(|c| c.to_ascii_lowercase()) {
-            Some('c') => out.push('⌀'),
-            Some('d') => out.push('°'),
-            Some('p') => out.push('±'),
-            Some('%') => out.push('%'),
-            Some('u' | 'o' | 'k') => {}
-            Some(d) if d.is_ascii_digit() => {
-                let digits: String = tail.chars().take_while(char::is_ascii_digit).take(3).collect();
-                out.extend(digits.parse::<u32>().ok().and_then(char::from_u32));
-                rest = &tail[digits.len()..];
-                continue;
-            }
-            _ => {
-                out.push_str("%%");
-                rest = tail;
-                continue;
-            }
-        }
-        rest = &tail[1..];
     }
     out.push_str(rest);
     out

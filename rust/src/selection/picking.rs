@@ -1,8 +1,8 @@
 use crate::model::entities::{Entity, Shape};
 use crate::model::geometry::{Point, pt};
+use crate::model::intersect::intersections;
 use crate::model::parts::flatten;
-use crate::snap::intersect::intersections;
-use crate::snap::primitives::{Primitive, arc_point, distance_to, on_arc, primitives, seg};
+use crate::model::primitives::{Primitive, arc_point, distance_to, on_arc, primitives, seg};
 
 const TEXT_WIDTH_PER_HEIGHT: f64 = 0.6; // rough average glyph advance; the real width depends on the font
 

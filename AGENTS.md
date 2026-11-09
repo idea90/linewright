@@ -79,6 +79,7 @@ rust/                the app (Cargo crate "linewright")
 | `model/editing.rs` | Geometry behind editing: explode, stretch, grips, join, closed loops |
 | `model/transform.rs` | Move/rotate/scale/mirror of shapes (`Similarity`) |
 | `model/trimming.rs`, `fillet.rs`, `offset.rs` | TRIM/EXTEND/BREAK, FILLET/CHAMFER, OFFSET geometry |
+| `model/primitives.rs`, `intersect.rs` | Each entity as lines, arcs and circles (`Primitive`), and where they cross: used by snaps, TRIM, OFFSET and FILLET |
 | `model/boundary.rs` | Finding the closed area around a clicked point (HATCH and BOUNDARY) |
 | `model/overkill.rs` | OVERKILL's duplicate and overlap clean-up |
 | `model/mline.rs` | Multiline styles and the geometry of multilines |
@@ -108,7 +109,7 @@ rust/                the app (Cargo crate "linewright")
 | `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor |
 | `canvas/plot.rs`, `pdf.rs` | Plotting to a PDF page at a scale |
 | `canvas/view.rs`, `aci.rs`, `shapes.rs` | Camera, AutoCAD color index palette, colors parts draw in |
-| **`snap/`** | Object snaps (`osnap.rs`), the snap geometry of each entity (`primitives.rs`), intersections, tracking, drafting aids |
+| **`snap/`** | Object snaps (`osnap.rs`), tracking and drafting aids, built on `model/primitives.rs` and `model/intersect.rs` |
 | **`selection/`** | The selection and what an entity looks like to the mouse |
 | **`ui/`** | **The window** |
 | `ui/app.rs` | The main window, its state, each frame, and the actions buttons and keys trigger |
@@ -138,7 +139,7 @@ rust/                the app (Cargo crate "linewright")
 Add a variant to `Shape` in `model/entities.rs`, then let the compiler's non-exhaustive match errors guide you.
 Places that usually need it, beyond those errors: `Shape::kind`, `index::entity_extent`, `parts::entity_parts`
 (and `flatten_into` if parts have their own colors), `transform::transform_shape`, `editing.rs` (stretch, grip
-points, grip moves, explode, `closed_loop`), `snap/primitives.rs`, `properties.rs` (rows and setters),
+points, grip moves, explode, `closed_loop`), `model/primitives.rs`, `properties.rs` (rows and setters),
 `commands/inquiry.rs` (LIST), and `io/dxf.rs` (reading in the entity match, writing in `Writer::entity`, with an
 R12 fallback, plus any CLASS or OBJECTS entries AutoCAD needs). Add a DXF round-trip test in `io/dxf/tests.rs`.
 
