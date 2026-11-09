@@ -94,6 +94,7 @@ rust/                the app (Cargo crate "linewright")
 | `commands/edit.rs`, `modify.rs`, `reshape.rs` | Editing commands (MOVE, COPY, TRIM, FILLET, ARRAY, JOIN, OVERKILL, LENGTHEN, PEDIT…) |
 | `commands/dimension.rs`, `qdim.rs` | Dimension and leader commands |
 | `commands/blocks.rs`, `groups.rs`, `layer_tools.rs`, `layout.rs` | Blocks and clipboard, groups, LAY* tools, layouts and viewports |
+| `commands/settings.rs` | Commands that change the program's own settings (SAVETIME); `ui/settings.rs` keeps them in the settings file |
 | `commands/inquiry.rs`, `measuring.rs` | LIST, ID, ZOOM, text edit, grip dragging; DISTANCE and AREA |
 | `commands/parse.rs` | Parsing typed numbers, lengths and points |
 | `commands/tests.rs` | Commands run start to finish against a `FakeHost` |

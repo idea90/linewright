@@ -3,6 +3,19 @@ use crate::model::document::ObjectGroup;
 use crate::model::entities::{BlockRef, Entity};
 use crate::model::index::Bounds;
 
+/// How many minutes pass between autosaves when nothing has been set.
+pub const DEFAULT_SAVETIME: u32 = 10;
+/// The longest autosave interval SAVETIME takes, in minutes. Zero turns autosave off.
+pub const MAX_SAVETIME: u32 = 600;
+
+/// How LENGTHEN changes what it is given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Lengthen {
+    Delta(f64),
+    Percent(f64),
+    Total(f64),
+}
+
 /// What commands remember from one use to the next, and what the drawing offers them.
 #[derive(Clone, Debug)]
 pub struct Defaults {
@@ -18,7 +31,7 @@ pub struct Defaults {
     /// The chord of each revision cloud arc, once REVCLOUD has one.
     pub cloud_arc: Option<f64>,
     /// How LENGTHEN last changed lengths.
-    pub lengthen: crate::commands::reshape::Lengthen,
+    pub lengthen: Lengthen,
     /// How MLINE draws: which line runs along the points, how far apart the lines are, and in which style.
     pub mline_justification: crate::model::mline::Justification,
     pub mline_scale: f64,
@@ -83,7 +96,7 @@ impl Default for Defaults {
             cloud_arc: None,
             image: None,
             table_cell: None,
-            lengthen: crate::commands::reshape::Lengthen::Total(1.0),
+            lengthen: Lengthen::Total(1.0),
             overkill: crate::model::overkill::OverkillSettings::default(),
             mline_justification: crate::model::mline::Justification::Top,
             mline_scale: 20.0,
@@ -116,7 +129,7 @@ impl Default for Defaults {
             clipboard: vec![],
             clipboard_base: Default::default(),
             last_erased: vec![],
-            autosave_minutes: crate::ui::settings::DEFAULT_SAVETIME,
+            autosave_minutes: DEFAULT_SAVETIME,
             autosave_request: None,
         }
     }
