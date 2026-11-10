@@ -42,7 +42,9 @@ Notes:
   and `target/` stays small. `target/` can still grow to many GB; `cargo clean` is safe.
 - `LINEWRIGHT_CAPTURE=out.png` (debug builds) saves a screenshot of the window, useful for checking the UI.
 - `.mcp.json` registers `linewright --mcp` with Claude Code: its `command` and `render` tools let you draw in the real
-  app and look at the result, a quick way to check a change to a command or to drawing.
+  app and look at the result, a quick way to check a change to a command or to drawing. It runs no window. It starts
+  with `cargo run --release`, so the first start compiles for a few minutes; `.claude/settings.json` raises
+  `MCP_TIMEOUT` to 10 minutes so the connection waits for it. After changing the code, reconnect it with `/mcp`.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
 
 ## Releasing

@@ -555,6 +555,23 @@ fn polygon_by_center_and_by_edge() {
 }
 
 #[test]
+fn polygon_radius_typed_as_a_number_levels_the_bottom_edge() {
+    let mut host = FakeHost::default();
+    let mut session = start("POLYGON", &mut host, vec![]);
+    typed(&mut session, &mut host, &["6", "0,0", "I", "10"]);
+    let Some(Shape::Polyline { vertices, closed: true }) = host.shapes().pop() else { panic!("no polygon") };
+    assert!(vertices.iter().all(|v| (v.point().dist(pt(0.0, 0.0)) - 10.0).abs() < 1e-9), "corners on the circle");
+    let lowest = vertices.iter().map(|v| v.y).fold(f64::INFINITY, f64::min);
+    let on_bottom = vertices.iter().filter(|v| (v.y - lowest).abs() < 1e-9).count();
+    assert_eq!(on_bottom, 2, "a level bottom edge");
+    let mut session = start("POLYGON", &mut host, vec![]);
+    typed(&mut session, &mut host, &["4", "0,0", "C", "10"]);
+    let Some(Shape::Polyline { vertices, .. }) = host.shapes().pop() else { panic!("no polygon") };
+    let corners: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
+    assert!(corners.iter().any(|c| c.dist(pt(-10.0, -10.0)) < 1e-9), "a square around the circle: {corners:?}");
+}
+
+#[test]
 fn mtext_hangs_its_lines_from_the_top_left_corner() {
     let mut host = FakeHost::default();
     let mut session = start("MTEXT", &mut host, vec![]);

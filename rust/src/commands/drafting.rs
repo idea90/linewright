@@ -54,10 +54,19 @@ pub async fn polygon_command(io: Io) {
                 .default(Answer::keyword(INSCRIBED));
             let inscribed = !matches!(io.ask(prompt).await, Some(answer) if answer.is(CIRCUMSCRIBED));
             let shape = move |cursor: Point| polygon(center, first_corner(center, cursor, sides, inscribed), sides);
-            let prompt = Prompt::point("Specify radius of circle:").base(center).preview(move |cursor| vec![shape(cursor)]);
-            if let Some(Answer::Point(cursor)) = io.ask(prompt).await
-                && cursor != center
-            {
+            let prompt = Prompt::point("Specify radius of circle:").base(center).or_length().preview(move |cursor| vec![shape(cursor)]);
+            // A typed radius, as in AutoCAD, sets the bottom edge level: the cursor stands for its middle when
+            // circumscribed, or its left corner when inscribed.
+            let cursor = match io.ask(prompt).await {
+                Some(Answer::Point(cursor)) => cursor,
+                Some(Answer::Number(radius)) if inscribed => {
+                    let angle = -0.5 * PI - PI / sides as f64;
+                    center + pt(angle.cos(), angle.sin()) * radius
+                }
+                Some(Answer::Number(radius)) => center + pt(0.0, -radius),
+                _ => return,
+            };
+            if cursor != center {
                 io.step(Step::Drawn(vec![polygon(center, first_corner(center, cursor, sides, inscribed), sides)]));
             }
         }

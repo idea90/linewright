@@ -63,6 +63,8 @@ pub struct Prompt {
     pub region: bool,
     /// On a point prompt, the point is answered with the table it falls inside, as a pick.
     pub table: bool,
+    /// On a point prompt, a number typed on its own is a length, answered as a number, rather than refused.
+    pub or_length: bool,
 }
 
 impl fmt::Debug for Prompt {
@@ -84,6 +86,7 @@ impl Prompt {
             or_all: false,
             region: false,
             table: false,
+            or_length: false,
         }
     }
 
@@ -128,6 +131,11 @@ impl Prompt {
 
     pub fn region(mut self) -> Prompt {
         self.region = true;
+        self
+    }
+
+    pub fn or_length(mut self) -> Prompt {
+        self.or_length = true;
         self
     }
 }
@@ -424,6 +432,7 @@ impl Session {
             return Some(Answer::Keyword(upper));
         }
         match prompt.kind {
+            PromptKind::Point if prompt.or_length && parse_number(text).is_some() => parse_number(text).map(Answer::Number),
             PromptKind::Point => parse_point(text, prompt.base).map(Answer::Point),
             PromptKind::Number => parse_number(text).map(Answer::Number),
             PromptKind::Length => parse_length(text).map(Answer::Number),
