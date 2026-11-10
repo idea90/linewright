@@ -691,6 +691,12 @@ impl Controller {
         }
     }
 
+    /// The selected objects where they are in the drawing, in the order they were selected: for looking at them
+    /// without copying each one, which matters when a great many are selected.
+    pub fn selected_in_place(&self) -> impl Iterator<Item = &Entity> {
+        self.selection.ids().iter().filter_map(|id| self.drawing.document.get(*id))
+    }
+
     /// The selected objects as they are now, in the order they were selected.
     pub fn selected(&self) -> Vec<Entity> {
         self.selection.ids().iter().filter_map(|id| self.drawing.document.get(*id).cloned()).collect()

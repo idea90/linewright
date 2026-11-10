@@ -57,6 +57,9 @@ pub struct EntityStore {
     /// A number no other state of any store has had, new whenever anything in this one changes: what was worked out
     /// from the entities, such as their picture on screen, holds for as long as it stays the same.
     revision: u64,
+    /// The box around everything, as last worked out, with the revision it was worked out for: commands ask for it
+    /// as they start, and going through every entity each time is slow in a large drawing.
+    extent: std::sync::Mutex<Option<(u64, Option<Bounds>)>>,
 }
 
 /// The next number for a store that has just changed.
@@ -119,11 +122,20 @@ impl EntityStore {
 
     /// The box around everything in the space, on any layer.
     pub fn extent(&self) -> Option<Bounds> {
-        self.entities
+        let mut kept = self.extent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((revision, extent)) = *kept
+            && revision == self.revision
+        {
+            return extent;
+        }
+        let extent = self
+            .entities
             .iter()
             .filter(|e| !matches!(e.shape, Shape::XLine { .. }))
             .filter_map(|e| self.index.bounds_of(e.id))
-            .reduce(Bounds::union)
+            .reduce(Bounds::union);
+        *kept = Some((self.revision, extent));
+        extent
     }
 }
 
@@ -871,6 +883,10 @@ impl Document {
     /// The box around everything visible, or None for an empty drawing.
     /// Construction lines have no end, so they are left out.
     pub fn extent(&self) -> Option<Bounds> {
+        // With every layer on, everything is visible, and the store keeps that box from one asking to the next.
+        if self.layers.iter().all(Layer::shown) {
+            return self.store.extent();
+        }
         self.store
             .entities
             .iter()

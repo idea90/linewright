@@ -88,8 +88,14 @@ const STANDARD_LINETYPES: [(&str, &str, &[f64]); 6] = [
 ];
 
 fn number(value: f64) -> String {
-    let text = format!("{value}");
-    if text.contains(['.', 'e', 'E']) || text.contains("inf") || text.contains("NaN") { text } else { format!("{text}.0") }
+    use std::fmt::Write as _;
+    // Room for any number and the ".0" a whole one gets, so the text is made once.
+    let mut text = String::with_capacity(24);
+    let _ = write!(text, "{value}");
+    if value.is_finite() && !text.contains(['.', 'e', 'E']) {
+        text.push_str(".0");
+    }
+    text
 }
 
 fn point_pairs(x_code: i32, p: Point) -> [Pair; 3] {
@@ -416,7 +422,8 @@ struct Reader<'a> {
     styles: DimensionStyles,
     /// Each block definition by upper-case name: its groups (BLOCK to ENDBLK) and name as written.
     definitions: HashMap<String, (usize, usize)>,
-    built: std::cell::RefCell<HashMap<String, Option<BlockRef>>>,
+    /// The blocks read so far. A lock, not a cell, so that entities can be read on several threads at once.
+    built: std::sync::RwLock<HashMap<String, Option<BlockRef>>>,
 }
 
 impl<'a> Reader<'a> {
@@ -458,11 +465,12 @@ impl<'a> Reader<'a> {
     /// for the inner copy rather than going round for ever.
     fn block(&self, name: &str) -> Option<BlockRef> {
         let key = name.trim().to_uppercase();
-        if let Some(found) = self.built.borrow().get(&key) {
-            return found.clone();
+        let found = self.built.read().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&key).cloned();
+        if let Some(found) = found {
+            return found;
         }
         let &(start, finish) = self.definitions.get(&key)?;
-        self.built.borrow_mut().insert(key.clone(), None);
+        self.built.write().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(key.clone(), None);
         let header = &self.file.groups[start];
         let base = header.point(10).unwrap_or_default();
         let body = &self.file.groups[start + 1..finish];
@@ -486,8 +494,19 @@ impl<'a> Reader<'a> {
         // An external reference keeps its drawing's path; what it shows is read from there once the file is open.
         let xref = (header.int(70).unwrap_or(0) & BLOCK_XREF != 0).then(|| header.text(1).unwrap_or_default().trim().to_string());
         let block = BlockRef(std::sync::Arc::new(BlockDef { name, base, entities, attribute_defs, xref }));
-        self.built.borrow_mut().insert(key, Some(block.clone()));
+        self.built.write().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(key, Some(block.clone()));
         Some(block)
+    }
+
+    /// Read every block the file defines now. While one is being read it counts as empty, which is how a block
+    /// that holds itself stops; with them all read first, entities read on several threads never meet one half
+    /// read.
+    fn read_every_block(&self) {
+        let mut names: Vec<&String> = self.definitions.keys().collect();
+        names.sort();
+        for name in names {
+            self.block(name);
+        }
     }
 
     fn entity(&self, run: &[Group], in_block: bool) -> Option<Entity> {
@@ -1212,6 +1231,13 @@ pub fn layer_name_as_defined(layers: &[Layer], name: &str) -> String {
     layers.iter().find(|l| l.name.eq_ignore_ascii_case(name)).map_or(name.to_string(), |l| l.name.clone())
 }
 
+/// The entity each handle in the file names, by the handle in upper case. Every entity is noted here as it is read,
+/// so it hashes with the quick hasher.
+type HandleMap = HashMap<String, EntityId, crate::model::entities::IdBuildHasher>;
+
+/// Fewer entities than this are read on the one thread; more are shared among several.
+const ENTITIES_PER_THREAD: usize = 5000;
+
 /// The first code of extended data: what programs attach to an object for themselves, after everything else it has.
 const FIRST_XDATA_CODE: i32 = 1000;
 /// Each program's extended data starts with its name under this code.
@@ -1288,20 +1314,39 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
         document.mleader_styles = mleader_styles;
     }
     let mut entities = vec![];
-    let mut handles: HashMap<String, EntityId> = HashMap::new();
+    let mut handles: HandleMap = HandleMap::default();
     let mut hatch_links: Vec<(EntityId, Vec<String>)> = vec![];
-    let mut taken: HashSet<usize> = HashSet::new();
+    let mut taken: HashSet<usize, crate::model::entities::IdBuildHasher> = HashSet::default();
     let mut stale_blocks: Vec<String> = vec![];
     if let Some((start, end)) = file.section("ENTITIES") {
         let body = &file.groups[start + 1..end];
-        for (first, last) in entity_runs(body) {
+        let runs = entity_runs(body);
+        // Reading each entity is most of opening a large drawing, and each is read on its own: shared among threads.
+        // What follows from each (layers it names, handles, what is kept) is then noted in the file's order.
+        if crate::threads::threads_for(runs.len(), ENTITIES_PER_THREAD) > 1 {
+            reader.read_every_block();
+        }
+        let in_paper_space = |run: &[Group]| run[0].int(67) == Some(1);
+        let mut read = crate::threads::map_runs(&runs, ENTITIES_PER_THREAD, |_, some| {
+            let entity = |&(first, last): &(usize, usize)| {
+                let run = &body[first..last];
+                if in_paper_space(run) { None } else { reader.entity(run, false) }
+            };
+            some.iter().map(entity).collect()
+        })
+        .into_iter();
+        for (first, last) in runs {
             let run = &body[first..last];
-            if run[0].int(67) == Some(1) {
+            let entity = read.next().flatten();
+            if in_paper_space(run) {
                 continue; // paper space, read with its layout
             }
-            match reader.entity(run, false) {
+            match entity {
                 Some(mut entity) => {
-                    entity.layer = defined_layer(&mut document.layers, &entity.layer);
+                    // Nearly always the layer is defined under this very name, which is quick to see.
+                    if !document.layers.iter().any(|l| l.name == entity.layer) {
+                        entity.layer = defined_layer(&mut document.layers, &entity.layer);
+                    }
                     if let Some(handle) = run[0].handle() {
                         handles.insert(handle.trim().to_uppercase(), entity.id);
                     }
@@ -1360,7 +1405,10 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                 }
                 match reader.entity(run, false) {
                     Some(mut entity) => {
-                        entity.layer = defined_layer(&mut document.layers, &entity.layer);
+                        // Nearly always the layer is defined under this very name, which is quick to see.
+                        if !document.layers.iter().any(|l| l.name == entity.layer) {
+                            entity.layer = defined_layer(&mut document.layers, &entity.layer);
+                        }
                         if let Some(handle) = run[0].handle() {
                             handles.insert(handle.trim().to_uppercase(), entity.id);
                         }
@@ -1402,11 +1450,17 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
         groups.iter().filter_map(|(at, _)| file.groups[*at].handle().map(|h| h.trim().to_uppercase())).collect();
     taken.extend(groups.iter().map(|(at, _)| *at));
     document.groups = groups.into_iter().map(|(_, group)| group).collect();
-    let mut index = 0;
-    file.groups.retain(|_| {
-        index += 1;
-        !taken.contains(&(index - 1))
-    });
+    let all = std::mem::take(&mut file.groups);
+    let mut read = Vec::with_capacity(taken.len());
+    file.groups = Vec::with_capacity(all.len() - taken.len().min(all.len()));
+    for (index, group) in all.into_iter().enumerate() {
+        if taken.contains(&index) { read.push(group) } else { file.groups.push(group) }
+    }
+    // Letting go of the groups of a large drawing's entities, a little memory at a time, takes a while: it is
+    // done aside, so the drawing opens meanwhile.
+    if read.len() > ENTITIES_PER_THREAD {
+        std::thread::spawn(move || drop(read));
+    }
     for name in stale_blocks {
         remove_block(&mut file, &name);
     }
@@ -3596,7 +3650,7 @@ fn group_dictionary(file: &DxfFile) -> Option<usize> {
 
 /// The file's groups whose members are all objects read into the drawing, with where each GROUP object sits.
 /// Groups holding something left as it is in the file stay there untouched.
-fn read_groups(file: &DxfFile, handles: &HashMap<String, EntityId>) -> Vec<(usize, ObjectGroup)> {
+fn read_groups(file: &DxfFile, handles: &HandleMap) -> Vec<(usize, ObjectGroup)> {
     let Some(dictionary) = group_dictionary(file) else { return vec![] };
     let pairs = &file.groups[dictionary].0;
     let entries: Vec<(String, String)> = pairs

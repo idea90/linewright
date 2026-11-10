@@ -12,7 +12,7 @@ use std::time::Instant;
 use eframe::egui::{self, Rect, pos2, vec2};
 use linewright::canvas::render::{self, Overlay, Screen};
 use linewright::canvas::view::Camera;
-use linewright::io::dxf::dxf_from_document;
+use linewright::io::dxf::{DxfFile, document_from_dxf, dxf_from_document};
 use linewright::io::files::open_drawing;
 use linewright::model::geometry::pt;
 use linewright::ui::controller::Controller;
@@ -66,6 +66,11 @@ fn speed_of_a_large_drawing() {
         println!("Set LINEWRIGHT_SPEED to a large DXF file.");
         return;
     };
+    if path.extension().is_some_and(|suffix| suffix.eq_ignore_ascii_case("dxf")) {
+        let bytes = timed("  read the file's bytes", 1, || std::fs::read(&path).expect("the file reads"));
+        let mut file = Some(timed("  split them into groups", 1, || DxfFile::parse(&bytes).expect("the file is a DXF")));
+        timed("  make the drawing from the groups", 1, || document_from_dxf(file.take().expect("parsed once")));
+    }
     let mut opened = Some(timed("open the file", 1, || open_drawing(&path).expect("the drawing opens")));
     println!("{:>12}  objects", opened.as_ref().map_or(0, |document| document.len()));
     let mut controller = Controller::new();

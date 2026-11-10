@@ -17,6 +17,8 @@ const CELLS_ACROSS: f64 = 24.0; // how many cells the middle of a drawing is spl
 const OUTLIER_FRACTION: f64 = 0.01;
 const MIN_CELL_SIZE: f64 = 1e-6;
 const MAX_CELLS_PER_ENTITY: i64 = 64;
+/// Fewer entities than this are measured on the one thread; more are shared among several.
+const ENTITIES_PER_THREAD: usize = 10_000;
 pub const TEXT_DESCENT: f64 = 0.3; // of the text height, below the baseline
 
 /// A generous box around text. The real width depends on the font, so each character gets a full height.
@@ -168,7 +170,11 @@ impl SpatialIndex {
     }
 
     pub fn reload<'a>(&mut self, entities: impl IntoIterator<Item = &'a Entity>) {
-        let measured: Vec<(EntityId, Bounds)> = entities.into_iter().map(|e| (e.id, entity_extent(e).finite())).collect();
+        // Measuring each entity is most of the work, and each is measured on its own: shared among threads.
+        let entities: Vec<&Entity> = entities.into_iter().collect();
+        let measured: Vec<(EntityId, Bounds)> = crate::threads::map_runs(&entities, ENTITIES_PER_THREAD, |_, run| {
+            run.iter().map(|e| (e.id, entity_extent(e).finite())).collect()
+        });
         *self = SpatialIndex::default();
         self.cell_size = Self::cell_size_for(&measured);
         for (id, bounds) in measured {
@@ -188,10 +194,17 @@ impl SpatialIndex {
 
     /// Pick up changes made to an entity in place. It keeps its place in the drawing order.
     pub fn refresh(&mut self, entity: &Entity) {
+        let bounds = entity_extent(entity).finite();
+        let cells = self.cells_for(&bounds);
+        let Some(record) = self.records.get_mut(&entity.id) else { return };
+        record.bounds = bounds;
+        // A small move or change leaves an entity in the cells it was filed in: then nothing is filed again.
+        if record.cells == cells {
+            return;
+        }
         let Some(mut record) = self.records.remove(&entity.id) else { return };
         self.unfile(entity.id, &record);
-        record.bounds = entity_extent(entity).finite();
-        record.cells = self.cells_for(&record.bounds);
+        record.cells = cells;
         self.place(entity.id, &record);
         self.records.insert(entity.id, record);
     }
