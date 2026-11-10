@@ -14,7 +14,7 @@ behave, do what AutoCAD does.
 - It was first written in Python with Qt (PySide6 + ezdxf). That version was removed after 1.0 Alpha 3 and lives
   only in the git history (tag `v1.0.0-alpha.3` and earlier).
 - License: MIT. Releases are published on GitHub (`idea90/linewright`) as pre-releases with Linux and Windows
-  binaries; the current version is `1.0.0-alpha.6`.
+  binaries; the current version is `1.0.0-alpha.6.1`.
 
 `rust/README.md` lists every command and feature. Keep it up to date when adding user-facing behaviour.
 
@@ -42,8 +42,15 @@ Notes:
   and `target/` stays small. `target/` can still grow to many GB; `cargo clean` is safe.
 - `LINEWRIGHT_CAPTURE=out.png` (debug builds) saves a screenshot of the window, useful for checking the UI.
 - `.mcp.json` registers `linewright --mcp` with Claude Code: its `command` and `render` tools let you draw in the real
-  app and look at the result, a quick way to check a change to a command or to drawing.
+  app and look at the result, a quick way to check a change to a command or to drawing. It runs no window. It starts
+  with `cargo run --release`, so the first start compiles for a few minutes; `.claude/settings.json` raises
+  `MCP_TIMEOUT` to 10 minutes so the connection waits for it. After changing the code, reconnect it with `/mcp`.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
+- `LINEWRIGHT_NO_GPU=1` keeps the canvas's pictures off the graphics card (everything is then drawn through egui), for
+  a driver that draws them wrong, and for comparing the two ways of drawing.
+- `tests/speed.rs` times what a person waits on in a large drawing (opening, a frame, a mouse move, selecting,
+  editing, undo, saving). Run it before and after a change that may cost or save time:
+  `LINEWRIGHT_SPEED=big.dxf cargo test --release --test speed -- --ignored --nocapture`.
 
 ## Releasing
 
@@ -71,6 +78,7 @@ rust/                the app (Cargo crate "linewright")
 | `main.rs`, `lib.rs` | Entry point (opens a file given on the command line, or `--mcp` serves MCP) and the module list |
 | `mcp.rs` | The MCP server for AI agents: tools that type at the command line through `ui::controller::Controller`, render PNGs and open and save |
 | `fonts.rs` | Fonts for text in any script: the drawing's fonts, system fallbacks, legacy code pages |
+| `threads.rs` | Sharing work over many items among the processors (`map_runs`): the canvas's picture, reading a file |
 | `shx.rs` | AutoCAD SHX stroke fonts (romans, simplex, txt…), read from AutoCAD's font folders |
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
 | `model/entities.rs` | `Entity` (id, layer, color, linetype, lineweight, shape) and the `Shape` enum: every kind of object |
@@ -110,7 +118,8 @@ rust/                the app (Cargo crate "linewright")
 | `io/ctb.rs`, `pat.rs` | Plot style tables (.ctb) and hatch pattern files (.pat) |
 | `io/template.dxf` | The drawing a new document is saved from |
 | **`canvas/`** | **Showing and printing** |
-| `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor |
+| `canvas/render.rs` | Drawing the canvas with egui: entities, selection, rubber band, cursor. The drawing's picture is kept between frames (`picture`) and made anew only when the drawing, its layers or the view change |
+| `canvas/gpu.rs` | A large picture's triangles kept on the graphics card and drawn from there by an egui paint callback, moved and scaled while the view is panned or zoomed |
 | `canvas/plot.rs`, `pdf.rs` | Plotting at a scale onto a `Page`: a PDF page, or `raster.rs`'s PNG picture |
 | `canvas/view.rs`, `aci.rs`, `shapes.rs` | Camera, AutoCAD color index palette, colors parts draw in |
 | **`snap/`** | Object snaps (`osnap.rs`), tracking and drafting aids, built on `model/primitives.rs` and `model/intersect.rs` |
@@ -155,6 +164,9 @@ R12 fallback, plus any CLASS or OBJECTS entries AutoCAD needs). Add a DXF round-
 - Names follow AutoCAD's vocabulary (entity, block, insert, layer, linetype, ByLayer, model space, layout).
 - User-facing messages copy AutoCAD's wording where AutoCAD has a message for the same thing.
 - Keep geometry pure and testable in `model/`; commands in `commands/` only ask and step.
+- Large drawings must stay quick. Nothing that runs on every frame, mouse move or small edit may go through every
+  object of the drawing: look objects up by id or by area (`Document::get`, `ids_in`), and keep what is costly to
+  work out until `Document::revision` changes. Maps and sets keyed by object id use `IdMap` and `IdSet`.
 - DXF: Never drop data the program doesn't understand. Unknown entities and objects must survive a save.
 - Lines are at most 140 characters (`rustfmt.toml`); run `cargo fmt`.
 - Don't commit `dist/` or `target/`. Commit messages are short and descriptive.

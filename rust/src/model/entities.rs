@@ -13,6 +13,53 @@ pub const DEFAULT_LAYER: &str = "0";
 /// the drawing order and anything else that refers to it stays valid.
 pub type EntityId = u64;
 
+/// Hashes object ids and other whole numbers in a few instructions. Ids are handed out in order by the program
+/// itself, so they need none of the default hasher's guard against keys chosen to collide, which costs many times
+/// more on every look-up; the drawing looks objects up by id for everything it does.
+#[derive(Clone, Copy, Default)]
+pub struct IdHasher(u64);
+
+impl IdHasher {
+    /// An odd number with its bits well mixed, so each bit of a key reaches the high bits of the hash.
+    const MIX: u64 = 0x517c_c1b7_2722_0a95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::MIX);
+    }
+}
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u64(&mut self, word: u64) {
+        self.add(word);
+    }
+
+    fn write_i64(&mut self, word: i64) {
+        self.add(word as u64);
+    }
+
+    fn write_usize(&mut self, word: usize) {
+        self.add(word as u64);
+    }
+}
+
+pub type IdBuildHasher = std::hash::BuildHasherDefault<IdHasher>;
+/// A map keyed by object id (or another whole number), with the fast hasher.
+pub type IdMap<K, V> = std::collections::HashMap<K, V, IdBuildHasher>;
+/// A set of object ids, with the fast hasher.
+pub type IdSet = std::collections::HashSet<EntityId, IdBuildHasher>;
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn fresh_id() -> EntityId {

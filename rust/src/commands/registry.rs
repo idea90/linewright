@@ -177,8 +177,6 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("DAN", "DIMANGULAR"),
     ("LE", "QLEADER"),
     ("LEAD", "LEADER"),
-    ("MLEADER", "QLEADER"),
-    ("MLD", "QLEADER"),
     ("D", "DIMSTYLE"),
     ("DST", "DIMSTYLE"),
     ("DDIM", "DIMSTYLE"),
@@ -449,6 +447,17 @@ mod tests {
         assert_eq!(resolve("nonsense"), None);
         assert_eq!(shortest_alias("COPY"), "CO");
         assert_eq!(label("DIMLINEAR"), "Dimension");
+        assert_eq!(resolve("mleader"), Some("MLEADER"), "not the plain leader");
+    }
+
+    #[test]
+    fn no_alias_hides_a_command_or_another_alias() {
+        let every = || COMMANDS.iter().chain(WINDOW_COMMANDS);
+        for (i, (alias, command)) in ALIASES.iter().enumerate() {
+            assert!(!every().any(|(name, _)| name == alias), "{alias} is a command itself, so cannot stand for {command}");
+            assert!(!ALIASES[..i].iter().any(|(earlier, _)| earlier == alias), "{alias} is listed twice");
+            assert!(every().any(|(name, _)| name == command), "{alias} stands for {command}, which is no command");
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Connects typed input, clicks and the cursor to the running command, and its results to the drawing.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::undo::{Change, LayerState, UndoStack};
@@ -691,6 +691,12 @@ impl Controller {
         }
     }
 
+    /// The selected objects where they are in the drawing, in the order they were selected: for looking at them
+    /// without copying each one, which matters when a great many are selected.
+    pub fn selected_in_place(&self) -> impl Iterator<Item = &Entity> {
+        self.selection.ids().iter().filter_map(|id| self.drawing.document.get(*id))
+    }
+
     /// The selected objects as they are now, in the order they were selected.
     pub fn selected(&self) -> Vec<Entity> {
         self.selection.ids().iter().filter_map(|id| self.drawing.document.get(*id).cloned()).collect()
@@ -999,8 +1005,7 @@ impl Controller {
     /// After undo, redo or any other change: forget selected objects that are gone or can no longer be edited.
     pub fn after_change(&mut self) {
         let document = &self.drawing.document;
-        let alive: HashSet<EntityId> = document.entities().iter().filter(|e| document.is_editable(e)).map(|e| e.id).collect();
-        self.selection.keep_only(&alive);
+        self.selection.keep_only(|id| document.get(id).is_some_and(|e| document.is_editable(e)));
         self.reapply_cursor();
     }
 

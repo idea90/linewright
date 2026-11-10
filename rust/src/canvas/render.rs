@@ -3,14 +3,16 @@
 use eframe::egui::epaint::{PathShape, TextShape};
 use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2, pos2, vec2};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use super::aci::color_rgb;
+use super::gpu::{Gpu, Placement};
 use super::shapes::{Styled, TextSpec, flatten, resolve_color};
 use super::view::{Camera, grid_spacing, viewport_camera};
 use crate::fonts::display_text;
-use crate::model::document::{Document, Layout};
-use crate::model::entities::{Entity, Shape as EntityShape};
+use crate::model::document::{Document, EntityStore, Layout};
+use crate::model::entities::{Entity, EntityId, Shape as EntityShape};
 use crate::model::entities::{HAlign, TextAlign, VAlign};
 use crate::model::geometry::{Point, direction};
 use crate::model::lineweight;
@@ -230,7 +232,7 @@ fn draw_text(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, spec
     }
     let color = pen.color;
     let pixels = spec.height * screen.camera.scale;
-    if !(MIN_TEXT_PIXELS..=MAX_TEXT_PIXELS).contains(&pixels) || spec.text.trim().is_empty() {
+    if !text_shows(screen, spec) {
         return;
     }
     let truetype = screen.fonts.contains(&spec.font.to_lowercase());
@@ -328,7 +330,32 @@ fn screen_dashes(screen: &Screen, document: &Document, style: &Styled) -> Vec<f3
     scaled_pattern(&effective_linetype(style, document), per_unit, MIN_DASH_PIXELS).into_iter().map(|d| d as f32).collect()
 }
 
+/// Text put off while a picture of the drawing is made: laid out afresh every frame the picture is shown, since
+/// laid out text points into the font atlas, which egui makes anew now and then.
+#[derive(Clone)]
+struct LaterText {
+    spec: TextSpec,
+    color: Color32,
+    width: f32,
+    dashes: Vec<f32>,
+}
+
 fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, document: &Document, entity: &Entity, look: &Look) {
+    draw_entity_to(shapes, ctx, screen, document, entity, look, None);
+}
+
+/// Draw an entity. With `later`, its text is not drawn but noted there, a `Shape::Noop` holding its place among
+/// the shapes. Tells whether it covers an area (a fill, a mask or an image), hiding what was drawn before it.
+fn draw_entity_to(
+    shapes: &mut Vec<Shape>,
+    ctx: &egui::Context,
+    screen: &Screen,
+    document: &Document,
+    entity: &Entity,
+    look: &Look,
+    mut later: Option<&mut Vec<LaterText>>,
+) -> bool {
+    let mut covers = false;
     // A construction line has no ends: only the part on screen is drawn, cut in drawing units where it is precise.
     let clipped_xline = match entity.shape {
         EntityShape::XLine { base, direction, ray } => {
@@ -336,7 +363,7 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
             let Some((start, end)) =
                 crate::model::xline::clipped(base, direction, ray, &area.grow(CLIP_MARGIN as f64 / screen.camera.scale))
             else {
-                return;
+                return false;
             };
             Some(entity.with_shape(EntityShape::Line { start, end }))
         }
@@ -347,6 +374,7 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
         && matches!(look, Look::Own)
     {
         draw_image(shapes, ctx, screen, document, path, crate::model::entities::image_corners(*position, *u, *v));
+        covers = true;
     }
     for (style, parts) in flatten(entity, CHORD_PIXELS / screen.camera.scale) {
         // Inside a block, entities on a layer that is turned off stay hidden.
@@ -371,6 +399,7 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
                 &own
             }
         };
+        covers |= !(parts.masks.is_empty() && parts.fills.is_empty() && parts.areas.is_empty() && parts.gradients.is_empty());
         // A wipeout hides what is under it in the background's color; its frame shows in its own, unless WIPEOUTFRAME is 0.
         for mask in &parts.masks {
             if !matches!(look, Look::Preview) {
@@ -407,9 +436,354 @@ fn draw_entity(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, do
             shapes.push(Shape::circle_filled(screen.pos(*point), POINT_RADIUS, pen.color));
         }
         for spec in &parts.texts {
-            draw_text(shapes, ctx, screen, spec, pen);
+            match later.as_deref_mut() {
+                None => draw_text(shapes, ctx, screen, spec, pen),
+                // Text too small or too large to show needs no place kept for it.
+                Some(_) if spec.rich.is_none() && !text_shows(screen, spec) => {}
+                Some(later) => {
+                    later.push(LaterText { spec: spec.clone(), color: pen.color, width: pen.width, dashes: pen.dashes.to_vec() });
+                    shapes.push(Shape::Noop);
+                }
+            }
         }
     }
+    covers
+}
+
+/// Whether plain text is of a size that is drawn at all, and has anything to draw.
+fn text_shows(screen: &Screen, spec: &TextSpec) -> bool {
+    (MIN_TEXT_PIXELS..=MAX_TEXT_PIXELS).contains(&(spec.height * screen.camera.scale)) && !spec.text.trim().is_empty()
+}
+
+/// One piece of a picture of the drawing, in drawing order.
+enum Piece {
+    /// Lines, arcs and filled areas, already cut into the triangles the screen is painted with. `first` is where
+    /// its corners start among those of all the picture's meshes, and `covers` whether it fills any area, hiding
+    /// what was drawn before.
+    Mesh {
+        mesh: Arc<egui::Mesh>,
+        first: u32,
+        covers: bool,
+    },
+    Text(LaterText),
+    /// A shape kept as it is: an image, with a texture of its own.
+    Shape(Shape),
+}
+
+/// What a picture of the drawing depends on. While all of it stays the same, so does the picture.
+#[derive(Clone, PartialEq)]
+struct PictureKey {
+    revision: u64,
+    /// The selection's own revision, for the picture of the selected objects; 0 for the drawing's.
+    selection: u64,
+    look: u64,
+    rect: Rect,
+    camera: Camera,
+    paper: bool,
+    lineweight_pixels: Option<f64>,
+    psltscale: bool,
+    linetype_divisor: f64,
+    pixels_per_point: f32,
+    fonts: u64,
+}
+
+impl PictureKey {
+    /// The key of a picture of the objects of the store at `revision`, drawn as `screen` shows them. `selection`
+    /// is the selection's revision for the picture of the selected objects, else 0, and `also` a number for
+    /// anything else the picture depends on.
+    fn of(ctx: &egui::Context, screen: &Screen, document: &Document, revision: u64, selection: u64, also: u64) -> PictureKey {
+        PictureKey {
+            revision,
+            selection,
+            look: look_of(document) ^ also,
+            rect: screen.rect,
+            camera: screen.camera,
+            paper: screen.paper,
+            lineweight_pixels: screen.lineweight_pixels,
+            psltscale: screen.psltscale,
+            linetype_divisor: screen.linetype_divisor,
+            pixels_per_point: ctx.pixels_per_point(),
+            fonts: fonts_of(screen),
+        }
+    }
+
+    /// Whether the other is the same picture seen from somewhere else: only the view was panned or zoomed.
+    fn moved_only(&self, other: &PictureKey) -> bool {
+        PictureKey { camera: other.camera, ..self.clone() } == *other
+    }
+}
+
+/// A picture of some of the drawing's objects as one view shows them, kept from frame to frame: most frames only
+/// move the crosshair over it.
+struct Picture {
+    /// A number of its own, by which the graphics card knows its copy.
+    id: u64,
+    key: PictureKey,
+    pieces: Vec<Piece>,
+    /// Large enough to be drawn from the graphics card's own copy rather than handed to egui every frame.
+    on_card: bool,
+    /// It took long enough to make that a pan or zoom shows it moved along, and makes it anew once the view rests.
+    slow: bool,
+}
+
+impl Picture {
+    fn meshes(&self) -> Vec<&egui::Mesh> {
+        self.pieces.iter().filter_map(|piece| if let Piece::Mesh { mesh, .. } = piece { Some(mesh.as_ref()) } else { None }).collect()
+    }
+}
+
+/// One kept picture, and the view last asked of it when that was not the one it was made for, with when it was
+/// first asked.
+#[derive(Default)]
+struct Kept {
+    picture: Option<Arc<Picture>>,
+    moved: Option<(Camera, f64)>,
+    /// The frame it was last asked for: one not asked for any more, as of a viewport that is gone, is let go.
+    asked: u64,
+}
+
+/// The pictures kept between frames, by what they are of, and the graphics card's copies of them.
+#[derive(Clone, Default)]
+struct Pictures {
+    kept: Arc<Mutex<HashMap<(&'static str, u64), Kept>>>,
+    gpu: Arc<Mutex<Gpu>>,
+}
+
+impl Pictures {
+    fn of(ctx: &egui::Context) -> Pictures {
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Pictures>(egui::Id::new("pictures")).clone())
+    }
+}
+
+/// The picture of all the open space's objects, that of the selected ones drawn over it, and that of model space
+/// through a layout's viewport, of which there is one for each viewport, told apart by the viewport's id.
+const DRAWING_PICTURE: (&str, u64) = ("drawing", 0);
+const SELECTION_PICTURE: (&str, u64) = ("selection", 0);
+const VIEWPORT_PICTURE: &str = "viewport";
+/// Frames a picture may go unasked for before it is let go.
+const FRAMES_PICTURES_ARE_KEPT: u64 = 2;
+/// Fewer objects than this are drawn on the one thread; more are shared among several.
+const OBJECTS_PER_THREAD: usize = 4000;
+/// A picture of more corners than this is drawn from the graphics card's own copy.
+const CORNERS_FOR_CARD: usize = 100_000;
+/// A picture that took longer than this to make is not made anew on every frame of a pan or zoom.
+const SLOW_PICTURE_SECONDS: f64 = 0.03;
+/// How long the view rests before a slow picture is made anew for it.
+const VIEW_RESTS_SECONDS: f64 = 0.12;
+/// A selection of more objects than this is drawn as a kept picture rather than afresh on every frame.
+const OBJECTS_FOR_SELECTION_PICTURE: usize = 2000;
+
+/// LINEWRIGHT_NO_GPU set to anything keeps every picture off the graphics card, for a driver that draws it wrong.
+fn card_turned_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("LINEWRIGHT_NO_GPU").is_some())
+}
+
+fn next_picture_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A number that changes with anything outside the objects themselves that changes how they show: the layers'
+/// colors, linetypes, lineweights and whether they are on, and the drawing's settings for linetypes, lineweights
+/// and wipeout frames.
+fn look_of(document: &Document) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for layer in &document.layers {
+        (&layer.name, layer.color, &layer.linetype, layer.lineweight, layer.shown()).hash(&mut hasher);
+    }
+    (document.ltscale.to_bits(), document.default_lineweight, document.wipeout_frame, document.shown_layout()).hash(&mut hasher);
+    document.path.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn fonts_of(screen: &Screen) -> u64 {
+    use std::hash::{Hash, Hasher};
+    // The same whatever order the set gives its names in.
+    screen.fonts.iter().fold(screen.fonts.len() as u64, |sum, name| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        name.hash(&mut hasher);
+        sum.wrapping_add(hasher.finish())
+    })
+}
+
+/// A drawing and the space of it whose objects a picture is of: the open one, or model space for a viewport.
+type Space<'a> = (&'a Document, &'a EntityStore);
+
+/// The picture of some of a space's objects, in the order given: each drawn as `draw_entity` draws it, and
+/// what it draws cut into triangles here rather than by egui on every frame.
+fn pieces_of(ctx: &egui::Context, screen: &Screen, (document, store): Space, ids: &[EntityId], look: &Look) -> Vec<Piece> {
+    let options = ctx.tessellation_options(|options| *options);
+    // No discs from the font atlas, which a kept picture must not point into: round dots are cut into triangles.
+    let mut tessellator = egui::epaint::Tessellator::new(ctx.pixels_per_point(), options, [1, 1], vec![]);
+    tessellator.set_clip_rect(screen.rect.expand(CLIP_MARGIN));
+    let (mut pieces, mut mesh, mut covering, mut shapes, mut later) = (vec![], egui::Mesh::default(), false, vec![], vec![]);
+    let keep = |mesh: &mut egui::Mesh, covering: &mut bool, pieces: &mut Vec<Piece>| {
+        if !mesh.is_empty() {
+            pieces.push(Piece::Mesh { mesh: Arc::new(std::mem::take(mesh)), first: 0, covers: *covering });
+        }
+        *covering = false;
+    };
+    let scale = screen.camera.scale;
+    for id in ids {
+        let (Some(bounds), Some(entity)) = (store.bounds_of(*id), store.get(*id)) else { continue };
+        // Too small to see, except points, which have no size and are drawn as a dot.
+        if bounds.diagonal() * scale < MIN_ENTITY_PIXELS && !matches!(entity.shape, EntityShape::Point { .. }) {
+            continue;
+        }
+        if draw_entity_to(&mut shapes, ctx, screen, document, entity, look, Some(&mut later)) {
+            // What covers starts a mesh of its own, so text waiting to be drawn can go under it.
+            keep(&mut mesh, &mut covering, &mut pieces);
+            covering = true;
+        }
+        let mut texts = later.drain(..);
+        for shape in shapes.drain(..) {
+            match shape {
+                Shape::Noop => {
+                    let was = covering;
+                    keep(&mut mesh, &mut covering, &mut pieces);
+                    covering = was;
+                    pieces.extend(texts.next().map(Piece::Text));
+                }
+                Shape::Mesh(_) => {
+                    keep(&mut mesh, &mut covering, &mut pieces);
+                    pieces.push(Piece::Shape(shape));
+                }
+                shape => tessellator.tessellate_shape(shape, &mut mesh),
+            }
+        }
+        if covering {
+            keep(&mut mesh, &mut covering, &mut pieces);
+        }
+    }
+    keep(&mut mesh, &mut covering, &mut pieces);
+    pieces
+}
+
+/// Make the picture of the objects `ids` in this view, on several threads when there is much to draw.
+fn make_picture(ctx: &egui::Context, screen: &Screen, space: Space, key: PictureKey, ids: &[EntityId], look: &Look) -> Picture {
+    let started = std::time::Instant::now();
+    // Each thread draws a run of the objects; the runs go back together in drawing order.
+    let mut pieces = crate::threads::map_runs(ids, OBJECTS_PER_THREAD, |_, run| pieces_of(ctx, screen, space, run, look));
+    let (mut corners, mut triangle_corners) = (0usize, 0usize);
+    for piece in &mut pieces {
+        if let Piece::Mesh { mesh, first, .. } = piece {
+            *first = triangle_corners as u32;
+            corners += mesh.vertices.len();
+            triangle_corners += mesh.indices.len();
+        }
+    }
+    let on_card = corners > CORNERS_FOR_CARD
+        && triangle_corners <= i32::MAX as usize
+        && corners * size_of::<egui::epaint::Vertex>() <= i32::MAX as usize;
+    Picture { id: next_picture_id(), key, pieces, on_card, slow: started.elapsed().as_secs_f64() > SLOW_PICTURE_SECONDS }
+}
+
+/// Where a picture made for one view goes on screen in another.
+fn placement_from(made: &Camera, now: &Camera, rect: Rect) -> Placement {
+    let scale = now.scale / made.scale;
+    let moved = vec2(((made.center.x - now.center.x) * now.scale) as f32, (-(made.center.y - now.center.y) * now.scale) as f32);
+    Placement { scale: scale as f32, offset: rect.center().to_vec2() * (1.0 - scale as f32) + moved }
+}
+
+/// The picture to show for `key`, and where on screen it goes: the one kept from the frame before when nothing it
+/// depends on has changed, else one made now of the objects `ids` gives. While a view that is slow to draw is
+/// panned or zoomed, the picture kept is shown moved along, and a new one made when the view has rested.
+fn picture(
+    ctx: &egui::Context,
+    screen: &Screen,
+    space: Space,
+    (slot, key): ((&'static str, u64), PictureKey),
+    ids: impl FnOnce() -> Vec<EntityId>,
+    look: &Look,
+) -> (Arc<Picture>, Placement) {
+    let pictures = Pictures::of(ctx);
+    let card_works = !card_turned_off() && !pictures.gpu.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).broken();
+    let mut all = pictures.kept.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let frame = ctx.cumulative_pass_nr();
+    all.retain(|_, kept| kept.asked + FRAMES_PICTURES_ARE_KEPT >= frame);
+    let kept = all.entry(slot).or_default();
+    kept.asked = frame;
+    if let Some(picture) = &kept.picture {
+        if picture.key == key && (card_works || !picture.on_card) {
+            kept.moved = None;
+            return (picture.clone(), Placement::AS_MADE);
+        }
+        if picture.slow && picture.on_card && card_works && picture.key.moved_only(&key) {
+            let now = ctx.input(|input| input.time);
+            let since = match kept.moved {
+                Some((camera, since)) if camera == key.camera => since,
+                _ => now,
+            };
+            kept.moved = Some((key.camera, since));
+            if now - since < VIEW_RESTS_SECONDS {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(VIEW_RESTS_SECONDS - (now - since)));
+                return (picture.clone(), placement_from(&picture.key.camera, &key.camera, screen.rect));
+            }
+        }
+    }
+    let mut picture = make_picture(ctx, screen, space, key, &ids(), look);
+    picture.on_card &= card_works;
+    let picture = Arc::new(picture);
+    *kept = Kept { picture: Some(picture.clone()), moved: None, asked: frame };
+    (picture, Placement::AS_MADE)
+}
+
+/// Put a picture among the shapes to paint. Its meshes go as they are, or, for a picture on the graphics card, as
+/// a call that draws them from there. Text is laid out for the view as it is now; it waits until the next piece
+/// that covers an area, so that lines alone, which hide nothing, are drawn in as few calls as can be.
+fn show_picture(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, picture: &Arc<Picture>, placement: Placement) {
+    let gpu = Pictures::of(ctx).gpu;
+    let frame = ctx.cumulative_pass_nr();
+    // A run of meshes whose corners follow on from one another: where it starts and how many corners it has.
+    let mut run: Option<(u32, u32)> = None;
+    let mut waiting: Vec<&LaterText> = vec![];
+    let draw_run = |shapes: &mut Vec<Shape>, run: &mut Option<(u32, u32)>| {
+        let Some(range) = run.take() else { return };
+        let (gpu, picture, ctx) = (gpu.clone(), picture.clone(), ctx.clone());
+        let call = eframe::egui_glow::CallbackFn::new(move |info, painter| {
+            let mut gpu = gpu.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            gpu.draw(painter.gl(), &info, (picture.id, frame), || picture.meshes(), range, placement);
+            if gpu.broken() {
+                ctx.request_repaint(); // the next frame draws through egui instead
+            }
+        });
+        shapes.push(Shape::Callback(egui::PaintCallback { rect: screen.rect, callback: Arc::new(call) }));
+    };
+    let draw_waiting = |shapes: &mut Vec<Shape>, waiting: &mut Vec<&LaterText>| {
+        for text in waiting.drain(..) {
+            draw_text(shapes, ctx, screen, &text.spec, &Pen { color: text.color, width: text.width, dashes: &text.dashes });
+        }
+    };
+    for piece in &picture.pieces {
+        match piece {
+            Piece::Mesh { mesh, first, covers } => {
+                if *covers && !waiting.is_empty() {
+                    draw_run(shapes, &mut run);
+                    draw_waiting(shapes, &mut waiting);
+                }
+                if picture.on_card {
+                    let (start, count) = run.unwrap_or((*first, 0));
+                    run = Some((start, count + mesh.indices.len() as u32));
+                } else {
+                    shapes.push(Shape::Mesh(mesh.clone()));
+                }
+            }
+            Piece::Text(text) => waiting.push(text),
+            Piece::Shape(shape) => {
+                draw_run(shapes, &mut run);
+                draw_waiting(shapes, &mut waiting);
+                let mut shape = shape.clone();
+                if placement != Placement::AS_MADE {
+                    shape.transform(egui::emath::TSTransform::new(placement.offset, placement.scale));
+                }
+                shapes.push(shape);
+            }
+        }
+    }
+    draw_run(shapes, &mut run);
+    draw_waiting(shapes, &mut waiting);
 }
 
 /// Image files read into textures, by the path they were looked for at. None for one that could not be read.
@@ -476,8 +850,8 @@ fn draw_sheet(shapes: &mut Vec<Shape>, screen: &Screen, layout: &Layout) {
 }
 
 /// What a viewport shows: model space at its scale, clipped to its frame, without the layers it freezes.
-fn draw_viewport(ui: &egui::Ui, screen: &Screen, document: &Document, viewport: &EntityShape) {
-    let EntityShape::Viewport { center, width, height, view_center, view_height, frozen, .. } = viewport else { return };
+fn draw_viewport(ui: &egui::Ui, screen: &Screen, document: &Document, viewport: &Entity) {
+    let EntityShape::Viewport { center, width, height, view_center, view_height, frozen, .. } = &viewport.shape else { return };
     let corners = frame_corners(*center, *width, *height);
     let clip = Rect::from_two_pos(screen.pos(corners[0]), screen.pos(corners[2])).intersect(screen.rect);
     if clip.width() <= 0.0 || clip.height() <= 0.0 {
@@ -496,17 +870,24 @@ fn draw_viewport(ui: &egui::Ui, screen: &Screen, document: &Document, viewport: 
     };
     let area = crate::model::index::Bounds::from_corners(inside.world(clip.min), inside.world(clip.max));
     let model = document.model();
+    let shown = || -> Vec<EntityId> {
+        let ids = model.ids_in(&area.grow(CLIP_MARGIN as f64 / scale)).into_iter();
+        let seen = |entity: &Entity| document.is_visible(entity) && !frozen.iter().any(|layer| layer.eq_ignore_ascii_case(&entity.layer));
+        ids.filter(|id| model.get(*id).is_some_and(seen)).collect()
+    };
+    // Model space through this viewport is a picture kept like the drawing's own: it depends also on the viewport's
+    // frame, which cuts it off, and on the layers frozen in it. What it looks at is in the camera.
+    let also = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (frozen, center.x.to_bits(), center.y.to_bits(), width.to_bits(), height.to_bits()).hash(&mut hasher);
+        hasher.finish()
+    };
+    let ctx = ui.ctx();
+    let key = PictureKey::of(ctx, &inside, document, model.revision(), 0, also);
+    let (seen, placement) = picture(ctx, &inside, (document, model), ((VIEWPORT_PICTURE, viewport.id), key), shown, &Look::Own);
     let mut shapes = vec![];
-    for id in model.ids_in(&area.grow(CLIP_MARGIN as f64 / scale)) {
-        let (Some(entity), Some(bounds)) = (model.get(id), model.bounds_of(id)) else { continue };
-        if !document.is_visible(entity) || frozen.iter().any(|layer| layer.eq_ignore_ascii_case(&entity.layer)) {
-            continue;
-        }
-        if bounds.diagonal() * scale < MIN_ENTITY_PIXELS && !matches!(entity.shape, EntityShape::Point { .. }) {
-            continue;
-        }
-        draw_entity(&mut shapes, ui.ctx(), &inside, document, entity, &Look::Own);
-    }
+    show_picture(&mut shapes, ctx, &inside, &seen, placement);
     ui.painter().with_clip_rect(clip).extend(shapes);
 }
 
@@ -732,7 +1113,7 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
             let sheet = document.space_store(shown);
             for id in sheet.ids_in(&visible) {
                 if let Some(entity) = sheet.get(id).filter(|e| matches!(e.shape, EntityShape::Viewport { .. }) && document.is_visible(e)) {
-                    draw_viewport(ui, screen, document, &entity.shape);
+                    draw_viewport(ui, screen, document, entity);
                 }
             }
         }
@@ -761,20 +1142,29 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
         ui.painter().with_clip_rect(frame.intersect(screen.rect)).extend(shapes);
         return;
     }
-    let scale = screen.camera.scale;
-    let ids = document.ids_in(&visible.grow(CLIP_MARGIN as f64 / scale));
-    let mut selected = vec![];
-    for id in ids {
-        let Some(bounds) = document.bounds_of(id) else { continue };
-        let Some(entity) = document.get(id) else { continue };
-        // Too small to see, except points, which have no size and are drawn as a dot.
-        if bounds.diagonal() * scale < MIN_ENTITY_PIXELS && !matches!(entity.shape, EntityShape::Point { .. }) {
-            continue;
-        }
-        draw_entity(&mut shapes, ctx, screen, document, entity, &Look::Own);
-        if controller.selection.contains(id) {
-            selected.push(entity);
-        }
+    let in_sight = visible.grow(CLIP_MARGIN as f64 / screen.camera.scale);
+    let space = (document, document.space_store(document.active_layout()));
+    let key = PictureKey::of(ctx, screen, document, document.revision(), 0, 0);
+    let (drawing, placement) = picture(ctx, screen, space, (DRAWING_PICTURE, key), || document.ids_in(&in_sight), &Look::Own);
+    show_picture(&mut shapes, ctx, screen, &drawing, placement);
+    // The selected objects in view are drawn over in the selection's pen: a few afresh on every frame, a great
+    // many as a picture kept like the drawing's.
+    let selected_in_view = || -> Vec<EntityId> {
+        let ids = controller.selection.ids().iter();
+        ids.filter(|id| {
+            document.bounds_of(**id).is_some_and(|b| b.touches(&in_sight)) && document.get(**id).is_some_and(|e| document.is_visible(e))
+        })
+        .copied()
+        .collect()
+    };
+    let mut selected: Vec<&Entity> = vec![];
+    let mut selection_picture = None;
+    if controller.selection.len() > OBJECTS_FOR_SELECTION_PICTURE {
+        let pen = Pen { color: theme::SELECTION, width: SELECTED_WIDTH, dashes: &[] };
+        let key = PictureKey::of(ctx, screen, document, document.revision(), controller.selection.revision(), 0);
+        selection_picture = Some(picture(ctx, screen, space, (SELECTION_PICTURE, key), selected_in_view, &Look::Pen(&pen)));
+    } else {
+        selected = selected_in_view().into_iter().filter_map(|id| document.get(id)).collect();
     }
     if shown.is_none() {
         for entity in document.shown_only.iter().filter(|e| document.is_visible(e)) {
@@ -782,6 +1172,9 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
         }
     }
     draw_axes_icon(&mut shapes, ctx, screen.rect);
+    if let Some((picture, placement)) = &selection_picture {
+        show_picture(&mut shapes, ctx, screen, picture, *placement);
+    }
     draw_work(&mut shapes, ctx, screen, controller, overlay, selected);
     if let (Some(pointer), false) = (overlay.pointer, overlay.panning) {
         draw_crosshair(&mut shapes, screen.rect, pointer, controller.picking());
@@ -878,6 +1271,59 @@ mod tests {
         let document = Document::new();
         assert!(screen_dashes(&screen_with(&fonts, 0.1, 1.0), &document, &dashed_part(1.0)).is_empty(), "6.35 px at 0.1 is under a pixel");
         assert_eq!(screen_dashes(&screen_with(&fonts, 0.2, 1.0), &document, &dashed_part(1.0)).len(), 2, "1.27 px is not");
+    }
+
+    #[test]
+    fn a_picture_made_for_one_view_lands_where_another_view_puts_the_drawing() {
+        let fonts = HashSet::new();
+        let made = screen_with(&fonts, 2.0, 1.0);
+        let mut now = made;
+        now.camera = Camera { center: pt(30.0, -12.0), scale: 5.0 };
+        let placement = placement_from(&made.camera, &now.camera, made.rect);
+        for point in [pt(0.0, 0.0), pt(17.5, 40.0), pt(-300.0, 2.25)] {
+            let moved = (made.pos(point).to_vec2() * placement.scale + placement.offset).to_pos2();
+            assert!(moved.distance(now.pos(point)) < 1e-2, "{point:?}: {moved:?} for {:?}", now.pos(point));
+        }
+        assert_eq!(placement_from(&made.camera, &made.camera, made.rect), Placement::AS_MADE);
+    }
+
+    #[test]
+    fn a_kept_picture_is_shown_again_until_the_drawing_or_the_view_changes() {
+        use crate::model::entities::{circle, line};
+        let ctx = egui::Context::default();
+        let fonts = HashSet::new();
+        let screen = screen_with(&fonts, 1.0, 1.0);
+        let mut document = Document::with_entities(vec![line(pt(-20.0, 0.0), pt(20.0, 0.0)), circle(pt(0.0, 0.0), 10.0)]);
+        let key =
+            |document: &Document, screen: &Screen| (DRAWING_PICTURE, PictureKey::of(&ctx, screen, document, document.revision(), 0, 0));
+        let ids = |document: &Document| document.ids_in(&crate::model::index::Bounds::square_around(pt(0.0, 0.0), 100.0));
+        let (first, placement) =
+            picture(&ctx, &screen, (&document, document.space_store(None)), key(&document, &screen), || ids(&document), &Look::Own);
+        assert_eq!(placement, Placement::AS_MADE);
+        assert!(matches!(first.pieces[..], [Piece::Mesh { .. }]), "two objects without text or fills make one mesh");
+        let (again, _) = picture(
+            &ctx,
+            &screen,
+            (&document, document.space_store(None)),
+            key(&document, &screen),
+            || panic!("not made anew"),
+            &Look::Own,
+        );
+        assert!(Arc::ptr_eq(&first, &again));
+        // A small picture is quick to make, so a new view makes it anew rather than moving the old one along.
+        let mut zoomed = screen;
+        zoomed.camera.scale = 2.0;
+        let (other, placement) =
+            picture(&ctx, &zoomed, (&document, document.space_store(None)), key(&document, &zoomed), || ids(&document), &Look::Own);
+        assert!(!Arc::ptr_eq(&first, &other) && placement == Placement::AS_MADE);
+        document.add(line(pt(0.0, -5.0), pt(0.0, 5.0)));
+        let (changed, _) =
+            picture(&ctx, &zoomed, (&document, document.space_store(None)), key(&document, &zoomed), || ids(&document), &Look::Own);
+        assert!(!Arc::ptr_eq(&other, &changed), "a change to the drawing makes a new picture");
+        document.layers[0].color = 3;
+        let (recolored, _) =
+            picture(&ctx, &zoomed, (&document, document.space_store(None)), key(&document, &zoomed), || ids(&document), &Look::Own);
+        assert!(!Arc::ptr_eq(&changed, &recolored), "and so does a change to a layer");
     }
 
     #[test]

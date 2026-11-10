@@ -54,10 +54,19 @@ pub async fn polygon_command(io: Io) {
                 .default(Answer::keyword(INSCRIBED));
             let inscribed = !matches!(io.ask(prompt).await, Some(answer) if answer.is(CIRCUMSCRIBED));
             let shape = move |cursor: Point| polygon(center, first_corner(center, cursor, sides, inscribed), sides);
-            let prompt = Prompt::point("Specify radius of circle:").base(center).preview(move |cursor| vec![shape(cursor)]);
-            if let Some(Answer::Point(cursor)) = io.ask(prompt).await
-                && cursor != center
-            {
+            let prompt = Prompt::point("Specify radius of circle:").base(center).or_length().preview(move |cursor| vec![shape(cursor)]);
+            // A typed radius, as in AutoCAD, sets the bottom edge level: the cursor stands for its middle when
+            // circumscribed, or its left corner when inscribed.
+            let cursor = match io.ask(prompt).await {
+                Some(Answer::Point(cursor)) => cursor,
+                Some(Answer::Number(radius)) if inscribed => {
+                    let angle = -0.5 * PI - PI / sides as f64;
+                    center + pt(angle.cos(), angle.sin()) * radius
+                }
+                Some(Answer::Number(radius)) => center + pt(0.0, -radius),
+                _ => return,
+            };
+            if cursor != center {
                 io.step(Step::Drawn(vec![polygon(center, first_corner(center, cursor, sides, inscribed), sides)]));
             }
         }
@@ -312,6 +321,9 @@ const OBJECT: &str = "O";
 /// How strongly each cloud arc bows out: about 110 degrees of arc, as AutoCAD's do.
 const CLOUD_BULGE: f64 = 0.52;
 
+/// The most arcs a cloud is made of: a shorter arc length than that takes gives longer arcs.
+const MAX_CLOUD_ARCS: usize = 10_000;
+
 /// A revision cloud along a closed outline: arcs of about `arc` chord each, bowing outward.
 pub fn cloud(outline: &[Point], arc: f64) -> Option<Entity> {
     let mut closed: Vec<Point> = outline.to_vec();
@@ -319,7 +331,7 @@ pub fn cloud(outline: &[Point], arc: f64) -> Option<Entity> {
         closed.push(closed[0]);
     }
     let total = length_of(&closed);
-    let count = ((total / arc).round() as usize).max(3);
+    let count = ((total / arc).round() as usize).clamp(3, MAX_CLOUD_ARCS);
     let distances: Vec<f64> = (0..count).map(|i| total * i as f64 / count as f64).collect();
     let points = points_along(&closed, &distances);
     let area: f64 = closed.windows(2).map(|w| w[0].x * w[1].y - w[1].x * w[0].y).sum();

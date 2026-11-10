@@ -4,10 +4,8 @@
 //! query instead of being filed. The cell size follows the drawing, so a few stray objects far from the rest do not
 //! stretch it.
 
-use std::collections::HashMap;
-
 use super::dimension::dimension_parts;
-use super::entities::{Entity, EntityId, Shape};
+use super::entities::{Entity, EntityId, IdMap, Shape};
 pub use super::geometry::Bounds;
 use super::geometry::{Point, bulge_arc, pt};
 use super::parts::entity_parts;
@@ -19,6 +17,8 @@ const CELLS_ACROSS: f64 = 24.0; // how many cells the middle of a drawing is spl
 const OUTLIER_FRACTION: f64 = 0.01;
 const MIN_CELL_SIZE: f64 = 1e-6;
 const MAX_CELLS_PER_ENTITY: i64 = 64;
+/// Fewer entities than this are measured on the one thread; more are shared among several.
+const ENTITIES_PER_THREAD: usize = 10_000;
 pub const TEXT_DESCENT: f64 = 0.3; // of the text height, below the baseline
 
 /// A generous box around text. The real width depends on the font, so each character gets a full height.
@@ -123,15 +123,15 @@ struct Record {
 
 pub struct SpatialIndex {
     pub cell_size: f64,
-    records: HashMap<EntityId, Record>,
-    cells: HashMap<Cell, Vec<EntityId>>,
+    records: IdMap<EntityId, Record>,
+    cells: IdMap<Cell, Vec<EntityId>>,
     oversized: Vec<EntityId>,
     next_order: u64,
 }
 
 impl Default for SpatialIndex {
     fn default() -> Self {
-        SpatialIndex { cell_size: DEFAULT_CELL_SIZE, records: HashMap::new(), cells: HashMap::new(), oversized: vec![], next_order: 0 }
+        SpatialIndex { cell_size: DEFAULT_CELL_SIZE, records: IdMap::default(), cells: IdMap::default(), oversized: vec![], next_order: 0 }
     }
 }
 
@@ -140,6 +140,12 @@ fn middle_span(mut values: Vec<f64>) -> f64 {
     let cut = (values.len() as f64 * OUTLIER_FRACTION) as usize;
     let trimmed = if values.len() > 2 * cut { &values[cut..values.len() - cut] } else { &values[..] };
     trimmed[trimmed.len() - 1] - trimmed[0]
+}
+
+/// How many cells lie from the first to the last, both counted. Coordinates far beyond any drawing land in the
+/// outermost cells an i64 can name, so the count stops at the largest number rather than wrapping round.
+fn cells_spanned(first: i64, last: i64) -> i64 {
+    last.saturating_sub(first).saturating_add(1)
 }
 
 impl SpatialIndex {
@@ -164,7 +170,11 @@ impl SpatialIndex {
     }
 
     pub fn reload<'a>(&mut self, entities: impl IntoIterator<Item = &'a Entity>) {
-        let measured: Vec<(EntityId, Bounds)> = entities.into_iter().map(|e| (e.id, entity_extent(e).finite())).collect();
+        // Measuring each entity is most of the work, and each is measured on its own: shared among threads.
+        let entities: Vec<&Entity> = entities.into_iter().collect();
+        let measured: Vec<(EntityId, Bounds)> = crate::threads::map_runs(&entities, ENTITIES_PER_THREAD, |_, run| {
+            run.iter().map(|e| (e.id, entity_extent(e).finite())).collect()
+        });
         *self = SpatialIndex::default();
         self.cell_size = Self::cell_size_for(&measured);
         for (id, bounds) in measured {
@@ -184,10 +194,17 @@ impl SpatialIndex {
 
     /// Pick up changes made to an entity in place. It keeps its place in the drawing order.
     pub fn refresh(&mut self, entity: &Entity) {
+        let bounds = entity_extent(entity).finite();
+        let cells = self.cells_for(&bounds);
+        let Some(record) = self.records.get_mut(&entity.id) else { return };
+        record.bounds = bounds;
+        // A small move or change leaves an entity in the cells it was filed in: then nothing is filed again.
+        if record.cells == cells {
+            return;
+        }
         let Some(mut record) = self.records.remove(&entity.id) else { return };
         self.unfile(entity.id, &record);
-        record.bounds = entity_extent(entity).finite();
-        record.cells = self.cells_for(&record.bounds);
+        record.cells = cells;
         self.place(entity.id, &record);
         self.records.insert(entity.id, record);
     }
@@ -197,9 +214,11 @@ impl SpatialIndex {
         let size = self.cell_size;
         let columns = (area.x0 / size).floor() as i64..=(area.x1 / size).floor() as i64;
         let rows = (area.y0 / size).floor() as i64..=(area.y1 / size).floor() as i64;
-        let cell_count = (columns.end() - columns.start() + 1).saturating_mul(rows.end() - rows.start() + 1);
-        let mut found: Vec<EntityId> = if cell_count > self.cells.len() as i64 {
-            self.records.keys().copied().collect()
+        let cell_count = cells_spanned(*columns.start(), *columns.end()).saturating_mul(cells_spanned(*rows.start(), *rows.end()));
+        // Each one found with its place in the drawing order, looked up once, so sorting needs no more look-ups.
+        let touching = |(id, record): (&EntityId, &Record)| record.bounds.touches(area).then_some((record.order, *id));
+        let mut found: Vec<(u64, EntityId)> = if cell_count > self.cells.len() as i64 {
+            self.records.iter().filter_map(touching).collect()
         } else {
             let mut ids: Vec<EntityId> = Vec::new();
             for column in columns {
@@ -212,11 +231,11 @@ impl SpatialIndex {
             ids.extend(&self.oversized);
             ids.sort_unstable();
             ids.dedup();
-            ids
+            ids.iter().filter_map(|id| touching((id, self.records.get(id)?))).collect()
         };
-        found.retain(|id| self.records[id].bounds.touches(area));
-        found.sort_by_key(|id| self.records[id].order);
-        found
+        // No two have the same place, so the faster sort that may swap equals gives the same order.
+        found.sort_unstable();
+        found.into_iter().map(|(_, id)| id).collect()
     }
 
     /// All ids with their boxes, in drawing order.
@@ -239,7 +258,7 @@ impl SpatialIndex {
         let size = self.cell_size;
         let (c0, c1) = ((bounds.x0 / size).floor() as i64, (bounds.x1 / size).floor() as i64);
         let (r0, r1) = ((bounds.y0 / size).floor() as i64, (bounds.y1 / size).floor() as i64);
-        if (c1 - c0 + 1).saturating_mul(r1 - r0 + 1) > MAX_CELLS_PER_ENTITY {
+        if cells_spanned(c0, c1).saturating_mul(cells_spanned(r0, r1)) > MAX_CELLS_PER_ENTITY {
             return None;
         }
         Some((c0..=c1).flat_map(|c| (r0..=r1).map(move |r| (c, r))).collect())
@@ -305,6 +324,18 @@ mod tests {
         index.reload(&entities);
         let far = index.query(&Bounds::square_around(pt(5e5, 0.0), 1.0));
         assert_eq!(far, vec![entities[100].id]);
+    }
+
+    #[test]
+    fn coordinates_beyond_the_grid_neither_wrap_nor_stall() {
+        let mut entities: Vec<Entity> = (0..10).map(|i| circle(pt(i as f64, 0.0), 0.5)).collect();
+        entities.push(line(pt(-1e9, 1e9), pt(1e308, 1e308)));
+        let mut index = SpatialIndex::default();
+        index.reload(&entities);
+        let everywhere = Bounds { x0: -1e300, y0: -1e300, x1: 1e300, y1: 1e300 };
+        assert_eq!(index.query(&everywhere).len(), entities.len());
+        let near = index.query(&Bounds::square_around(pt(3.0, 0.0), 0.1));
+        assert!(near.contains(&entities[3].id) && !near.contains(&entities[7].id), "{near:?}");
     }
 
     #[test]

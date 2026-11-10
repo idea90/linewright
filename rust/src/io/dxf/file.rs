@@ -143,7 +143,8 @@ fn multibyte_encoding(n: char) -> Option<&'static encoding_rs::Encoding> {
 
 /// Characters a file escapes: \U+XXXX for any Unicode character, \M+nXXXX for one from an East Asian code page.
 fn decode_escapes(text: &str) -> String {
-    if !text.contains("\\U+") && !text.contains("\\M+") {
+    // Nearly every value has no backslash at all, which is quick to see.
+    if !text.contains('\\') || (!text.contains("\\U+") && !text.contains("\\M+")) {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
@@ -196,6 +197,154 @@ fn shorten(text: &str) -> String {
     text.chars().take(40).collect()
 }
 
+/// A file shorter than this for each thread is split into groups on the one thread.
+const BYTES_PER_THREAD: usize = 2_000_000;
+
+/// How a run of a file's lines ended.
+#[derive(Debug, PartialEq)]
+enum RunEnd {
+    /// At its last line: the file carries on in the next run, if there is one.
+    Open,
+    /// At the EOF group: nothing after it is read.
+    Eof,
+    /// At a line (this one, counted from 1 in the whole file) that should hold a group code but is blank, as are
+    /// all the lines after it in the run. That ends the file when all its remaining lines are blank too.
+    Blank(usize),
+}
+
+/// The groups in a run of a file's lines.
+#[derive(Debug, PartialEq)]
+struct Run {
+    groups: Vec<Group>,
+    /// The first group does not start here: its pairs carry on the last group of the run before.
+    carries_on: bool,
+    end: RunEnd,
+}
+
+/// Split a run of lines, which starts on a group code's line, into groups. `lines_before` is how many lines the
+/// file has before the run, and `first` whether it is the file's first, whose first pair starts a group whatever
+/// its code.
+fn groups_in_run(text: &str, lines_before: usize, first: bool) -> Result<Run, DxfError> {
+    let mut groups: Vec<Group> = vec![];
+    let mut carries_on = false;
+    let mut lines = text.lines();
+    let mut line_number = lines_before;
+    while let Some(code_line) = lines.next() {
+        line_number += 1;
+        let code_text = code_line.trim();
+        if code_text.is_empty() && lines.clone().all(|l| l.trim().is_empty()) {
+            return Ok(Run { groups, carries_on, end: RunEnd::Blank(line_number) });
+        }
+        let code: i32 =
+            code_text.parse().map_err(|_| DxfError(format!("Line {line_number} should hold a group code but holds \"{code_text}\".")))?;
+        let value = lines.next().ok_or_else(|| DxfError("The file ends in the middle of a value.".into()))?;
+        line_number += 1;
+        let value = decode_escapes(value);
+        if code == 0 || groups.is_empty() {
+            // Only a run's first group can belong to the run before: every later one starts at its own code 0.
+            carries_on |= groups.is_empty() && code != 0 && !first;
+            groups.push(Group(Vec::with_capacity(PAIRS_TO_START_WITH)));
+        }
+        let is_eof = code == 0 && value.trim() == "EOF";
+        groups.last_mut().expect("a group").0.push(Pair { code, value });
+        if is_eof {
+            return Ok(Run { groups, carries_on, end: RunEnd::Eof });
+        }
+    }
+    Ok(Run { groups, carries_on, end: RunEnd::Open })
+}
+
+/// Room for this many pairs is made when a group starts: most objects have about so many, and a group that grows
+/// a pair at a time moves several times on the way.
+const PAIRS_TO_START_WITH: usize = 8;
+
+/// Where to cut a file's text into `count` runs of whole pairs of lines (a group code's line and its value's), of
+/// about the same size: where each run starts, and how many lines come before it.
+fn run_starts(text: &str, count: usize) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let line_ends = |from: usize, to: usize| bytes[from..to].iter().filter(|b| **b == b'\n').count();
+    let after_line = |from: usize| bytes[from..].iter().position(|b| *b == b'\n').map_or(bytes.len(), |at| from + at + 1);
+    let mut starts = vec![(0, 0)];
+    for run in 1..count {
+        let (last, lines_before) = starts[starts.len() - 1];
+        let aim = (bytes.len() / count * run).max(last);
+        // The start of the next line, and of the one after when that one is a value's line.
+        let mut start = after_line(aim);
+        let mut lines = lines_before + line_ends(last, start);
+        if lines % 2 == 1 {
+            let next = after_line(start);
+            lines += line_ends(start, next);
+            start = next;
+        }
+        if start >= bytes.len() {
+            break;
+        }
+        if lines % 2 == 0 && start > last {
+            starts.push((start, lines));
+        }
+    }
+    starts
+}
+
+/// Split a file's text into groups, the runs it is cut into shared among threads. It gives what going through the
+/// lines one by one gives, to the same error for a file that is not right.
+fn groups_shared(text: &str, runs: usize) -> Result<Vec<Group>, DxfError> {
+    if runs < 2 {
+        return groups_in_run(text, 0, true).map(|run| run.groups);
+    }
+    let starts = run_starts(text, runs);
+    let split: Vec<Result<Run, DxfError>> = crate::threads::map_runs(&(0..starts.len()).collect::<Vec<_>>(), 1, |_, some| {
+        let read = |&index: &usize| {
+            let (start, lines_before) = starts[index];
+            let end = starts.get(index + 1).map_or(text.len(), |next| next.0);
+            groups_in_run(&text[start..end], lines_before, index == 0)
+        };
+        some.iter().map(read).collect()
+    });
+    let mut groups: Vec<Group> = vec![];
+    // The line a run ended blank at: every run after it must be blank as well, or that line is the error.
+    let mut blank_at: Option<usize> = None;
+    for run in split {
+        if let Some(line) = blank_at {
+            match run {
+                Ok(run) if run.groups.is_empty() && matches!(run.end, RunEnd::Blank(_)) => continue,
+                _ => return Err(DxfError(format!("Line {line} should hold a group code but holds \"\"."))),
+            }
+        }
+        let run = run?;
+        let mut added = run.groups.into_iter();
+        if run.carries_on
+            && let Some(last) = groups.last_mut()
+        {
+            last.0.extend(added.next().into_iter().flat_map(|group| group.0));
+        }
+        groups.extend(added);
+        match run.end {
+            RunEnd::Eof => break,
+            RunEnd::Blank(line) => blank_at = blank_at.or(Some(line)),
+            RunEnd::Open => {}
+        }
+    }
+    Ok(groups)
+}
+
+/// A group code as a DXF file writes it: right-aligned in three columns.
+fn push_code(text: &mut String, code: i32) {
+    match code {
+        0..=9 => text.extend([' ', ' ', digit(code)]),
+        10..=99 => text.extend([' ', digit(code / 10), digit(code % 10)]),
+        100..=999 => text.extend([digit(code / 100), digit(code / 10 % 10), digit(code % 10)]),
+        _ => {
+            use std::fmt::Write as _;
+            let _ = write!(text, "{code:>3}");
+        }
+    }
+}
+
+fn digit(value: i32) -> char {
+    char::from(b'0' + value as u8)
+}
+
 impl DxfFile {
     pub fn parse(bytes: &[u8]) -> Result<DxfFile, DxfError> {
         if bytes.starts_with(b"AutoCAD Binary DXF") {
@@ -205,30 +354,7 @@ impl DxfFile {
         let encoding = file_encoding(&version, find_header(bytes, "$DWGCODEPAGE").as_deref());
         let (decoded, _, _) = encoding.decode(bytes);
         let text = decoded.strip_prefix('\u{feff}').unwrap_or(&decoded);
-        let mut groups: Vec<Group> = vec![];
-        let mut lines = text.lines();
-        let mut line_number = 0;
-        while let Some(code_line) = lines.next() {
-            line_number += 1;
-            let code_text = code_line.trim();
-            if code_text.is_empty() && lines.clone().all(|l| l.trim().is_empty()) {
-                break;
-            }
-            let code: i32 = code_text
-                .parse()
-                .map_err(|_| DxfError(format!("Line {line_number} should hold a group code but holds \"{code_text}\".")))?;
-            let value = lines.next().ok_or_else(|| DxfError("The file ends in the middle of a value.".into()))?;
-            line_number += 1;
-            let value = decode_escapes(value);
-            if code == 0 || groups.is_empty() {
-                groups.push(Group(vec![]));
-            }
-            let is_eof = code == 0 && value.trim() == "EOF";
-            groups.last_mut().expect("a group").0.push(Pair { code, value });
-            if is_eof {
-                break;
-            }
-        }
+        let groups = groups_shared(text, crate::threads::threads_for(text.len(), BYTES_PER_THREAD))?;
         if !groups.iter().any(|g| g.kind() == "SECTION") {
             return Err(DxfError("This is not a DXF drawing.".into()));
         }
@@ -310,10 +436,13 @@ impl DxfFile {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let encoding = file_encoding(&self.version(), self.header("$DWGCODEPAGE"));
-        let mut text = String::new();
+        // A code and two line ends on top of each value: sized once, and written without a string made for each code.
+        let size: usize = self.groups.iter().flat_map(|group| &group.0).map(|p| p.value.len() + 6).sum();
+        let mut text = String::with_capacity(size);
         for group in &self.groups {
             for p in &group.0 {
-                text.push_str(&format!("{:>3}\n", p.code));
+                push_code(&mut text, p.code);
+                text.push('\n');
                 text.push_str(&p.value);
                 text.push('\n');
             }
@@ -419,4 +548,89 @@ fn find_header(bytes: &[u8], variable: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod shared_tests {
+    use super::*;
+
+    /// A file's text of `objects` groups whose values are of many lengths, so cuts fall in different places.
+    fn drawing(objects: usize, line_end: &str) -> String {
+        let mut lines = vec!["0".to_string(), "SECTION".into(), "2".into(), "ENTITIES".into()];
+        for n in 0..objects {
+            lines.extend(["  0".to_string(), "LINE".into(), "  8".into(), format!("layer{}", "x".repeat(n * 7 % 23))]);
+            for (code, value) in [(10, n as f64 * 1.25), (20, n as f64 / 3.0), (11, 0.5), (21, -(n as f64))] {
+                lines.extend([format!(" {code}"), format!("{value}")]);
+            }
+        }
+        lines.extend(["  0".to_string(), "ENDSEC".into(), "  0".into(), "EOF".into()]);
+        lines.join(line_end) + line_end
+    }
+
+    fn one_by_one(text: &str) -> Result<Vec<Group>, String> {
+        groups_in_run(text, 0, true).map(|run| run.groups).map_err(|e| e.0)
+    }
+
+    #[test]
+    fn a_file_split_on_several_threads_gives_what_one_thread_gives() {
+        let whole = drawing(300, "\n");
+        let mut files = vec![
+            ("as written", whole.clone()),
+            ("Windows line ends", drawing(120, "\r\n")),
+            ("no line end at the end", whole.trim_end().to_string()),
+            ("blank lines at the end", format!("{whole}\n  \n\n\n")),
+            ("more after EOF", format!("{whole}this is\nnot a drawing\n")),
+            ("empty", String::new()),
+            ("only blank lines", "\n\n \n".to_string()),
+        ];
+        // Damage at several places: each must give the same error, with the same line number.
+        for at in [5, 800, 1701, 2399] {
+            let mut lines: Vec<&str> = whole.lines().collect();
+            lines[at & !1] = "ten";
+            files.push(("a code that is no number", lines.join("\n")));
+            let mut lines: Vec<&str> = whole.lines().collect();
+            lines.insert(at | 1, "");
+            files.push(("a blank line that shifts the rest", lines.join("\n")));
+            let mut lines: Vec<&str> = whole.lines().collect();
+            lines.truncate(at | 1);
+            files.push(("cut off in the middle of a value", lines.join("\n")));
+            let blanks = "\n".repeat(600);
+            let mut lines: Vec<&str> = whole.lines().collect();
+            lines.insert(at & !1, &blanks);
+            files.push(("many blank lines in the middle", lines.join("\n")));
+        }
+        for (what, text) in &files {
+            let expected = one_by_one(text);
+            for runs in 2..=9 {
+                let shared = groups_shared(text, runs).map_err(|e| e.0);
+                if let (Ok(shared), Ok(expected)) = (&shared, &expected) {
+                    let differs = shared.iter().zip(expected).position(|(a, b)| a != b);
+                    assert!(
+                        differs.is_none() && shared.len() == expected.len(),
+                        "{what}, cut into {runs}: {} groups for {}, first differing {differs:?}: {:?} for {:?}; starts {:?}",
+                        shared.len(),
+                        expected.len(),
+                        differs.map(|at| &shared[at]),
+                        differs.map(|at| &expected[at]),
+                        run_starts(text, runs)
+                    );
+                }
+                assert_eq!(shared, expected, "{what}, cut into {runs}");
+            }
+        }
+        assert!(one_by_one(&whole).is_ok_and(|groups| groups.len() == 303), "the test's own drawing reads");
+    }
+
+    #[test]
+    fn runs_start_on_a_group_codes_line() {
+        let text = drawing(50, "\n");
+        for count in 2..=7 {
+            let starts = run_starts(&text, count);
+            assert!(starts.len() > 1, "{count}");
+            for (start, lines_before) in starts {
+                assert_eq!(text[..start].matches('\n').count(), lines_before);
+                assert!(lines_before % 2 == 0 && (start == 0 || text.as_bytes()[start - 1] == b'\n'));
+            }
+        }
+    }
 }

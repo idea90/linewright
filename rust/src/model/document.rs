@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 use super::dimension::{DimensionLook, DimensionStyle, STANDARD_STYLE};
-use super::entities::{BYLAYER, BlockDef, BlockRef, DEFAULT_LAYER, Entity, EntityId, Shape};
+use super::entities::{BYLAYER, BlockDef, BlockRef, DEFAULT_LAYER, Entity, EntityId, IdMap, IdSet, Shape};
 use super::geometry::Point;
 use super::index::{Bounds, SpatialIndex};
 use super::styles::BYLAYER_LINETYPE;
-use crate::io::dxf::file::DxfFile;
+use crate::io::dxf::file::{DxfFile, Pair};
 
 pub const DEFAULT_LAYER_COLOR: i32 = 7;
 pub const DEFAULT_LINETYPE: &str = "Continuous";
@@ -52,8 +52,20 @@ impl Layer {
 #[derive(Default)]
 pub struct EntityStore {
     entities: Vec<Entity>,
-    positions: HashMap<EntityId, usize>,
+    positions: IdMap<EntityId, usize>,
     index: SpatialIndex,
+    /// A number no other state of any store has had, new whenever anything in this one changes: what was worked out
+    /// from the entities, such as their picture on screen, holds for as long as it stays the same.
+    revision: u64,
+    /// The box around everything, as last worked out, with the revision it was worked out for: commands ask for it
+    /// as they start, and going through every entity each time is slow in a large drawing.
+    extent: std::sync::Mutex<Option<(u64, Option<Bounds>)>>,
+}
+
+/// The next number for a store that has just changed.
+fn next_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl EntityStore {
@@ -62,7 +74,21 @@ impl EntityStore {
         store.index.reload(&entities);
         store.positions = entities.iter().enumerate().map(|(position, e)| (e.id, position)).collect();
         store.entities = entities;
+        store.revision = next_revision();
         store
+    }
+
+    /// See the field: the same number means the same entities, in the same order.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Note where the entities from `first` on now sit, after some were put in or taken out there.
+    fn reposition_from(&mut self, first: usize) {
+        for (position, entity) in self.entities.iter().enumerate().skip(first) {
+            self.positions.insert(entity.id, position);
+        }
+        self.revision = next_revision();
     }
 
     pub fn entities(&self) -> &[Entity] {
@@ -81,6 +107,7 @@ impl EntityStore {
         if let Some(&position) = self.positions.get(&state.id) {
             self.entities[position].copy_state(state);
             self.index.refresh(&self.entities[position]);
+            self.revision = next_revision();
         }
     }
 
@@ -95,11 +122,20 @@ impl EntityStore {
 
     /// The box around everything in the space, on any layer.
     pub fn extent(&self) -> Option<Bounds> {
-        self.entities
+        let mut kept = self.extent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((revision, extent)) = *kept
+            && revision == self.revision
+        {
+            return extent;
+        }
+        let extent = self
+            .entities
             .iter()
             .filter(|e| !matches!(e.shape, Shape::XLine { .. }))
             .filter_map(|e| self.index.bounds_of(e.id))
-            .reduce(Bounds::union)
+            .reduce(Bounds::union);
+        *kept = Some((self.revision, extent));
+        extent
     }
 }
 
@@ -205,6 +241,9 @@ pub struct Document {
     /// The loaded DXF file without the entities this document holds. Saving writes the document into it, so
     /// content Linewright cannot edit yet is kept.
     pub source: Option<DxfFile>,
+    /// The extended data other programs attached to the objects read from the file (DXF codes 1000 and up), by
+    /// object. Saving writes it back onto each object that is still in the drawing.
+    pub kept_xdata: HashMap<EntityId, Vec<Pair>>,
     pub skipped: BTreeMap<String, usize>,
     /// The named blocks the drawing's file defines, by upper-case name.
     pub blocks: BTreeMap<String, BlockRef>,
@@ -288,6 +327,7 @@ impl Document {
             wipeout_frame: 1,
             path: None,
             source: None,
+            kept_xdata: HashMap::new(),
             skipped: BTreeMap::new(),
             blocks: BTreeMap::new(),
             dimension_styles: vec![DimensionStyle::standard()],
@@ -321,6 +361,11 @@ impl Document {
 
     pub fn len(&self) -> usize {
         self.store.entities.len()
+    }
+
+    /// A number that is new whenever anything in the open space changes: see `EntityStore::revision`.
+    pub fn revision(&self) -> u64 {
+        self.store.revision
     }
 
     pub fn is_empty(&self) -> bool {
@@ -373,12 +418,14 @@ impl Document {
         self.store.index.add(&entity);
         self.store.positions.insert(entity.id, self.store.entities.len());
         self.store.entities.push(entity);
+        self.store.revision = next_revision();
     }
 
     pub fn insert(&mut self, position: usize, entity: Entity) {
         self.store.index.add(&entity);
-        self.store.entities.insert(position.min(self.store.entities.len()), entity);
-        self.reposition();
+        let position = position.min(self.store.entities.len());
+        self.store.entities.insert(position, entity);
+        self.store.reposition_from(position);
     }
 
     /// Where each entity sits. None for one that is not in the drawing.
@@ -388,14 +435,15 @@ impl Document {
 
     /// Remove many entities in one pass, returning them.
     pub fn remove_all(&mut self, ids: &[EntityId]) -> Vec<Entity> {
-        let doomed: HashSet<EntityId> = ids.iter().copied().collect();
-        let (removed, kept): (Vec<Entity>, Vec<Entity>) =
-            std::mem::take(&mut self.store.entities).into_iter().partition(|e| doomed.contains(&e.id));
-        self.store.entities = kept;
+        let doomed: IdSet = ids.iter().copied().filter(|id| self.store.positions.contains_key(id)).collect();
+        // Nothing before the first one taken out moves, so only what follows it is gone through.
+        let Some(first) = doomed.iter().filter_map(|id| self.store.positions.get(id)).min().copied() else { return vec![] };
+        let removed: Vec<Entity> = self.store.entities.extract_if(first.., |e| doomed.contains(&e.id)).collect();
         for entity in &removed {
             self.store.index.remove(entity.id);
+            self.store.positions.remove(&entity.id);
         }
-        self.reposition();
+        self.store.reposition_from(first);
         removed
     }
 
@@ -756,6 +804,7 @@ impl Document {
 
     fn reposition(&mut self) {
         self.store.positions = self.store.entities.iter().enumerate().map(|(position, e)| (e.id, position)).collect();
+        self.store.revision = next_revision();
     }
 
     pub fn layer(&self, name: &str) -> Option<&Layer> {
@@ -834,6 +883,10 @@ impl Document {
     /// The box around everything visible, or None for an empty drawing.
     /// Construction lines have no end, so they are left out.
     pub fn extent(&self) -> Option<Bounds> {
+        // With every layer on, everything is visible, and the store keeps that box from one asking to the next.
+        if self.layers.iter().all(Layer::shown) {
+            return self.store.extent();
+        }
         self.store
             .entities
             .iter()

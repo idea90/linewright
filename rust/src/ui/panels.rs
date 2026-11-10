@@ -91,13 +91,6 @@ fn swatch_text(color: Option<i32>, text: &str) -> WidgetText {
     job.into()
 }
 
-/// The one value they all share, or None when they differ or there are none.
-fn common<T: PartialEq + Clone>(values: impl IntoIterator<Item = T>) -> Option<T> {
-    let mut values = values.into_iter();
-    let first = values.next()?;
-    values.all(|v| v == first).then_some(first)
-}
-
 fn divider(ui: &mut egui::Ui, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(1.0, height), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, theme::BORDER_STRONG);
@@ -216,16 +209,33 @@ pub(super) struct GeneralValues {
 impl GeneralValues {
     pub(super) fn of(app: &LinewrightApp) -> GeneralValues {
         let document = app.controller.document();
-        let selected = app.controller.selected();
-        let any = !selected.is_empty();
-        GeneralValues {
-            layer: if any { common(selected.iter().map(|e| e.layer.clone())) } else { Some(document.current_layer.clone()) },
-            color: if any { common(selected.iter().map(|e| e.color)) } else { Some(document.current_color) },
-            linetype: if any { common(selected.iter().map(|e| e.linetype.clone())) } else { Some(document.current_linetype.clone()) },
-            linetype_scale: if any { common(selected.iter().map(|e| e.linetype_scale)) } else { Some(document.celtscale) },
-            lineweight: if any { common(selected.iter().map(|e| e.lineweight)) } else { Some(document.current_lineweight) },
-            layers: document.layers.iter().map(|l| (l.name.clone(), l.color)).collect(),
+        let layers = document.layers.iter().map(|l| (l.name.clone(), l.color)).collect();
+        let mut selected = app.controller.selected_in_place();
+        let Some(first) = selected.next() else {
+            return GeneralValues {
+                layer: Some(document.current_layer.clone()),
+                color: Some(document.current_color),
+                linetype: Some(document.current_linetype.clone()),
+                linetype_scale: Some(document.celtscale),
+                lineweight: Some(document.current_lineweight),
+                layers,
+            };
+        };
+        // This runs on every frame: the objects are looked at where they are, and no further than the first that
+        // shows every value differs.
+        let (mut layer, mut color, mut linetype) = (Some(&first.layer), Some(first.color), Some(&first.linetype));
+        let (mut linetype_scale, mut lineweight) = (Some(first.linetype_scale), Some(first.lineweight));
+        for entity in selected {
+            layer = layer.filter(|shared| **shared == entity.layer);
+            color = color.filter(|shared| *shared == entity.color);
+            linetype = linetype.filter(|shared| **shared == entity.linetype);
+            linetype_scale = linetype_scale.filter(|shared| *shared == entity.linetype_scale);
+            lineweight = lineweight.filter(|shared| *shared == entity.lineweight);
+            if layer.is_none() && color.is_none() && linetype.is_none() && linetype_scale.is_none() && lineweight.is_none() {
+                break;
+            }
         }
+        GeneralValues { layer: layer.cloned(), color, linetype: linetype.cloned(), linetype_scale, lineweight, layers }
     }
 }
 

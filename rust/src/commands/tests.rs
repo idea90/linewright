@@ -170,6 +170,26 @@ fn clicking_a_radius_measures_from_the_center() {
 }
 
 #[test]
+fn typing_a_point_for_a_radius_or_an_angle_measures_from_the_base_point() {
+    let mut host = FakeHost::default();
+    let mut session = start("CIRCLE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["10,10", "13,14"]);
+    assert_eq!(host.shapes(), vec![Shape::Circle { center: pt(10.0, 10.0), radius: 5.0 }]);
+    let mut session = start("CIRCLE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["10,10", "@0,2"]);
+    assert_eq!(host.shapes()[1], Shape::Circle { center: pt(10.0, 10.0), radius: 2.0 });
+    let mut session = start("CIRCLE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["10,10"]);
+    assert_eq!(session.submit_text("10,10", &mut host), Some("Enter a number greater than zero."), "the center gives no radius");
+    let target = line(pt(0.0, 0.0), pt(10.0, 0.0));
+    let mut host = FakeHost::with(vec![target.clone()]);
+    let mut session = start("ROTATE", &mut host, vec![target]);
+    typed(&mut session, &mut host, &["0,0", "0,5"]);
+    let Some(Shape::Line { end, .. }) = host.shapes().pop() else { panic!("no line") };
+    assert!(end.dist(pt(0.0, 10.0)) < 1e-9, "turned to point up: {end:?}");
+}
+
+#[test]
 fn three_point_arc() {
     let mut host = FakeHost::default();
     let mut session = start("ARC", &mut host, vec![]);
@@ -555,6 +575,23 @@ fn polygon_by_center_and_by_edge() {
 }
 
 #[test]
+fn polygon_radius_typed_as_a_number_levels_the_bottom_edge() {
+    let mut host = FakeHost::default();
+    let mut session = start("POLYGON", &mut host, vec![]);
+    typed(&mut session, &mut host, &["6", "0,0", "I", "10"]);
+    let Some(Shape::Polyline { vertices, closed: true }) = host.shapes().pop() else { panic!("no polygon") };
+    assert!(vertices.iter().all(|v| (v.point().dist(pt(0.0, 0.0)) - 10.0).abs() < 1e-9), "corners on the circle");
+    let lowest = vertices.iter().map(|v| v.y).fold(f64::INFINITY, f64::min);
+    let on_bottom = vertices.iter().filter(|v| (v.y - lowest).abs() < 1e-9).count();
+    assert_eq!(on_bottom, 2, "a level bottom edge");
+    let mut session = start("POLYGON", &mut host, vec![]);
+    typed(&mut session, &mut host, &["4", "0,0", "C", "10"]);
+    let Some(Shape::Polyline { vertices, .. }) = host.shapes().pop() else { panic!("no polygon") };
+    let corners: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
+    assert!(corners.iter().any(|c| c.dist(pt(-10.0, -10.0)) < 1e-9), "a square around the circle: {corners:?}");
+}
+
+#[test]
 fn mtext_hangs_its_lines_from_the_top_left_corner() {
     let mut host = FakeHost::default();
     let mut session = start("MTEXT", &mut host, vec![]);
@@ -673,6 +710,26 @@ fn xline_ray_donut_and_revcloud_draw_what_autocad_does() {
     let Some(Shape::Polyline { vertices, closed: true }) = host.shapes().pop() else { panic!() };
     assert_eq!(vertices.len(), 30, "60 around at about 2 each");
     assert!(vertices.iter().all(|v| v.bulge > 0.0), "arcs along a counter-clockwise outline bow out of it");
+    let mut session = start("REVCLOUD", &mut host, vec![]);
+    typed(&mut session, &mut host, &["A", "0.000001", "0,0", "1000,1000"]);
+    let Some(Shape::Polyline { vertices, .. }) = host.shapes().pop() else { panic!() };
+    assert_eq!(vertices.len(), 10_000, "an arc length far too short for the outline gives the most arcs a cloud has");
+}
+
+#[test]
+fn an_array_too_large_to_make_is_refused() {
+    let target = line(pt(0.0, 0.0), pt(1.0, 0.0));
+    let mut host = FakeHost::with(vec![target.clone()]);
+    let mut session = start("ARRAY", &mut host, vec![target.clone()]);
+    typed(&mut session, &mut host, &["R", "100000", "100000"]);
+    assert!(!session.active(), "it asks no more");
+    assert!(host.reports.iter().any(|r| r.starts_with("Too many elements in the array")), "{:?}", host.reports);
+    let mut session = start("ARRAY", &mut host, vec![target.clone()]);
+    typed(&mut session, &mut host, &["P", "0,0", "1e300"]);
+    assert!(!session.active() && host.entities.len() == 1, "nothing made");
+    let mut session = start("ARRAY", &mut host, vec![target]);
+    typed(&mut session, &mut host, &["R", "2", "3", "5", "5"]);
+    assert_eq!(host.entities.len(), 6, "an ordinary array still works");
 }
 
 #[test]

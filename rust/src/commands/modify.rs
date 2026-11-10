@@ -105,10 +105,29 @@ pub async fn array_command(io: Io, selected: Vec<Entity>) {
     }
 }
 
+/// The most items an array may have, AutoCAD's MAXARRAY.
+const MAX_ARRAY_ITEMS: usize = 100_000;
+/// The most objects one ARRAY may make, however few items hold them.
+const MAX_ARRAY_OBJECTS: usize = 1_000_000;
+
+/// Whether an array of so many items of these objects is small enough to make; it says so when it is not.
+fn array_fits(io: &Io, items: usize, objects: &[Entity]) -> bool {
+    let fits = items <= MAX_ARRAY_ITEMS && items.saturating_mul(objects.len()) <= MAX_ARRAY_OBJECTS;
+    if !fits {
+        io.step(Step::Report(format!(
+            "Too many elements in the array: the most is {MAX_ARRAY_ITEMS} items and {MAX_ARRAY_OBJECTS} objects."
+        )));
+    }
+    fits
+}
+
 async fn rectangular_array(io: &Io, objects: &[Entity]) {
     let size = extent_of(objects).map_or((1.0, 1.0), |b| (b.width().max(1e-9), b.height().max(1e-9)));
     let Some(rows) = count(io, "Enter the number of rows", 3.0).await else { return };
     let Some(columns) = count(io, "Enter the number of columns", 4.0).await else { return };
+    if !array_fits(io, rows.saturating_mul(columns), objects) {
+        return;
+    }
     let Some(row_spacing) = length(io, "Specify the distance between rows", size.1 * 1.5).await else { return };
     let Some(column_spacing) = length(io, "Specify the distance between columns", size.0 * 1.5).await else { return };
     let mut made = vec![];
@@ -128,6 +147,9 @@ async fn rectangular_array(io: &Io, objects: &[Entity]) {
 async fn polar_array(io: &Io, objects: &[Entity]) {
     let Some(Answer::Point(center)) = io.ask(Prompt::point("Specify center point of array:")).await else { return };
     let Some(items) = count(io, "Enter the number of items", 6.0).await else { return };
+    if !array_fits(io, items, objects) {
+        return;
+    }
     let prompt = Prompt::new(PromptKind::Angle, "Specify the angle to fill (+=ccw, -=cw) <360>:").default(Answer::Number(360.0));
     let Some(Answer::Number(fill)) = io.ask(prompt).await else { return };
     // A full circle shares its turn among all the items; anything less puts the last item at the end of it.

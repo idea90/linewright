@@ -52,6 +52,36 @@ fn every_kind_of_entity_survives_a_round_trip() {
 }
 
 #[test]
+fn extended_data_of_other_programs_survives_on_objects_linewright_writes() {
+    let entities = vec![line(pt(0.0, 0.0), pt(10.0, 5.0)), dimension(pt(0.0, 0.0), pt(10.0, 0.0), pt(5.0, 4.0), 0.0, 2.0)];
+    let mut file = dxf_from_document(&Document::with_entities(entities));
+    let theirs = [pair(1001, "SURVEY"), pair(1000, "peg 14"), pair(1040, "2.5")];
+    for kind in ["LINE", "DIMENSION"] {
+        let (start, end) = file.section("ENTITIES").unwrap();
+        let group = file.groups[start..end].iter_mut().find(|g| g.kind() == kind).expect("written");
+        if kind == "LINE" {
+            // AutoCAD's own data goes with how it draws the object, and is not kept.
+            group.0.extend([pair(1001, "ACAD"), pair(1000, "not kept")]);
+        }
+        group.0.extend(theirs.iter().cloned());
+    }
+    let mut document = document_from_dxf(DxfFile::parse(&file.to_bytes()).unwrap());
+    // Editing an object keeps what was attached to it.
+    let mut moved = document.entities()[0].clone();
+    moved.shape = Shape::Line { start: pt(1.0, 1.0), end: pt(11.0, 6.0) };
+    document.modify(&moved);
+    let saved = dxf_from_document(&round_trip(&document));
+    for kind in ["LINE", "DIMENSION"] {
+        let (start, end) = saved.section("ENTITIES").unwrap();
+        let group = saved.groups[start..end].iter().find(|g| g.kind() == kind).expect("written");
+        let theirs_at = group.0.iter().position(|p| p.code == 1001 && p.value == "SURVEY").unwrap_or_else(|| panic!("{kind} lost it"));
+        assert_eq!(group.0[theirs_at..theirs_at + 3], theirs, "{kind}");
+        assert_eq!(group.0.iter().filter(|p| p.value == "SURVEY").count(), 1, "{kind} has it once");
+        assert!(!group.0.iter().any(|p| p.value == "not kept"), "{kind}");
+    }
+}
+
+#[test]
 fn a_new_drawing_is_in_millimeters() {
     let back = round_trip(&Document::new());
     assert_eq!(unit_names(&back), ("millimeters", "mm"));

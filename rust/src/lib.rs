@@ -11,4 +11,5 @@ pub mod model;
 pub mod selection;
 pub mod shx;
 pub mod snap;
+pub mod threads;
 pub mod ui;
