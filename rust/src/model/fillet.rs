@@ -53,7 +53,7 @@ pub fn fillet_lines(first: &Entity, first_pick: Point, second: &Entity, second_p
     let toward_first = toward_pick((a, b), first_pick, corner);
     let toward_second = toward_pick((c, d), second_pick, corner);
     let angle = toward_first.dot(toward_second).clamp(-1.0, 1.0).acos();
-    if angle < EPSILON || angle > std::f64::consts::PI - EPSILON {
+    if !(EPSILON..=std::f64::consts::PI - EPSILON).contains(&angle) {
         return Err("The lines are parallel.".into());
     }
     let tangent_length = radius / (angle / 2.0).tan();

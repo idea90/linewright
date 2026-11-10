@@ -367,7 +367,17 @@ impl Session {
             prompt.default.clone()
         } else {
             match Self::parse(prompt, text) {
-                None => return Some(invalid_answer(prompt.kind)),
+                None => {
+                    // A point typed where a distance or an angle is asked measures it from the base point, as a click does.
+                    let measured = matches!(prompt.kind, PromptKind::Number | PromptKind::Length | PromptKind::Angle);
+                    return match prompt.base.and_then(|base| parse_point(text, Some(base)).filter(|point| *point != base)) {
+                        Some(point) if measured => {
+                            self.submit_point(point, host);
+                            None
+                        }
+                        _ => Some(invalid_answer(prompt.kind)),
+                    };
+                }
                 answer => answer,
             }
         };

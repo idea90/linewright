@@ -142,6 +142,12 @@ fn middle_span(mut values: Vec<f64>) -> f64 {
     trimmed[trimmed.len() - 1] - trimmed[0]
 }
 
+/// How many cells lie from the first to the last, both counted. Coordinates far beyond any drawing land in the
+/// outermost cells an i64 can name, so the count stops at the largest number rather than wrapping round.
+fn cells_spanned(first: i64, last: i64) -> i64 {
+    last.saturating_sub(first).saturating_add(1)
+}
+
 impl SpatialIndex {
     pub fn len(&self) -> usize {
         self.records.len()
@@ -197,7 +203,7 @@ impl SpatialIndex {
         let size = self.cell_size;
         let columns = (area.x0 / size).floor() as i64..=(area.x1 / size).floor() as i64;
         let rows = (area.y0 / size).floor() as i64..=(area.y1 / size).floor() as i64;
-        let cell_count = (columns.end() - columns.start() + 1).saturating_mul(rows.end() - rows.start() + 1);
+        let cell_count = cells_spanned(*columns.start(), *columns.end()).saturating_mul(cells_spanned(*rows.start(), *rows.end()));
         let mut found: Vec<EntityId> = if cell_count > self.cells.len() as i64 {
             self.records.keys().copied().collect()
         } else {
@@ -239,7 +245,7 @@ impl SpatialIndex {
         let size = self.cell_size;
         let (c0, c1) = ((bounds.x0 / size).floor() as i64, (bounds.x1 / size).floor() as i64);
         let (r0, r1) = ((bounds.y0 / size).floor() as i64, (bounds.y1 / size).floor() as i64);
-        if (c1 - c0 + 1).saturating_mul(r1 - r0 + 1) > MAX_CELLS_PER_ENTITY {
+        if cells_spanned(c0, c1).saturating_mul(cells_spanned(r0, r1)) > MAX_CELLS_PER_ENTITY {
             return None;
         }
         Some((c0..=c1).flat_map(|c| (r0..=r1).map(move |r| (c, r))).collect())
@@ -305,6 +311,18 @@ mod tests {
         index.reload(&entities);
         let far = index.query(&Bounds::square_around(pt(5e5, 0.0), 1.0));
         assert_eq!(far, vec![entities[100].id]);
+    }
+
+    #[test]
+    fn coordinates_beyond_the_grid_neither_wrap_nor_stall() {
+        let mut entities: Vec<Entity> = (0..10).map(|i| circle(pt(i as f64, 0.0), 0.5)).collect();
+        entities.push(line(pt(-1e9, 1e9), pt(1e308, 1e308)));
+        let mut index = SpatialIndex::default();
+        index.reload(&entities);
+        let everywhere = Bounds { x0: -1e300, y0: -1e300, x1: 1e300, y1: 1e300 };
+        assert_eq!(index.query(&everywhere).len(), entities.len());
+        let near = index.query(&Bounds::square_around(pt(3.0, 0.0), 0.1));
+        assert!(near.contains(&entities[3].id) && !near.contains(&entities[7].id), "{near:?}");
     }
 
     #[test]
