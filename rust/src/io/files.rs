@@ -169,12 +169,26 @@ pub fn save_drawing(document: &mut Document, path: &Path) -> Result<(), FileErro
     Ok(())
 }
 
-/// Rename when the temp folder is on the same disk, copy when it is not.
+/// Rename when the temp folder is on the same disk. When it is not (a /tmp of its own is usual on Linux), copy
+/// beside the target and rename that, so a full disk or a crash half way leaves the existing file as it was.
 fn move_into_place(staged: &Path, target: &Path) -> std::io::Result<()> {
     if fs::rename(staged, target).is_ok() {
         return Ok(());
     }
-    fs::copy(staged, target).map(|_| ())
+    match copy_beside(staged, target) {
+        Ok(beside) => beside.persist(target).map(|_| ()).map_err(|e| e.error),
+        // A folder that takes no new files still lets a file in it be written over.
+        Err(_) => fs::copy(staged, target).map(|_| ()),
+    }
+}
+
+/// A copy of the staged file in the target's own folder, under a name of its own, gone again unless it is kept.
+fn copy_beside(staged: &Path, target: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    let folder = target.parent().filter(|folder| !folder.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let beside = tempfile::Builder::new().prefix(".linewright_").suffix(".tmp").tempfile_in(folder)?;
+    // The copy takes the staged file's permissions too, an ordinary file's rather than a temp file's.
+    fs::copy(staged, beside.path())?;
+    Ok(beside)
 }
 
 fn dwg_to_dxf(path: &Path) -> Result<Vec<u8>, FileError> {
@@ -535,6 +549,23 @@ mod tests {
     use super::*;
     use crate::model::entities::{circle, line};
     use crate::model::geometry::pt;
+
+    #[test]
+    fn a_save_from_another_disk_replaces_the_file_whole() {
+        let (temp, folder) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (staged, target) = (temp.path().join("plan.dxf"), folder.path().join("plan.dxf"));
+        fs::write(&staged, "new drawing").unwrap();
+        fs::write(&target, "old drawing").unwrap();
+        // What move_into_place does when the rename across disks is refused.
+        let beside = copy_beside(&staged, &target).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old drawing", "untouched until the copy is whole");
+        beside.persist(&target).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new drawing");
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1, "nothing else is left in the folder");
+        // A copy that is not kept, as when the disk fills up, takes itself away.
+        drop(copy_beside(&staged, &target).unwrap());
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn a_damaged_file_is_recovered_with_what_is_left() {

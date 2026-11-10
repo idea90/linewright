@@ -1212,6 +1212,31 @@ pub fn layer_name_as_defined(layers: &[Layer], name: &str) -> String {
     layers.iter().find(|l| l.name.eq_ignore_ascii_case(name)).map_or(name.to_string(), |l| l.name.clone())
 }
 
+/// The first code of extended data: what programs attach to an object for themselves, after everything else it has.
+const FIRST_XDATA_CODE: i32 = 1000;
+/// Each program's extended data starts with its name under this code.
+const XDATA_APPLICATION_CODE: i32 = 1001;
+/// AutoCAD's own name there. What it keeps there goes with how it draws the object (a dimension's overrides, say),
+/// and is written afresh with the object rather than kept.
+const AUTOCAD_APPLICATION: &str = "ACAD";
+
+/// Note the extended data other programs attached to an entity being read, so that saving puts it back.
+fn keep_foreign_xdata(document: &mut Document, id: EntityId, group: &Group) {
+    let Some(start) = group.0.iter().position(|p| p.code >= FIRST_XDATA_CODE) else { return };
+    let (mut kept, mut foreign) = (vec![], false);
+    for pair in &group.0[start..] {
+        if pair.code == XDATA_APPLICATION_CODE {
+            foreign = !pair.value.trim().eq_ignore_ascii_case(AUTOCAD_APPLICATION);
+        }
+        if foreign {
+            kept.push(pair.clone());
+        }
+    }
+    if !kept.is_empty() {
+        document.kept_xdata.insert(id, kept);
+    }
+}
+
 pub fn document_from_dxf(mut file: DxfFile) -> Document {
     let mut document = Document::new();
     document.layers = read_layers(&file);
@@ -1280,6 +1305,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                     if let Some(handle) = run[0].handle() {
                         handles.insert(handle.trim().to_uppercase(), entity.id);
                     }
+                    keep_foreign_xdata(&mut document, entity.id, &run[0]);
                     if run[0].kind() == "HATCH" && run[0].int(71).unwrap_or(0) != 0 {
                         // One closed object for each loop, or the hatch follows nothing here.
                         let codes = run[0].0.iter().take_while(|p| p.code < 1000);
@@ -1338,6 +1364,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                         if let Some(handle) = run[0].handle() {
                             handles.insert(handle.trim().to_uppercase(), entity.id);
                         }
+                        keep_foreign_xdata(&mut document, entity.id, &run[0]);
                         on_layout.push(entity);
                         if DIMENSION_KINDS.contains(&run[0].kind()) || run[0].kind() == "ACAD_TABLE" {
                             stale_blocks.extend(run[0].text(2).map(|n| n.trim().to_string()));
@@ -2926,7 +2953,7 @@ fn write_entities(
     file: &mut DxfFile,
     writer: &mut Writer,
     linetypes: &mut BTreeMap<String, String>,
-    entities: &[Entity],
+    (entities, kept_xdata): (&[Entity], &HashMap<EntityId, Vec<Pair>>),
     owner: &str,
     (style_names, dimension_style): (&HashMap<String, String>, &str),
 ) -> Vec<Group> {
@@ -2950,7 +2977,11 @@ fn write_entities(
             }
             _ => dimension_style,
         };
-        let written = writer.entity(entity, &linetype, style, owner);
+        let mut written = writer.entity(entity, &linetype, style, owner);
+        // What other programs attached to the object goes back after everything Linewright writes for it.
+        if let (Some(first), Some(kept)) = (written.first_mut(), kept_xdata.get(&entity.id)) {
+            first.0.extend(kept.iter().cloned());
+        }
         if let Some(handle) = written.first().and_then(|g| g.handle()) {
             writer.entity_handles.insert(entity.id, handle.trim().to_string());
         }
@@ -3014,7 +3045,14 @@ fn write_layouts(
     let (Some(paper_record), Some(_), true) = (paper_record.clone(), dictionary, writer.modern) else {
         let owner = paper_record.unwrap_or_else(|| "0".into());
         for (index, _) in document.layouts.iter().enumerate() {
-            paper.extend(write_entities(file, writer, linetypes, document.space_entities(Some(index)), &owner, styles));
+            paper.extend(write_entities(
+                file,
+                writer,
+                linetypes,
+                (document.space_entities(Some(index)), &document.kept_xdata),
+                &owner,
+                styles,
+            ));
         }
         for group in &mut paper {
             group.on_paper();
@@ -3131,7 +3169,8 @@ fn write_layouts(
         {
             file.groups[at].set(340, object.clone());
         }
-        let mut groups = write_entities(file, writer, linetypes, document.space_entities(Some(index)), &record, styles);
+        let mut groups =
+            write_entities(file, writer, linetypes, (document.space_entities(Some(index)), &document.kept_xdata), &record, styles);
         if record.eq_ignore_ascii_case(&paper_record) {
             for group in &mut groups {
                 group.on_paper();
@@ -3764,7 +3803,8 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     let mut linetypes: BTreeMap<String, String> = BTreeMap::new();
     let styles = (&style_names, dimension_style.as_str());
     let owner = writer.model_space.clone();
-    let mut entity_groups = write_entities(&mut file, &mut writer, &mut linetypes, document.space_entities(None), &owner, styles);
+    let mut entity_groups =
+        write_entities(&mut file, &mut writer, &mut linetypes, (document.space_entities(None), &document.kept_xdata), &owner, styles);
     entity_groups.extend(write_layouts(&mut file, &mut writer, &mut linetypes, document, styles));
     // Blocks the file lacks, with their entities (which may insert further blocks the file lacks).
     while let Some(block) = writer.blocks_to_define.pop() {

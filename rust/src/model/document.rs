@@ -7,7 +7,7 @@ use super::entities::{BYLAYER, BlockDef, BlockRef, DEFAULT_LAYER, Entity, Entity
 use super::geometry::Point;
 use super::index::{Bounds, SpatialIndex};
 use super::styles::BYLAYER_LINETYPE;
-use crate::io::dxf::file::DxfFile;
+use crate::io::dxf::file::{DxfFile, Pair};
 
 pub const DEFAULT_LAYER_COLOR: i32 = 7;
 pub const DEFAULT_LINETYPE: &str = "Continuous";
@@ -205,6 +205,9 @@ pub struct Document {
     /// The loaded DXF file without the entities this document holds. Saving writes the document into it, so
     /// content Linewright cannot edit yet is kept.
     pub source: Option<DxfFile>,
+    /// The extended data other programs attached to the objects read from the file (DXF codes 1000 and up), by
+    /// object. Saving writes it back onto each object that is still in the drawing.
+    pub kept_xdata: HashMap<EntityId, Vec<Pair>>,
     pub skipped: BTreeMap<String, usize>,
     /// The named blocks the drawing's file defines, by upper-case name.
     pub blocks: BTreeMap<String, BlockRef>,
@@ -288,6 +291,7 @@ impl Document {
             wipeout_frame: 1,
             path: None,
             source: None,
+            kept_xdata: HashMap::new(),
             skipped: BTreeMap::new(),
             blocks: BTreeMap::new(),
             dimension_styles: vec![DimensionStyle::standard()],
