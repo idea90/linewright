@@ -1,4 +1,5 @@
 pub mod aci;
+pub mod gpu;
 pub mod pdf;
 pub mod plot;
 pub mod raster;

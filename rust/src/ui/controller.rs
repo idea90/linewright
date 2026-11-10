@@ -1,7 +1,7 @@
 //! Connects typed input, clicks and the cursor to the running command, and its results to the drawing.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::undo::{Change, LayerState, UndoStack};
@@ -999,8 +999,7 @@ impl Controller {
     /// After undo, redo or any other change: forget selected objects that are gone or can no longer be edited.
     pub fn after_change(&mut self) {
         let document = &self.drawing.document;
-        let alive: HashSet<EntityId> = document.entities().iter().filter(|e| document.is_editable(e)).map(|e| e.id).collect();
-        self.selection.keep_only(&alive);
+        self.selection.keep_only(|id| document.get(id).is_some_and(|e| document.is_editable(e)));
         self.reapply_cursor();
     }
 

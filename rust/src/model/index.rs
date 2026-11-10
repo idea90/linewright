@@ -4,10 +4,8 @@
 //! query instead of being filed. The cell size follows the drawing, so a few stray objects far from the rest do not
 //! stretch it.
 
-use std::collections::HashMap;
-
 use super::dimension::dimension_parts;
-use super::entities::{Entity, EntityId, Shape};
+use super::entities::{Entity, EntityId, IdMap, Shape};
 pub use super::geometry::Bounds;
 use super::geometry::{Point, bulge_arc, pt};
 use super::parts::entity_parts;
@@ -123,15 +121,15 @@ struct Record {
 
 pub struct SpatialIndex {
     pub cell_size: f64,
-    records: HashMap<EntityId, Record>,
-    cells: HashMap<Cell, Vec<EntityId>>,
+    records: IdMap<EntityId, Record>,
+    cells: IdMap<Cell, Vec<EntityId>>,
     oversized: Vec<EntityId>,
     next_order: u64,
 }
 
 impl Default for SpatialIndex {
     fn default() -> Self {
-        SpatialIndex { cell_size: DEFAULT_CELL_SIZE, records: HashMap::new(), cells: HashMap::new(), oversized: vec![], next_order: 0 }
+        SpatialIndex { cell_size: DEFAULT_CELL_SIZE, records: IdMap::default(), cells: IdMap::default(), oversized: vec![], next_order: 0 }
     }
 }
 
@@ -204,8 +202,10 @@ impl SpatialIndex {
         let columns = (area.x0 / size).floor() as i64..=(area.x1 / size).floor() as i64;
         let rows = (area.y0 / size).floor() as i64..=(area.y1 / size).floor() as i64;
         let cell_count = cells_spanned(*columns.start(), *columns.end()).saturating_mul(cells_spanned(*rows.start(), *rows.end()));
-        let mut found: Vec<EntityId> = if cell_count > self.cells.len() as i64 {
-            self.records.keys().copied().collect()
+        // Each one found with its place in the drawing order, looked up once, so sorting needs no more look-ups.
+        let touching = |(id, record): (&EntityId, &Record)| record.bounds.touches(area).then_some((record.order, *id));
+        let mut found: Vec<(u64, EntityId)> = if cell_count > self.cells.len() as i64 {
+            self.records.iter().filter_map(touching).collect()
         } else {
             let mut ids: Vec<EntityId> = Vec::new();
             for column in columns {
@@ -218,11 +218,11 @@ impl SpatialIndex {
             ids.extend(&self.oversized);
             ids.sort_unstable();
             ids.dedup();
-            ids
+            ids.iter().filter_map(|id| touching((id, self.records.get(id)?))).collect()
         };
-        found.retain(|id| self.records[id].bounds.touches(area));
-        found.sort_by_key(|id| self.records[id].order);
-        found
+        // No two have the same place, so the faster sort that may swap equals gives the same order.
+        found.sort_unstable();
+        found.into_iter().map(|(_, id)| id).collect()
     }
 
     /// All ids with their boxes, in drawing order.
