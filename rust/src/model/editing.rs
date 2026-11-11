@@ -275,14 +275,38 @@ fn links(entity: &Entity) -> Option<Vec<Link>> {
 }
 
 /// Lines, arcs and open polylines that meet end to end, joined into polylines (or one line, when the chain is
-/// straight). Returns the objects joined and what replaces them; None when nothing joins.
+/// straight). Lines along one straight line join across the gaps between them. Returns the objects joined and what replaces them; None when nothing joins.
 pub fn join(entities: &[Entity]) -> Option<(Vec<Entity>, Vec<Entity>)> {
-    let mut pool: Vec<(Entity, Vec<Link>)> = entities.iter().filter_map(|e| Some((e.clone(), links(e)?))).collect();
     let size = entities.iter().map(|e| crate::model::index::entity_extent(e).diagonal()).fold(0.0, f64::max).max(1.0);
     let near = |a: Point, b: Point| a.dist(b) <= JOIN_TOLERANCE * size;
+    // Each piece to chain, with the objects it stands for: one object, or lines in a line already made one.
+    let mut pool: Vec<(Vec<Entity>, Vec<Link>)> = vec![];
+    for entity in entities {
+        let Some(own) = links(entity) else { continue };
+        // Lines along one straight line join whatever the gaps between them, as in AutoCAD.
+        let in_line = |piece: &(Vec<Entity>, Vec<Link>)| match (&entity.shape, &piece.0[0].shape, &piece.1[..]) {
+            (Shape::Line { start, end }, Shape::Line { .. }, [span]) => {
+                let along = span.end - span.start;
+                let off = |p: Point| along.cross(p - span.start).abs() <= JOIN_TOLERANCE * size * along.length();
+                along.length() > 0.0 && off(*start) && off(*end)
+            }
+            _ => false,
+        };
+        match pool.iter_mut().find(|piece| in_line(piece)) {
+            Some((members, span)) => {
+                let (from, along) = (span[0].start, span[0].end - span[0].start);
+                let at = |p: Point| along.dot(p - from);
+                let mut ends = [span[0].start, span[0].end, own[0].start, own[0].end];
+                ends.sort_by(|a, b| at(*a).total_cmp(&at(*b)));
+                span[0] = Link { start: ends[0], end: ends[3], bulge: 0.0 };
+                members.push(entity.clone());
+            }
+            None => pool.push((vec![entity.clone()], own)),
+        }
+    }
     let (mut removed, mut added) = (vec![], vec![]);
     while let Some((first, mut chain)) = pool.pop() {
-        let mut members = vec![first];
+        let mut members = first;
         loop {
             let (start, end) = (chain[0].start, chain[chain.len() - 1].end);
             let found = pool.iter().position(|(_, l)| {
@@ -302,7 +326,7 @@ pub fn join(entities: &[Entity]) -> Option<(Vec<Entity>, Vec<Entity>)> {
             } else {
                 chain.splice(0..0, reversed());
             }
-            members.push(entity);
+            members.extend(entity);
         }
         if members.len() < 2 {
             continue;

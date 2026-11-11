@@ -34,7 +34,8 @@ pub fn line_line_meeting(a: Point, b: Point, c: Point, d: Point) -> Option<Point
     Some(a + d1 * along)
 }
 
-fn line_circle(start: Point, end: Point, center: Point, radius: f64) -> Vec<Point> {
+/// Where the endless line through two points crosses a circle.
+pub fn line_circle(start: Point, end: Point, center: Point, radius: f64) -> Vec<Point> {
     let d = end - start;
     let f = start - center;
     let a = d.dot(d);
@@ -54,7 +55,7 @@ fn line_circle(start: Point, end: Point, center: Point, radius: f64) -> Vec<Poin
     parameters.into_iter().map(|t| start + d * t).collect()
 }
 
-fn circle_circle(c1: Point, r1: f64, c2: Point, r2: f64) -> Vec<Point> {
+pub fn circle_circle(c1: Point, r1: f64, c2: Point, r2: f64) -> Vec<Point> {
     let distance = c1.dist(c2);
     let slack = TOLERANCE * (r1 + r2 + distance);
     if distance == 0.0 || distance > r1 + r2 + slack || distance < (r1 - r2).abs() - slack {

@@ -190,6 +190,73 @@ fn typing_a_point_for_a_radius_or_an_angle_measures_from_the_base_point() {
 }
 
 #[test]
+fn pline_arcs_carry_on_from_the_segment_before() {
+    let mut host = FakeHost::default();
+    let mut session = start("PLINE", &mut host, vec![]);
+    // East along the bottom, a half circle up and back, then a straight run west.
+    typed(&mut session, &mut host, &["0,0", "10,0", "A", "10,10", "L", "0,10", ""]);
+    let Some(Shape::Polyline { vertices, closed: false }) = host.shapes().pop() else { panic!("no polyline") };
+    let bulges: Vec<f64> = vertices.iter().map(|v| (v.bulge * 1e9).round() / 1e9).collect();
+    assert_eq!(bulges, vec![0.0, 1.0, 0.0, 0.0], "a half circle turning left has a bulge of 1");
+    // An arc through a second point, and closing with an arc.
+    let mut session = start("PLINE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["0,0", "A", "S", "5,5", "10,0", "0,-10", "CL"]);
+    let Some(Shape::Polyline { vertices, closed: true }) = host.shapes().pop() else { panic!("no closed polyline") };
+    assert!((vertices[0].bulge + 1.0).abs() < 1e-9, "through 5,5 the arc turns right: {}", vertices[0].bulge);
+    assert!(vertices[2].bulge != 0.0, "the closing segment is an arc too");
+}
+
+#[test]
+fn rotate_and_scale_take_copy_and_reference() {
+    let target = line(pt(0.0, 0.0), pt(10.0, 0.0));
+    let mut host = FakeHost::with(vec![target.clone()]);
+    let mut session = start("ROTATE", &mut host, vec![target.clone()]);
+    typed(&mut session, &mut host, &["0,0", "C", "90"]);
+    assert_eq!(host.entities.len(), 2, "Copy keeps the original");
+    let Some(Shape::Line { end, .. }) = host.shapes().pop() else { panic!("no line") };
+    assert!(end.dist(pt(0.0, 10.0)) < 1e-9, "{end:?}");
+    // From 30 degrees to 75 is a turn of 45.
+    let mut session = start("ROTATE", &mut host, vec![target.clone()]);
+    typed(&mut session, &mut host, &["0,0", "R", "30", "75"]);
+    let Shape::Line { end, .. } = host.entities[0].shape else { panic!("no line") };
+    assert!(end.dist(pt(50f64.sqrt(), 50f64.sqrt())) < 1e-9, "{end:?}");
+    // A length of 10 brought to 25 is a factor of 2.5.
+    let other = line(pt(0.0, 0.0), pt(0.0, 4.0));
+    let mut host = FakeHost::with(vec![other.clone()]);
+    let mut session = start("SCALE", &mut host, vec![other.clone()]);
+    typed(&mut session, &mut host, &["0,0", "R", "10", "25"]);
+    assert_eq!(host.shapes(), vec![Shape::Line { start: pt(0.0, 0.0), end: pt(0.0, 10.0) }]);
+    let scaled = host.entities[0].clone();
+    let mut session = start("SCALE", &mut host, vec![scaled]);
+    typed(&mut session, &mut host, &["0,0", "C", "2"]);
+    assert_eq!(host.entities.len(), 2, "Copy keeps the original");
+}
+
+#[test]
+fn join_closes_gaps_between_lines_in_a_line_and_area_measures_an_ellipse() {
+    let (left, right) = (line(pt(0.0, 0.0), pt(3.0, 0.0)), line(pt(6.0, 0.0), pt(10.0, 0.0)));
+    let up = line(pt(10.0, 0.0), pt(10.0, 5.0));
+    let aside = line(pt(0.0, 1.0), pt(3.0, 1.0));
+    let mut host = FakeHost::with(vec![left.clone(), right.clone(), up.clone(), aside.clone()]);
+    let mut session = start("JOIN", &mut host, vec![left, right, up, aside]);
+    typed(&mut session, &mut host, &[]);
+    let shapes = host.shapes();
+    assert_eq!(shapes.len(), 2, "the parallel line stays as it is: {shapes:?}");
+    let Some(Shape::Polyline { vertices, closed: false }) = shapes.iter().find(|s| matches!(s, Shape::Polyline { .. })) else {
+        panic!("the two lines in a line and the one that meets them make one polyline: {shapes:?}")
+    };
+    let corners: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
+    assert!(
+        corners == [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 5.0)] || corners == [pt(10.0, 5.0), pt(10.0, 0.0), pt(0.0, 0.0)],
+        "{corners:?}"
+    );
+    let oval = crate::model::entities::ellipse(pt(0.0, 0.0), pt(4.0, 0.0), 0.5);
+    let measured = crate::model::measure::measure_entity(&oval).expect("a whole ellipse has an area");
+    assert!((measured.area - std::f64::consts::PI * 8.0).abs() < 1e-9);
+    assert!((measured.perimeter - 19.3769).abs() < 1e-3, "{}", measured.perimeter);
+}
+
+#[test]
 fn three_point_arc() {
     let mut host = FakeHost::default();
     let mut session = start("ARC", &mut host, vec![]);

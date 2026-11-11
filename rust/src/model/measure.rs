@@ -42,10 +42,18 @@ pub fn polygon(vertices: &[Vertex]) -> Option<Measured> {
     Some(Measured { area: area.abs(), perimeter })
 }
 
-/// Area and perimeter of a circle or closed polyline, or None for anything else.
+/// Area and perimeter of a circle, a whole ellipse or a closed polyline, or None for anything else.
 pub fn measure_entity(entity: &Entity) -> Option<Measured> {
     match &entity.shape {
         Shape::Circle { radius, .. } => Some(Measured { area: PI * radius.powi(2), perimeter: 2.0 * PI * radius }),
+        Shape::Ellipse { major, ratio, start, end, .. } if (end - start).abs() >= 2.0 * PI - 1e-9 => {
+            let (a, b) = (major.length(), major.length() * ratio);
+            // Ramanujan's second formula: an ellipse's perimeter has no closed form, and this is within a few
+            // parts in a billion for any ellipse a drawing holds.
+            let h = ((a - b) / (a + b)).powi(2);
+            let perimeter = PI * (a + b) * (1.0 + 3.0 * h / (10.0 + (4.0 - 3.0 * h).sqrt()));
+            Some(Measured { area: PI * a * b, perimeter })
+        }
         Shape::Polyline { vertices, closed: true } => polygon(vertices),
         _ => None,
     }

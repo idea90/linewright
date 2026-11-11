@@ -5,7 +5,7 @@ use super::defaults::Defaults;
 use super::format_general;
 use super::prompts::{Answer, Io, Picked, Prompt, PromptKind, Step};
 use crate::model::entities::{Entity, Shape};
-use crate::model::fillet::{fillet_lines, fillet_polyline, fillet_polyline_corner};
+use crate::model::fillet::{fillet_curves, fillet_lines, fillet_polyline, fillet_polyline_corner};
 use crate::model::geometry::Point;
 use crate::model::offset::offset_entity;
 use crate::model::transform::{Similarity, reflection, rotation, scaling, transform_entity, transform_shape, translation};
@@ -112,20 +112,57 @@ pub async fn copy(io: Io, selected: Vec<Entity>) {
     }
 }
 
+const COPY: &str = "C";
+const REFERENCE: &str = "R";
+
+/// Rotated or scaled objects go in place of the originals, or beside them once Copy was chosen.
+fn place(io: &Io, objects: &[Entity], sim: &Similarity, copy: bool) {
+    io.step(if copy { Step::Commit(copies(objects, sim)) } else { Step::Modify(changes(objects, sim)) });
+}
+
+/// The number a Reference option starts from: an angle or a length, with what Enter gives.
+async fn reference(io: &Io, kind: PromptKind, message: &str, default: f64) -> Option<f64> {
+    match io.ask(Prompt::new(kind, message).default(Answer::Number(default))).await {
+        Some(Answer::Number(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// ROTATE: by an angle typed or shown, with Copy to keep the originals and Reference to turn from one angle to
+/// another.
 pub async fn rotate(io: Io, selected: Vec<Entity>) {
     let objects = objects_to_edit(&io, selected).await;
     if objects.is_empty() {
         return;
     }
     let Some(base) = base_point(&io).await else { return };
-    let prompt = Prompt::new(PromptKind::Angle, "Specify rotation angle:")
-        .base(base)
-        .preview(preview(&objects, move |cursor| rotation(base, base.angle_to(cursor))));
-    if let Some(Answer::Number(angle)) = io.ask(prompt).await {
-        io.step(Step::Modify(changes(&objects, &rotation(base, angle))));
+    let mut copy = false;
+    loop {
+        let prompt = Prompt::new(PromptKind::Angle, "Specify rotation angle or [Copy/Reference]:")
+            .base(base)
+            .options(&[COPY, REFERENCE])
+            .preview(preview(&objects, move |cursor| rotation(base, base.angle_to(cursor))));
+        match io.ask(prompt).await {
+            Some(Answer::Number(angle)) => return place(&io, &objects, &rotation(base, angle), copy),
+            Some(Answer::Keyword(k)) if k == COPY => {
+                copy = true;
+                io.step(Step::Report("Rotating a copy of the selected objects.".into()));
+            }
+            Some(Answer::Keyword(k)) if k == REFERENCE => {
+                let Some(from) = reference(&io, PromptKind::Angle, "Specify the reference angle <0>:", 0.0).await else { return };
+                let shown = preview(&objects, move |cursor| rotation(base, base.angle_to(cursor) - from));
+                let prompt = Prompt::new(PromptKind::Angle, "Specify the new angle:").base(base).preview(shown);
+                if let Some(Answer::Number(to)) = io.ask(prompt).await {
+                    place(&io, &objects, &rotation(base, to - from), copy);
+                }
+                return;
+            }
+            _ => return,
+        }
     }
 }
 
+/// SCALE: by a factor typed or shown, with Copy to keep the originals and Reference to bring one length to another.
 pub async fn scale(io: Io, selected: Vec<Entity>) {
     let objects = objects_to_edit(&io, selected).await;
     if objects.is_empty() {
@@ -133,12 +170,36 @@ pub async fn scale(io: Io, selected: Vec<Entity>) {
     }
     let Some(base) = base_point(&io).await else { return };
     let shown: Vec<Entity> = objects.iter().take(MAX_PREVIEW_ENTITIES).cloned().collect();
-    let prompt = Prompt::new(PromptKind::Number, "Specify scale factor:").base(base).preview(move |cursor| {
-        let factor = base.dist(cursor);
-        if factor > 0.0 { copies(&shown, &scaling(base, factor)) } else { vec![] }
-    });
-    if let Some(Answer::Number(factor)) = io.ask(prompt).await {
-        io.step(Step::Modify(changes(&objects, &scaling(base, factor))));
+    let mut copy = false;
+    loop {
+        let rubber = shown.clone();
+        let prompt = Prompt::new(PromptKind::Number, "Specify scale factor or [Copy/Reference]:")
+            .base(base)
+            .options(&[COPY, REFERENCE])
+            .preview(move |cursor| {
+                let factor = base.dist(cursor);
+                if factor > 0.0 { copies(&rubber, &scaling(base, factor)) } else { vec![] }
+            });
+        match io.ask(prompt).await {
+            Some(Answer::Number(factor)) => return place(&io, &objects, &scaling(base, factor), copy),
+            Some(Answer::Keyword(k)) if k == COPY => {
+                copy = true;
+                io.step(Step::Report("Scaling a copy of the selected objects.".into()));
+            }
+            Some(Answer::Keyword(k)) if k == REFERENCE => {
+                let Some(from) = reference(&io, PromptKind::Number, "Specify reference length <1>:", 1.0).await else { return };
+                let rubber = shown.clone();
+                let prompt = Prompt::new(PromptKind::Number, "Specify new length:").base(base).preview(move |cursor| {
+                    let factor = base.dist(cursor) / from;
+                    if factor > 0.0 { copies(&rubber, &scaling(base, factor)) } else { vec![] }
+                });
+                if let Some(Answer::Number(to)) = io.ask(prompt).await {
+                    place(&io, &objects, &scaling(base, to / from), copy);
+                }
+                return;
+            }
+            _ => return,
+        }
     }
 }
 
@@ -278,13 +339,14 @@ fn fillet_step(first: &Picked, second: &Picked, radius: f64) -> Result<Step, Str
         let rounded = fillet_polyline_corner(&first.entity, first.point, second.point, radius)?;
         return Ok(Step::Modify(vec![rounded]));
     }
-    if !is_line(first) || !is_line(second) {
-        return Err("Fillet works on lines and polylines for now.".into());
-    }
     if first.entity.id == second.entity.id {
-        return Err("Select two different lines.".into());
+        return Err("Select two different objects.".into());
     }
-    let result = fillet_lines(&first.entity, first.point, &second.entity, second.point, radius)?;
+    let result = if is_line(first) && is_line(second) {
+        fillet_lines(&first.entity, first.point, &second.entity, second.point, radius)?
+    } else {
+        fillet_curves(&first.entity, first.point, &second.entity, second.point, radius)?
+    };
     let modify = Step::Modify(vec![result.first, result.second]);
     Ok(match result.arc {
         None => modify,

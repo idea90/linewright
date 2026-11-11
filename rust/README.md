@@ -45,11 +45,16 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - `OOPS`: brings back the objects the last `ERASE` or `BLOCK` took out, as one undo step, and forgets them. Delete
   does the same erase as `ERASE`.
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET` (`F`;
-  two lines, or two segments of a polyline that meet; Polyline rounds every corner), `CHAMFER`
+  lines, arcs and circles, or two segments of a polyline that meet; parallel lines get a half circle; Polyline
+  rounds every corner), `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
   polylines, Partial overlap and End to end options; deletes duplicates, combines overlapping lines and arcs, and tidies
   polylines), `-OVERKILL` (the same with command line options)
+- As in AutoCAD: `PLINE` draws arcs with Arc (carrying on from the segment before, or through a Second pt) and goes
+  back to lines with Line; `ROTATE` and `SCALE` take Copy and Reference; `OFFSET` makes a spline beside an ellipse
+  or a spline; `JOIN` joins lines in one straight line across the gaps between them; `AREA` and `LIST` measure whole
+  ellipses.
 - Blocks: `INSERT` (`I`, asks for attribute values), `BLOCK` (`B`); attributes edited with `TEXTEDIT` (`ED`)
 - Groups: `GROUP` (`G`; named or unnamed `*A1`, with a description), `UNGROUP`, `GROUPEDIT` (add, remove, rename),
   `PICKSTYLE` or Ctrl+Shift+A for group selection; groups load from and save to DXF
