@@ -24,6 +24,12 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   layers on and off, freezes and locks them from their icons. Each panel's name strip opens its other tools, and the
   columns that do not fit a narrow window move there too.
 
+- A command line as AutoCAD's: a prompt's options in square brackets are buttons that answer with the option when
+  clicked, their capital letters picked out. The status bar's drafting aids are icons, lit while on, with their
+  name and key in the tip; a right-click on Object snap opens its settings.
+- Palettes: Properties (Ctrl+1) in sections that fold away, and Layer Properties with each layer's on, freeze, lock
+  and plot states as icons to click.
+
 - Draw: `LINE` (`L`), `PLINE` (`PL`), `RECTANGLE` (`REC`), `POLYGON` (`POL`), `MTEXT` (`MT`), `XLINE` (`XL`), `RAY`, `DONUT` (`DO`), `REVCLOUD`, `TABLE` (`TB`), `CIRCLE` (`C`), `ARC` (`A`), `ELLIPSE` (`EL`),
   `SPLINE` (`SPL`), `POINT` (`PO`), `HATCH` (`H`; SOLID, ANSI31, ANSI37, NET, LINE, DOTS, DASH), `TEXT` (`T`)
 - `MLINE` (`ML`): multilines with Justification (Top/Zero/Bottom), Scale and STyle, in the drawing's own multiline
