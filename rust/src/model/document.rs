@@ -281,6 +281,13 @@ pub struct Document {
     /// The extended data other programs attached to the objects read from the file (DXF codes 1000 and up), by
     /// object. Saving writes it back onto each object that is still in the drawing.
     pub kept_xdata: HashMap<EntityId, Vec<Pair>>,
+    /// Named plot styles, when the drawing uses them (PSTYLEMODE 0) rather than color-dependent ones: the style each
+    /// object read from the file names, by object, as the handle of the style's entry in the file; the style each
+    /// layer names, by layer name; and each style's name by its handle. An object without one plots ByLayer.
+    pub named_plot_styles: bool,
+    pub object_plot_styles: IdMap<EntityId, String>,
+    pub layer_plot_styles: HashMap<String, String>,
+    pub plot_style_names: HashMap<String, String>,
     pub skipped: BTreeMap<String, usize>,
     /// The named blocks the drawing's file defines, by upper-case name.
     pub blocks: BTreeMap<String, BlockRef>,
@@ -365,6 +372,10 @@ impl Document {
             path: None,
             source: None,
             kept_xdata: HashMap::new(),
+            named_plot_styles: false,
+            object_plot_styles: IdMap::default(),
+            layer_plot_styles: HashMap::new(),
+            plot_style_names: HashMap::new(),
             skipped: BTreeMap::new(),
             blocks: BTreeMap::new(),
             dimension_styles: vec![DimensionStyle::standard()],
@@ -837,6 +848,16 @@ impl Document {
             self.active_layout = Some(active - 1);
         }
         Some(layout)
+    }
+
+    /// The named plot style an object plots with: its own, else its layer's, else Normal.
+    pub fn plot_style_of(&self, id: EntityId, layer: &str) -> String {
+        let name = |handle: &String| self.plot_style_names.get(&handle.to_uppercase()).cloned();
+        self.object_plot_styles
+            .get(&id)
+            .and_then(name)
+            .or_else(|| self.layer_plot_styles.iter().find(|(l, _)| l.eq_ignore_ascii_case(layer)).and_then(|(_, h)| name(h)))
+            .unwrap_or_else(|| crate::io::ctb::NORMAL_STYLE.to_string())
     }
 
     /// Put a layout into the drawing at a place among its layouts, as undoing its deletion does.

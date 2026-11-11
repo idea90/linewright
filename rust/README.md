@@ -128,7 +128,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Plot style tables (.ctb): `PLOT` picks one per page setup, and with it whether objects' lineweights print.
   Pens give each color its plotted color, grayscale, screening and lineweight. Tables are read from AutoCAD's
   `Plotters\Plot Styles` folders (or `LINEWRIGHT_PLOT_STYLES`); acad, monochrome and grayscale.ctb work
-  without AutoCAD. Named plot styles (.stb) are not read yet.
+  without AutoCAD. Named plot style tables (.stb) work too, for drawings that use named plot styles: each
+  object prints with its own style, or its layer's when it is ByLayer, kept as they are when saving; acad.stb and
+  monochrome.stb work without AutoCAD.
 - Layouts: Model and layout tabs under the drawing (right-click to rename or delete, + to add), `LAYOUT` (`LO`;
   New/Rename/Delete/Set/?), `MVIEW` (`MV`) for viewports onto model space at a scale (set it in Properties), each
   space with its own undo. Deleting or renaming a layout undoes like any other change: `U` brings a deleted layout

@@ -152,14 +152,17 @@ impl Pens {
     }
 
     /// The color a part prints in and its line width in points. White (meant for a dark screen) prints black;
-    /// a plot style table then picks by the part's index color.
-    fn ink(&self, style: &Styled, document: &Document) -> ((u8, u8, u8), f64) {
+    /// a plot style table then picks by the part's index color, or a named one by the plot style `named` gives.
+    fn ink(&self, style: &Styled, document: &Document, named: &dyn Fn() -> String) -> ((u8, u8, u8), f64) {
         let mut rgb = resolve_color(style, document);
         if rgb == (255, 255, 255) {
             rgb = (0, 0, 0);
         }
         let layer = document.layer(&style.layer);
         let pen = self.table.as_ref().map(|table| {
+            if table.is_named() {
+                return table.named_pen(&named());
+            }
             let color = if style.color == BY_LAYER || style.color == BY_BLOCK { layer.map_or(7, |l| l.color) } else { style.color };
             table.pen(index_of(color))
         });
@@ -194,7 +197,8 @@ fn plot_entity(
         if document.layer(&style.layer).is_some_and(|layer| !layer.shown() || !layer.plot) {
             continue;
         }
-        let (rgb, weight) = pens.ink(&style, document);
+        // Parts inside a block plot with the block reference's own named style, as in AutoCAD.
+        let (rgb, weight) = pens.ink(&style, document, &|| document.plot_style_of(entity.id, &entity.layer));
         let linetype = if style.linetype.eq_ignore_ascii_case(BYLAYER_LINETYPE) {
             document.layer(&style.layer).map_or(String::new(), |l| l.linetype.clone())
         } else {
@@ -470,6 +474,21 @@ mod tests {
         assert!(pdf(&document, 1.0).contains("[72 36] 0 d"), "LTSCALE 2 doubles the dashes");
         // At 1:200 the 6.35 gap is a tenth of a millimeter on paper, too fine to see: the line prints solid.
         assert!(pdf(&document, 0.005).contains("[] 0 d"));
+    }
+
+    #[test]
+    fn a_named_plot_style_table_inks_each_object_by_its_style() {
+        let mut red = line(pt(0.0, 0.0), pt(100.0, 0.0));
+        red.color = 1;
+        let mut document = Document::with_entities(vec![red]);
+        let pdf = |document: &Document| {
+            let (page, _) = plot_page(document, (210.0, 297.0), false, Some(1.0)).unwrap();
+            String::from_utf8_lossy(&page.to_bytes()).into_owned()
+        };
+        assert!(pdf(&document).contains("1 0 0 RG"), "red without a table");
+        // Every style of monochrome.stb prints black, the object's own style and Normal alike.
+        document.model_plot.style_table = "monochrome.stb".into();
+        assert!(pdf(&document).contains("0 0 0 RG") && !pdf(&document).contains("1 0 0 RG"), "black through the named table");
     }
 
     #[test]

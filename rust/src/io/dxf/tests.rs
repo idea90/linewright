@@ -82,6 +82,39 @@ fn extended_data_of_other_programs_survives_on_objects_linewright_writes() {
 }
 
 #[test]
+fn named_plot_styles_are_read_and_kept_on_objects_linewright_writes() {
+    let mut file = dxf_from_document(&Document::with_entities(vec![line(pt(0.0, 0.0), pt(10.0, 5.0)), circle(pt(1.0, 1.0), 2.0)]));
+    // A drawing in named plot style mode, with a style "Thin" whose entry has handle ABC, used by the line and by layer 0.
+    let header_at = file.section("HEADER").unwrap().0;
+    let header = &mut file.groups[header_at].0;
+    let at = header.iter().position(|p| p.code == 9 && p.value == "$PSTYLEMODE").expect("the template has it");
+    header[at + 1].value = "0".into();
+    let (objects, _) = file.section("OBJECTS").unwrap();
+    let root = &file.groups[objects + 1].0;
+    let at = root.iter().position(|p| p.code == 3 && p.value == "ACAD_PLOTSTYLENAME").expect("the template has the dictionary");
+    let dictionary = object_index(&file, root[at + 1].value.trim()).unwrap();
+    file.groups[dictionary].0.extend([pair(3, "Thin"), pair(350, "ABC")]);
+    let (start, end) = file.section("ENTITIES").unwrap();
+    let line_at = (start..end).find(|&i| file.groups[i].kind() == "LINE").unwrap();
+    let at = file.groups[line_at].0.iter().position(|p| p.code == 100 && p.value == "AcDbLine").unwrap();
+    file.groups[line_at].0.insert(at, pair(390, "ABC"));
+    let layer = file.table_entries("LAYER").into_iter().find(|&i| file.groups[i].get(2) == Some("0")).unwrap();
+    file.groups[layer].set(390, "ABC".into());
+    let document = document_from_dxf(DxfFile::parse(&file.to_bytes()).unwrap());
+    assert!(document.named_plot_styles);
+    let [line, circle] = document.entities() else { panic!("two objects") };
+    assert_eq!(document.plot_style_of(line.id, &line.layer), "Thin", "its own");
+    assert_eq!(document.plot_style_of(circle.id, &circle.layer), "Thin", "ByLayer: layer 0's");
+    // Saved again, the line still names its style, inside its AcDbEntity part.
+    let saved = dxf_from_document(&document);
+    let (start, end) = saved.section("ENTITIES").unwrap();
+    let line = saved.groups[start..end].iter().find(|g| g.kind() == "LINE").unwrap();
+    let style = line.0.iter().position(|p| p.code == 390).expect("kept");
+    let kind = line.0.iter().position(|p| p.code == 100 && p.value == "AcDbLine").unwrap();
+    assert!(style < kind && line.0[style].value == "ABC");
+}
+
+#[test]
 fn a_new_drawing_is_in_millimeters() {
     let back = round_trip(&Document::new());
     assert_eq!(unit_names(&back), ("millimeters", "mm"));
