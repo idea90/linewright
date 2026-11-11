@@ -59,6 +59,8 @@ pub struct Drawing {
     pub view_request: Option<ViewRequest>,
     /// The undo history of each space that is not open: model space (None) or a layout.
     stashed_undo: HashMap<Option<usize>, UndoStack>,
+    /// The undo history of each deleted layout, by its name, for undoing its deletion to bring back.
+    parked_undo: HashMap<String, UndoStack>,
     /// Layouts were added, renamed or deleted since the drawing was saved.
     layouts_changed: bool,
     /// A layout change a command asked for, made once the command step is done.
@@ -406,9 +408,11 @@ impl Controller {
 
     pub fn rename_layout(&mut self, index: usize, name: &str) -> Result<(), String> {
         self.check_layout_name(name, Some(index))?;
-        let layout = self.drawing.document.layouts.get_mut(index).ok_or("There is no such layout.")?;
-        layout.name = name.trim().to_string();
-        self.drawing.layouts_changed = true;
+        let layout = self.drawing.document.layouts.get(index).ok_or("There is no such layout.")?;
+        let (before, after) = (layout.name.clone(), name.trim().to_string());
+        if before != after {
+            self.push(Change::LayoutRenamed { before, after });
+        }
         Ok(())
     }
 
@@ -420,16 +424,38 @@ impl Controller {
         if self.drawing.document.active_layout() == Some(index) {
             self.switch_space(None);
         }
-        self.drawing.document.remove_layout(index);
-        let stashed = std::mem::take(&mut self.drawing.stashed_undo);
-        self.drawing.stashed_undo = stashed
-            .into_iter()
-            .filter(|(space, _)| *space != Some(index))
-            .map(|(space, stack)| (space.map(|i| if i > index { i - 1 } else { i }), stack))
-            .collect();
-        self.drawing.layouts_changed = true;
+        // An undoable change in the history of the space that is open, so U there brings the layout back whole.
+        let layout = self.drawing.document.layouts.get(index).ok_or("There is no such layout.")?.saved();
+        let names = self.layout_names();
+        self.drawing.push(Change::LayoutRemoved { index, layout });
+        self.follow_layouts(&names);
         self.refresh();
         Ok(())
+    }
+
+    fn layout_names(&self) -> Vec<String> {
+        self.drawing.document.layouts.iter().map(|l| l.name.clone()).collect()
+    }
+
+    /// Keep each layout's undo history with its layout after one was taken out or put back: the histories are
+    /// kept by the layouts' places, which have moved. `before` is the layouts' names before the change.
+    fn follow_layouts(&mut self, before: &[String]) {
+        let after = self.layout_names();
+        let at = before.iter().zip(&after).position(|(a, b)| a != b).unwrap_or(before.len().min(after.len()));
+        let mut stashed = std::mem::take(&mut self.drawing.stashed_undo);
+        if after.len() + 1 == before.len() {
+            // The deleted layout's history is kept by its name, to come back with it.
+            if let Some(history) = stashed.remove(&Some(at)) {
+                self.drawing.parked_undo.insert(before[at].clone(), history);
+            }
+            stashed = stashed.into_iter().map(|(space, stack)| (space.map(|i| if i > at { i - 1 } else { i }), stack)).collect();
+        } else if after.len() == before.len() + 1 {
+            stashed = stashed.into_iter().map(|(space, stack)| (space.map(|i| if i >= at { i + 1 } else { i }), stack)).collect();
+            if let Some(history) = self.drawing.parked_undo.remove(&after[at]) {
+                stashed.insert(Some(at), history);
+            }
+        }
+        self.drawing.stashed_undo = stashed;
     }
 
     fn check_layout_name(&self, name: &str, renaming: Option<usize>) -> Result<(), String> {
@@ -462,6 +488,7 @@ impl Controller {
         self.stop_session();
         self.selection.clear();
         self.drawing.stashed_undo.clear();
+        self.drawing.parked_undo.clear();
         self.drawing.layouts_changed = false;
         self.defaults.borrow_mut().dimension_look = document.current_dimension_look();
         self.drawing.document = document;
@@ -680,13 +707,17 @@ impl Controller {
     }
 
     pub fn undo(&mut self) {
+        let names = self.layout_names();
         if self.drawing.undo.undo(&mut self.drawing.document) {
+            self.follow_layouts(&names);
             self.after_change();
         }
     }
 
     pub fn redo(&mut self) {
+        let names = self.layout_names();
         if self.drawing.undo.redo(&mut self.drawing.document) {
+            self.follow_layouts(&names);
             self.after_change();
         }
     }
@@ -1348,5 +1379,35 @@ mod tests {
         let cursor = controller.cursor.clone().unwrap();
         assert_eq!(cursor.point, crate::model::geometry::pt(10.0, 30.0));
         assert_eq!(cursor.tracked, vec![crate::model::geometry::pt(10.0, 0.0)]);
+    }
+
+    #[test]
+    fn deleting_or_renaming_a_layout_undoes_with_what_was_on_it() {
+        let mut controller = Controller::new();
+        controller.set_document(Document::new());
+        let sheet = controller.new_layout("Sheet").unwrap();
+        run(&mut controller, &["LINE", "0,0", "10,10", ""]);
+        // A second edit in the layout, to see its own undo history survive the round trip.
+        run(&mut controller, &["CIRCLE", "5,5", "2"]);
+        controller.switch_space(None);
+        let count = controller.document().layouts.len();
+        controller.delete_layout(sheet).unwrap();
+        assert_eq!(controller.document().layouts.len(), count - 1);
+        controller.undo();
+        assert_eq!(controller.document().layouts.len(), count, "U brings the layout back");
+        let back = controller.document().layouts.iter().position(|l| l.name == "Sheet").expect("named as before");
+        assert_eq!(back, sheet, "in its old place");
+        controller.switch_space(Some(back));
+        assert_eq!(controller.document().len(), 2, "with what was on it");
+        controller.undo();
+        assert_eq!(controller.document().len(), 1, "and its own undo history");
+        controller.switch_space(None);
+        controller.redo();
+        assert!(!controller.document().layouts.iter().any(|l| l.name == "Sheet"), "REDO deletes it again");
+        controller.undo();
+        controller.rename_layout(sheet, "Plan").unwrap();
+        assert_eq!(controller.document().layouts[sheet].name, "Plan");
+        controller.undo();
+        assert_eq!(controller.document().layouts[sheet].name, "Sheet", "a rename undoes too");
     }
 }

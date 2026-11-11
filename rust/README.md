@@ -131,7 +131,8 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   without AutoCAD. Named plot styles (.stb) are not read yet.
 - Layouts: Model and layout tabs under the drawing (right-click to rename or delete, + to add), `LAYOUT` (`LO`;
   New/Rename/Delete/Set/?), `MVIEW` (`MV`) for viewports onto model space at a scale (set it in Properties), each
-  space with its own undo. Layouts, paper space and viewports load from and save to DXF.
+  space with its own undo. Deleting or renaming a layout undoes like any other change: `U` brings a deleted layout
+  back in its place, with what was on it and its own undo history. Layouts, paper space and viewports load from and save to DXF.
 - Working through viewports: `MSPACE` (`MS`), double-clicking inside a viewport, or the status bar's Paper/Model
   button opens model space through it with the layout still on screen; draw and edit there, and zooming and
   panning change that viewport's view. Click another viewport to work through it; `PSPACE` (`PS`) or

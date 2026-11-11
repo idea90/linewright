@@ -196,7 +196,44 @@ impl Default for PlotSettings {
     }
 }
 
+/// A layout as it is kept while it is out of the drawing, so that undoing its deletion puts it back whole.
+#[derive(Clone, Debug)]
+pub struct SavedLayout {
+    pub name: String,
+    paper_origin: Point,
+    paper_size: (f64, f64),
+    record: Option<String>,
+    object: Option<String>,
+    plot: PlotSettings,
+    entities: Vec<Entity>,
+}
+
 impl Layout {
+    /// The layout and what is on it, to keep. It must not be the open one, whose entities the drawing holds.
+    pub fn saved(&self) -> SavedLayout {
+        SavedLayout {
+            name: self.name.clone(),
+            paper_origin: self.paper_origin,
+            paper_size: self.paper_size,
+            record: self.record.clone(),
+            object: self.object.clone(),
+            plot: self.plot.clone(),
+            entities: self.store.entities.clone(),
+        }
+    }
+
+    pub fn from_saved(saved: &SavedLayout) -> Layout {
+        Layout {
+            name: saved.name.clone(),
+            paper_origin: saved.paper_origin,
+            paper_size: saved.paper_size,
+            record: saved.record.clone(),
+            object: saved.object.clone(),
+            plot: saved.plot.clone(),
+            store: EntityStore::with(saved.entities.clone()),
+        }
+    }
+
     pub fn sheet(&self) -> Bounds {
         Bounds::from_corners(self.paper_origin, self.paper_origin + super::geometry::pt(self.paper_size.0, self.paper_size.1))
     }
@@ -800,6 +837,18 @@ impl Document {
             self.active_layout = Some(active - 1);
         }
         Some(layout)
+    }
+
+    /// Put a layout into the drawing at a place among its layouts, as undoing its deletion does.
+    pub fn insert_layout(&mut self, index: usize, layout: Layout) {
+        let index = index.min(self.layouts.len());
+        self.layouts.insert(index, layout);
+        if let Some(active) = self.active_layout.filter(|&a| a >= index) {
+            self.active_layout = Some(active + 1);
+        }
+        if let Some(through) = self.through.as_mut().filter(|t| t.layout >= index) {
+            through.layout += 1;
+        }
     }
 
     fn reposition(&mut self) {
