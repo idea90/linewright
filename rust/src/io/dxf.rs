@@ -3039,11 +3039,15 @@ fn find_model_space(file: &DxfFile) -> String {
 }
 
 /// Entities written for one owner, each linetype and dimension style as the file names them.
+/// A space's entities to write, with what the file had on them that Linewright keeps: other programs' extended data
+/// and named plot styles, by entity.
+type SpaceToWrite<'a> = (&'a [Entity], &'a HashMap<EntityId, Vec<Pair>>, &'a crate::model::entities::IdMap<EntityId, String>);
+
 fn write_entities(
     file: &mut DxfFile,
     writer: &mut Writer,
     linetypes: &mut BTreeMap<String, String>,
-    (entities, kept_xdata, plot_styles): (&[Entity], &HashMap<EntityId, Vec<Pair>>, &crate::model::entities::IdMap<EntityId, String>),
+    (entities, kept_xdata, plot_styles): SpaceToWrite,
     owner: &str,
     (style_names, dimension_style): (&HashMap<String, String>, &str),
 ) -> Vec<Group> {
