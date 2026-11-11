@@ -24,8 +24,13 @@ pub const SNAP_MARKER: Color32 = Color32::from_rgb(0xf0, 0xb4, 0x3c);
 pub const SELECTION: Color32 = Color32::from_rgb(0x4c, 0x8d, 0xff);
 pub const CROSSING: Color32 = Color32::from_rgb(0x3f, 0xd0, 0x6a);
 pub const CROSSHAIR: Color32 = Color32::from_rgb(0xe9, 0xee, 0xf0);
-pub const AXIS_X: Color32 = Color32::from_rgb(0x97, 0xa3, 0xa7);
-pub const AXIS_Y: Color32 = Color32::from_rgb(0x97, 0xa3, 0xa7);
+/// The UCS icon's axes, red for X and green for Y as in AutoCAD, softened to sit on the dark canvas.
+pub const AXIS_X: Color32 = Color32::from_rgb(0xd9, 0x62, 0x5c);
+pub const AXIS_Y: Color32 = Color32::from_rgb(0x62, 0xc0, 0x6e);
+/// The capital letters of a prompt's options on the command line: AutoCAD's blue.
+pub const OPTION_KEY: Color32 = Color32::from_rgb(0x74, 0xc8, 0xff);
+/// A button or menu line under the pointer.
+pub const HOVER: Color32 = Color32::from_rgb(0x34, 0x3e, 0x45);
 pub const ERROR: Color32 = Color32::from_rgb(0xf0, 0x7a, 0x6a);
 pub const GRIP: Color32 = Color32::from_rgb(0x2f, 0x6b, 0xff);
 pub const GRIP_HOT: Color32 = Color32::from_rgb(0xff, 0x45, 0x45);
@@ -128,8 +133,13 @@ pub fn apply(ctx: &egui::Context) {
     visuals.extreme_bg_color = CANVAS;
     visuals.faint_bg_color = PANEL;
     visuals.window_stroke = Stroke::new(1.0_f32, BORDER_STRONG);
-    visuals.window_corner_radius = CornerRadius::same(6);
-    visuals.menu_corner_radius = CornerRadius::same(4);
+    visuals.window_corner_radius = CornerRadius::same(8);
+    visuals.menu_corner_radius = CornerRadius::same(6);
+    // Dialogs and menus lift off what is under them with a soft shadow.
+    let shadow =
+        |offset: i8, blur: u8, alpha: u8| egui::Shadow { offset: [0, offset], blur, spread: 0, color: Color32::from_black_alpha(alpha) };
+    visuals.window_shadow = shadow(10, 28, 120);
+    visuals.popup_shadow = shadow(6, 16, 100);
     visuals.override_text_color = Some(TEXT);
     visuals.hyperlink_color = ACCENT;
     // Selected items: the dark accent, which white labels read well on.
@@ -142,7 +152,7 @@ pub fn apply(ctx: &egui::Context) {
     widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
     for (state, fill, edge) in [
         (&mut widgets.inactive, PANEL_RAISED, BORDER_STRONG),
-        (&mut widgets.hovered, PANEL_RAISED, ACCENT),
+        (&mut widgets.hovered, HOVER, ACCENT),
         (&mut widgets.active, ACCENT_EDGE, ACCENT),
         (&mut widgets.open, PANEL_RAISED, ACCENT),
     ] {
@@ -155,7 +165,10 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
     ctx.style_mut(|style| {
         style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        style.spacing.button_padding = egui::vec2(12.0, 5.0);
+        style.spacing.window_margin = egui::Margin::same(16);
+        style.spacing.menu_margin = egui::Margin::same(6);
+        style.spacing.interact_size.y = 24.0;
         style.text_styles.insert(TextStyle::Body, FontId::new(13.5, FontFamily::Proportional));
         style.text_styles.insert(TextStyle::Button, FontId::new(13.5, FontFamily::Proportional));
         style.text_styles.insert(TextStyle::Small, FontId::new(11.5, FontFamily::Proportional));

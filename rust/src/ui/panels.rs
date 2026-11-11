@@ -91,6 +91,46 @@ fn swatch_text(color: Option<i32>, text: &str) -> WidgetText {
     job.into()
 }
 
+/// The heading of a section of a palette: a strip with an arrow, which folds the section away and back when
+/// clicked. True while the section shows.
+fn section(ui: &mut egui::Ui, title: &str) -> bool {
+    let id = ui.make_persistent_id(("palette_section", title));
+    let mut open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+    let fill = if response.hovered() { theme::HOVER } else { theme::PANEL_RAISED };
+    ui.painter().rect_filled(rect, CornerRadius::same(3), fill);
+    let at = pos2(rect.left() + 12.0, rect.center().y);
+    let corners = if open {
+        vec![at + vec2(-4.0, -2.5), at + vec2(4.0, -2.5), at + vec2(0.0, 3.0)]
+    } else {
+        vec![at + vec2(-2.5, -4.0), at + vec2(3.0, 0.0), at + vec2(-2.5, 4.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(corners, theme::TEXT_DIM, Stroke::NONE));
+    ui.painter().text(
+        pos2(rect.left() + 24.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        title,
+        FontId::new(13.0, theme::heading()),
+        theme::TEXT,
+    );
+    if response.clicked() {
+        open = !open;
+        ui.data_mut(|d| d.insert_temp(id, open));
+    }
+    open
+}
+
+/// One of a layer's states in the Layer Properties list, shown as its icon: lit, or dim when `dim`. True when
+/// clicked.
+fn state_icon(ui: &mut egui::Ui, icon: &str, dim: bool, tip: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(4), theme::HOVER);
+    }
+    icons::paint(ui, icon, rect, 16.0, if dim { Color32::WHITE.gamma_multiply(0.3) } else { Color32::WHITE });
+    response.on_hover_text(tip).clicked()
+}
+
 fn divider(ui: &mut egui::Ui, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(1.0, height), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, theme::BORDER_STRONG);
@@ -610,16 +650,15 @@ pub fn layout_tabs(app: &mut LinewrightApp, ctx: &egui::Context) {
 
 // ------------------------------------------------------------------------------------------------ status bar
 
-/// A status bar button that is on or off, with its icon and name. True when clicked.
-fn status_toggle(ui: &mut egui::Ui, text: &str, icon: &str, on: bool, tip: &str) -> bool {
-    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), theme::TEXT));
-    let size = vec2(galley.size().x + 40.0, 26.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+/// A status bar button that is on or off, as AutoCAD's: its icon alone, lit while on, with its name, key and
+/// state in the tip.
+fn status_toggle(ui: &mut egui::Ui, icon: &str, on: bool, tip: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(STATUS_TOGGLE, 26.0), Sense::click());
     let hovered = response.hovered();
     if on {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), theme::ACCENT_TINT);
+        ui.painter().rect(rect, CornerRadius::same(5), theme::ACCENT_TINT, Stroke::new(1.0_f32, theme::ACCENT_EDGE), StrokeKind::Inside);
     } else if hovered {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), theme::PANEL_RAISED);
+        ui.painter().rect_filled(rect, CornerRadius::same(5), theme::PANEL_RAISED);
     }
     let color = if on {
         theme::ACCENT
@@ -628,10 +667,11 @@ fn status_toggle(ui: &mut egui::Ui, text: &str, icon: &str, on: bool, tip: &str)
     } else {
         theme::TEXT_DIM
     };
-    icons::paint(ui, icon, egui::Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0)), 16.0, color);
-    ui.painter().galley(pos2(rect.left() + 30.0, rect.center().y - galley.size().y / 2.0), galley, color);
-    response.on_hover_text(tip).clicked()
+    icons::paint(ui, icon, rect, 17.0, color);
+    response.on_hover_text(format!("{tip}: {}", if on { "On" } else { "Off" }))
 }
+
+const STATUS_TOGGLE: f32 = 32.0;
 
 pub fn status_bar(app: &mut LinewrightApp, ctx: &egui::Context) {
     let frame = Frame::new()
@@ -648,24 +688,34 @@ pub fn status_bar(app: &mut LinewrightApp, ctx: &egui::Context) {
             ui.add_space(14.0);
             ui.label(RichText::new(format!("Units {}", unit_names(app.document()).1)).color(theme::TEXT_DIM));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if status_toggle(ui, "Lineweight", "LWT", app.document().show_lineweights, "Show lineweights (LWDISPLAY)") {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let lineweights = status_toggle(ui, "LWT", app.document().show_lineweights, "Show lineweights (LWDISPLAY)");
+                if lineweights.clicked() {
                     app.actions.push(Action::ToggleLineweights);
                 }
                 // On a layout, whether model space is worked on through a viewport or the sheet itself.
                 if app.document().shown_layout().is_some() {
                     let through = app.document().through().is_some();
-                    let (text, tip) = if through {
-                        ("Model", "Working in model space through a viewport: click for paper space (PSPACE)")
+                    let tip = if through {
+                        "Model space through a viewport: click for paper space (PSPACE)"
                     } else {
-                        ("Paper", "Working on the sheet: click to work in a viewport (MSPACE)")
+                        "Paper space: click to work in a viewport (MSPACE)"
                     };
-                    if status_toggle(ui, text, "MSPACE", through, tip) {
+                    if status_toggle(ui, "MSPACE", through, tip).clicked() {
                         app.actions.push(Action::Command(if through { "PSPACE" } else { "MSPACE" }));
                     }
                 }
+                divider(ui, 16.0);
                 for (text, mode, key, icon) in TOGGLES.iter().rev() {
-                    if status_toggle(ui, text, icon, app.controller.snap.get(*mode), &format!("{text} ({key})")) {
+                    let settings = *mode == SnapMode::Osnap;
+                    let tip = if settings { format!("{text} ({key}), right-click for settings") } else { format!("{text} ({key})") };
+                    let toggle = status_toggle(ui, icon, app.controller.snap.get(*mode), &tip);
+                    if toggle.clicked() {
                         app.actions.push(Action::ToggleSnap(*mode));
+                    }
+                    // A right-click on Object snap opens its settings, as in AutoCAD.
+                    if settings && toggle.secondary_clicked() {
+                        app.actions.push(Action::Input("OSNAP".into()));
                     }
                 }
             });
@@ -690,7 +740,9 @@ pub fn command_panel(app: &mut LinewrightApp, ctx: &egui::Context) {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for line in &app.controller.drawing.log {
-                    ui.label(RichText::new(line).monospace().color(theme::TEXT_DIM));
+                    // The line a command started on stands out, so each command's lines read as a group.
+                    let started = line.starts_with(IDLE_PROMPT);
+                    ui.label(RichText::new(line).monospace().color(if started { theme::TEXT } else { theme::TEXT_DIM }));
                 }
             });
         ui.add_space(6.0);
@@ -705,7 +757,9 @@ pub fn command_panel(app: &mut LinewrightApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!app.is_opening(), |ui| {
                         ui.label(RichText::new(">_").monospace().color(theme::TEXT_DIM));
-                        ui.label(RichText::new(prompt).monospace().strong().color(theme::TEXT));
+                        if let Some(answer) = prompt_line(ui, &prompt, &app.controller.prompt_options()) {
+                            app.actions.push(Action::Answer(answer));
+                        }
                         // AutoComplete, at the Command: prompt only, as in AutoCAD.
                         let offered = if app.controller.prompt().is_none() { suggestions(&app.input, MAX_SUGGESTIONS) } else { vec![] };
                         if app.suggestion_for != app.input {
@@ -775,6 +829,49 @@ pub fn command_panel(app: &mut LinewrightApp, ctx: &egui::Context) {
                 });
             });
     });
+}
+
+/// The prompt on the command line. The options in its square brackets are buttons, their capital letters picked
+/// out, as in AutoCAD: clicking one answers with it. Gives what the clicked option types.
+fn prompt_line(ui: &mut egui::Ui, prompt: &str, options: &[(String, String)]) -> Option<String> {
+    let plain = |ui: &mut egui::Ui, text: &str| {
+        if !text.is_empty() {
+            ui.label(RichText::new(text).monospace().strong().color(theme::TEXT));
+        }
+    };
+    let (Some(open), Some(close)) = (prompt.find('['), prompt.rfind(']')) else {
+        plain(ui, prompt);
+        return None;
+    };
+    if close < open || options.is_empty() {
+        plain(ui, prompt);
+        return None;
+    }
+    let mut answer = None;
+    let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.x, 3.0);
+    plain(ui, prompt[..open].trim_end());
+    ui.add_space(3.0);
+    let font = TextStyle::Monospace.resolve(ui.style());
+    for (name, typed) in options {
+        let mut job = egui::text::LayoutJob::default();
+        for letter in name.chars() {
+            let capital = letter.is_uppercase() || letter.is_ascii_digit();
+            let color = if capital { theme::OPTION_KEY } else { theme::TEXT };
+            job.append(&letter.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+        let galley = ui.fonts(|f| f.layout_job(job));
+        let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(10.0, 6.0), Sense::click());
+        let (fill, edge) =
+            if response.hovered() { (theme::ACCENT_EDGE, theme::ACCENT) } else { (theme::PANEL_RAISED, theme::BORDER_STRONG) };
+        ui.painter().rect(rect, CornerRadius::same(3), fill, Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, theme::TEXT);
+        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            answer = Some(typed.clone());
+        }
+    }
+    ui.spacing_mut().item_spacing.x = spacing;
+    plain(ui, prompt[close + 1..].trim_start());
+    answer
 }
 
 const MAX_SUGGESTIONS: usize = 8;
@@ -855,7 +952,7 @@ fn suggestion_list(ui: &egui::Ui, input: &egui::Response, offered: &[Suggestion]
 pub fn layer_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
     let frame = Frame::new().fill(theme::PANEL).inner_margin(Margin::same(8)).stroke(Stroke::new(1.0_f32, theme::BORDER));
     let mut open = app.palette_open;
-    egui::SidePanel::left("layer_palette").frame(frame).default_width(520.0).min_width(440.0).show(ctx, |ui| {
+    egui::SidePanel::left("layer_palette").frame(frame).default_width(640.0).min_width(440.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Layer Properties").strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -868,20 +965,39 @@ pub fn layer_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
         let document = app.controller.document();
         let current = document.current_layer.clone();
         let layers = document.layers.clone();
+        let mut actions = vec![];
+        // The palette's own tools above the list, as in AutoCAD's.
+        ui.horizontal(|ui| {
+            if ui.button("New Layer").clicked() {
+                actions.push(Action::NewLayer);
+            }
+            let chosen = app.palette_row.clone().filter(|row| layers.iter().any(|l| &l.name == row));
+            if ui.add_enabled(chosen.is_some(), egui::Button::new("Delete")).clicked() {
+                actions.extend(chosen.clone().map(Action::DeleteLayer));
+            }
+            if ui.add_enabled(chosen.is_some(), egui::Button::new("Set Current")).clicked() {
+                actions.extend(chosen.map(Action::CurrentLayer));
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("Current layer: {current}")).color(theme::TEXT_DIM));
+            });
+        });
+        ui.add_space(4.0);
         // Working through a viewport, layers can be frozen in that viewport alone.
         let viewport_frozen: Option<Vec<String>> = match document.through_viewport().map(|v| &v.shape) {
             Some(crate::model::entities::Shape::Viewport { frozen, .. }) => Some(frozen.clone()),
             _ => None,
         };
-        let mut actions = vec![];
-        egui::ScrollArea::vertical().max_height(ui.available_height() - 40.0).show(ui, |ui| {
+        // The list scrolls both ways inside the palette, so a narrow palette cuts no column off and the palette is
+        // never asked to be wider than it is.
+        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             let columns = 8 + usize::from(viewport_frozen.is_some());
-            egui::Grid::new("layers").num_columns(columns).striped(true).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+            egui::Grid::new("layers").num_columns(columns).striped(true).spacing(vec2(10.0, 5.0)).show(ui, |ui| {
                 for heading in ["Name", "On", "Freeze", "Lock", "Plot", "Color", "Linetype", "Lineweight"] {
-                    ui.label(RichText::new(heading).color(theme::TEXT_DIM));
+                    ui.label(theme::label(heading, theme::TEXT_DIM));
                 }
                 if viewport_frozen.is_some() {
-                    ui.label(RichText::new("VP Freeze").color(theme::TEXT_DIM)).on_hover_text("Frozen in the viewport worked through");
+                    ui.label(theme::label("VP Freeze", theme::TEXT_DIM)).on_hover_text("Frozen in the viewport worked through");
                 }
                 ui.end_row();
                 for layer in &layers {
@@ -915,21 +1031,28 @@ pub fn layer_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
                             }
                         }
                     }
-                    let mut visible = layer.visible;
-                    if ui.checkbox(&mut visible, "").changed() {
-                        actions.push(Action::LayerVisible(name.clone(), visible));
+                    // Each state is its icon, as in AutoCAD's list: the bulb, the sun or snowflake, the lock, the plotter.
+                    let (on, tip) =
+                        if layer.visible { ("LAYER_ON", "On: click to turn off") } else { ("LAYER_OFF", "Off: click to turn on") };
+                    if state_icon(ui, on, false, tip) {
+                        actions.push(Action::LayerVisible(name.clone(), !layer.visible));
                     }
-                    let mut frozen = layer.frozen;
-                    if ui.checkbox(&mut frozen, "").on_hover_text("Frozen").changed() {
-                        actions.push(Action::LayerFrozen(name.clone(), frozen));
+                    let (thawed, tip) =
+                        if layer.frozen { ("LAYER_FROZEN", "Frozen: click to thaw") } else { ("LAYER_THAWED", "Thawed: click to freeze") };
+                    if state_icon(ui, thawed, false, tip) {
+                        actions.push(Action::LayerFrozen(name.clone(), !layer.frozen));
                     }
-                    let mut locked = layer.locked;
-                    if ui.checkbox(&mut locked, "").changed() {
-                        actions.push(Action::LayerLocked(name.clone(), locked));
+                    let (lock, tip) = if layer.locked {
+                        ("LAYER_LOCKED", "Locked: click to unlock")
+                    } else {
+                        ("LAYER_UNLOCKED", "Unlocked: click to lock")
+                    };
+                    if state_icon(ui, lock, false, tip) {
+                        actions.push(Action::LayerLocked(name.clone(), !layer.locked));
                     }
-                    let mut plot = layer.plot;
-                    if ui.checkbox(&mut plot, "").on_hover_text("Plots").changed() {
-                        actions.push(Action::LayerPlot(name.clone(), plot));
+                    let tip = if layer.plot { "Plots: click to keep off plots" } else { "Does not plot: click to plot" };
+                    if state_icon(ui, "PLOT", !layer.plot, tip) {
+                        actions.push(Action::LayerPlot(name.clone(), !layer.plot));
                     }
                     egui::ComboBox::from_id_salt(("layer_color", &name))
                         .width(110.0)
@@ -977,19 +1100,6 @@ pub fn layer_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
                 }
             });
         });
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("New").clicked() {
-                actions.push(Action::NewLayer);
-            }
-            let chosen = app.palette_row.clone().filter(|row| layers.iter().any(|l| &l.name == row));
-            if ui.add_enabled(chosen.is_some(), egui::Button::new("Delete")).clicked() {
-                actions.extend(chosen.clone().map(Action::DeleteLayer));
-            }
-            if ui.add_enabled(chosen.is_some(), egui::Button::new("Set Current")).clicked() {
-                actions.extend(chosen.map(Action::CurrentLayer));
-            }
-        });
         app.actions.extend(actions);
     });
     app.palette_open = open;
@@ -1018,84 +1128,106 @@ pub fn properties_palette(app: &mut LinewrightApp, ctx: &egui::Context) {
             app.property_target = ids.clone();
             app.property_edits.clear();
         }
-        if selected.is_empty() {
-            ui.label(RichText::new("No selection").color(theme::TEXT_DIM));
-        } else {
-            let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
-            for entity in &selected {
-                *kinds.entry(entity.shape.kind()).or_default() += 1;
-            }
-            if let [(kind, count)] = kinds.iter().collect::<Vec<_>>()[..] {
-                let heading = if *count == 1 { kind.to_string() } else { format!("{kind} ({count})") };
-                ui.label(RichText::new(heading).strong().color(theme::ACCENT));
+        // A long list of properties scrolls rather than running off the window.
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            if selected.is_empty() {
+                ui.label(RichText::new("No selection").color(theme::TEXT_DIM));
+                ui.label(RichText::new("Select objects to see and change their properties.").color(theme::TEXT_DIM));
             } else {
-                ui.label(RichText::new(format!("{} objects selected", selected.len())).strong());
-                for (kind, n) in kinds {
-                    ui.label(RichText::new(format!("{n} × {kind}")).color(theme::TEXT_DIM));
+                let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+                for entity in &selected {
+                    *kinds.entry(entity.shape.kind()).or_default() += 1;
                 }
-                ui.label(RichText::new("Select objects of one kind to change them together.").color(theme::TEXT_DIM));
-            }
-            ui.add_space(4.0);
-            let mut actions = vec![];
-            // General: what every object has, whatever its kind.
-            let values = GeneralValues::of(app);
-            ui.label(RichText::new("General").strong());
-            egui::Grid::new("general_rows").num_columns(2).spacing(vec2(10.0, 6.0)).striped(true).show(ui, |ui| {
-                ui.label(RichText::new("Color").color(theme::TEXT_DIM));
-                color_combo(ui, "palette_color", 150.0, values.color, &mut actions);
-                ui.end_row();
-                ui.label(RichText::new("Layer").color(theme::TEXT_DIM));
-                layer_combo(ui, "palette_layer", 150.0, &values, &mut actions);
-                ui.end_row();
-                ui.label(RichText::new("Linetype").color(theme::TEXT_DIM));
-                linetype_combo(ui, "palette_linetype", 150.0, &values.linetype, &mut actions);
-                ui.end_row();
-                ui.label(RichText::new("Lineweight").color(theme::TEXT_DIM));
-                lineweight_combo(
-                    ui,
-                    "palette_lineweight",
-                    150.0,
-                    values.lineweight,
-                    lineweight::choices(),
-                    Action::UseLineweight,
-                    true,
-                    &mut actions,
-                );
-                ui.end_row();
-                ui.label(RichText::new("Linetype scale").color(theme::TEXT_DIM));
-                linetype_scale_edit(ui, app, values.linetype_scale, &ids, &mut actions);
-                ui.end_row();
-            });
-            ui.add_space(6.0);
-            ui.label(RichText::new("Geometry").strong());
-            egui::Grid::new("property_rows").num_columns(2).spacing(vec2(10.0, 6.0)).striped(true).show(ui, |ui| {
-                for property in shared_properties(&selected) {
-                    ui.label(RichText::new(&property.name).color(theme::TEXT_DIM));
-                    if property.editable {
-                        let buffer = app.property_edits.entry(property.name.clone()).or_insert_with(|| property.value.clone());
-                        let response = ui.add(TextEdit::singleline(buffer).desired_width(150.0));
-                        if response.has_focus() {
-                            app.property_focus = true;
-                        }
-                        if response.lost_focus() {
-                            if ui.input(|i| i.key_pressed(Key::Enter)) && *buffer != property.value {
-                                actions.push(Action::SetProperty(ids.clone(), property.name.clone(), buffer.clone()));
-                            }
-                            app.property_edits.remove(&property.name);
-                        }
-                    } else {
-                        ui.label(&property.value);
+                if let [(kind, count)] = kinds.iter().collect::<Vec<_>>()[..] {
+                    let heading = if *count == 1 { kind.to_string() } else { format!("{kind} ({count})") };
+                    ui.label(RichText::new(heading).strong().color(theme::ACCENT));
+                } else {
+                    ui.label(RichText::new(format!("{} objects selected", selected.len())).strong());
+                    for (kind, n) in kinds {
+                        ui.label(RichText::new(format!("{n} × {kind}")).color(theme::TEXT_DIM));
                     }
-                    ui.end_row();
+                    ui.label(RichText::new("Select objects of one kind to change them together.").color(theme::TEXT_DIM));
                 }
-            });
-            app.actions.extend(actions);
-        }
+                ui.add_space(4.0);
+                let mut actions = vec![];
+                // General: what every object has, whatever its kind.
+                let values = GeneralValues::of(app);
+                // Names in a column of their own width; what they are set to fills the rest of the palette.
+                let field = (ui.available_width() - PROPERTY_NAMES - 18.0).max(120.0);
+                if section(ui, "General") {
+                    egui::Grid::new("general_rows")
+                        .num_columns(2)
+                        .min_col_width(PROPERTY_NAMES)
+                        .spacing(vec2(10.0, 5.0))
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("Color").color(theme::TEXT_DIM));
+                            color_combo(ui, "palette_color", field, values.color, &mut actions);
+                            ui.end_row();
+                            ui.label(RichText::new("Layer").color(theme::TEXT_DIM));
+                            layer_combo(ui, "palette_layer", field, &values, &mut actions);
+                            ui.end_row();
+                            ui.label(RichText::new("Linetype").color(theme::TEXT_DIM));
+                            linetype_combo(ui, "palette_linetype", field, &values.linetype, &mut actions);
+                            ui.end_row();
+                            ui.label(RichText::new("Lineweight").color(theme::TEXT_DIM));
+                            lineweight_combo(
+                                ui,
+                                "palette_lineweight",
+                                field,
+                                values.lineweight,
+                                lineweight::choices(),
+                                Action::UseLineweight,
+                                true,
+                                &mut actions,
+                            );
+                            ui.end_row();
+                            ui.label(RichText::new("Linetype scale").color(theme::TEXT_DIM));
+                            linetype_scale_edit(ui, app, values.linetype_scale, &ids, &mut actions);
+                            ui.end_row();
+                        });
+                }
+                ui.add_space(4.0);
+                let shared = shared_properties(&selected);
+                if !shared.is_empty() && section(ui, "Geometry") {
+                    egui::Grid::new("property_rows")
+                        .num_columns(2)
+                        .min_col_width(PROPERTY_NAMES)
+                        .spacing(vec2(10.0, 5.0))
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for property in shared {
+                                ui.label(RichText::new(&property.name).color(theme::TEXT_DIM));
+                                if property.editable {
+                                    let buffer = app.property_edits.entry(property.name.clone()).or_insert_with(|| property.value.clone());
+                                    let response = ui.add(TextEdit::singleline(buffer).desired_width(field));
+                                    if response.has_focus() {
+                                        app.property_focus = true;
+                                    }
+                                    if response.lost_focus() {
+                                        if ui.input(|i| i.key_pressed(Key::Enter)) && *buffer != property.value {
+                                            actions.push(Action::SetProperty(ids.clone(), property.name.clone(), buffer.clone()));
+                                        }
+                                        app.property_edits.remove(&property.name);
+                                    }
+                                } else {
+                                    ui.label(&property.value);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                }
+                app.actions.extend(actions);
+            }
+        });
     });
     app.properties_open = open;
 }
 
 // ------------------------------------------------------------------------------------------------ canvas
+
+/// The width of the column of property names in the Properties palette.
+const PROPERTY_NAMES: f32 = 96.0;
 
 const WELCOME_WIDTH: f32 = 860.0;
 const TWO_COLUMNS_FROM: f32 = 720.0;
