@@ -83,7 +83,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   block or group, then asks `Fix any errors detected? [Yes/No] <N>:`. Yes fixes it all as one undo step; blocks are
   only reported, to be fixed in the block editor. `RECOVER` opens a damaged DXF or DWG (DWG through the ODA
   converter), skipping the lines and objects it cannot read, fixes what `AUDIT` would, and reports what it skipped.
-- Images (`IMAGEATTACH`, `IM`), external references (`XATTACH`, `XREF`) and the block editor (`BEDIT`, `BCLOSE`);
+- Images (`IMAGEATTACH`, `IM`), external references (`XATTACH`, `XREF`; `REFEDIT` edits a selected one in place in
+  the block editor, and `REFCLOSE` saves the changes into its drawing and reloads it) and the block editor
+  (`BEDIT`, `BCLOSE`);
   tables (`TABLE`, `TABLEDIT` or double-click a cell) are AutoCAD tables, read from and saved to files; attribute
   definitions (`ATTDEF`) for blocks; images print in PDFs. Dynamic input takes a length and angle (Tab between
   them) or a distance along the cursor.

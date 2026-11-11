@@ -479,8 +479,8 @@ fn shape(name: &str) -> Option<&'static str> {
             r##"<rect x="2.5" y="4.5" width="15" height="15" rx="1" stroke="#4ea3f1" stroke-dasharray="2 1.6"/><circle cx="8" cy="10" r="2.8"/><path d="M5.5 15.5h8V9"/>"##,
             star!()
         ),
-        "BEDIT" => concat!(block_art!(), pencil!()),
-        "BCLOSE" => concat!(block_art!(), cross_badge!()),
+        "BEDIT" | "REFEDIT" => concat!(block_art!(), pencil!()),
+        "BCLOSE" | "REFCLOSE" => concat!(block_art!(), cross_badge!()),
         "ATTDEF" => concat!(
             r##"<path d="M2.5 8h11l4.5 4.5-4.5 4.5h-11Z"/><circle cx="13.5" cy="12.5" r="1.4" fill="#4ea3f1" stroke="none"/>"##,
             star!()

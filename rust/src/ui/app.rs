@@ -395,6 +395,9 @@ pub struct LinewrightApp {
     last_viewport: Option<EntityId>,
     /// The view of each space that is not open, and which space the window last showed.
     space_cameras: std::collections::HashMap<Option<usize>, Camera>,
+    /// An external reference being edited in place (REFEDIT), in the block editor: its name, its drawing's file and
+    /// that drawing as read, to save the edits back into.
+    editing_xref: Option<(String, std::path::PathBuf, Document)>,
     shown_space: Option<usize>,
     shown_layouts: usize,
     /// The start page shows in place of the drawing until a drawing is opened or work begins.
@@ -482,6 +485,7 @@ impl LinewrightApp {
             previous_views: vec![],
             last_viewport: None,
             space_cameras: Default::default(),
+            editing_xref: None,
             shown_space: None,
             shown_layouts: 0,
             welcome,
@@ -940,9 +944,47 @@ impl LinewrightApp {
         self.print(format!("Block editor: {name}. BCLOSE saves or discards the changes."));
     }
 
+    /// REFEDIT: open an external reference's drawing in the block editor, to change it in place. Closing the editor
+    /// with Save writes the changes into that drawing and reloads the reference.
+    fn edit_xref(&mut self, block: BlockRef) {
+        let written = block.0.xref.clone().unwrap_or_default();
+        let path = crate::io::files::xref_path(self.document().path.as_deref(), &written);
+        let (referenced, shown) = match crate::io::files::open_xref_for_edit(&path) {
+            Ok(opened) => opened,
+            Err(error) => return self.print(error.0),
+        };
+        let name = block.0.name.clone();
+        let editing = BlockRef(std::sync::Arc::new(BlockDef { entities: shown, ..(*block.0).clone() }));
+        self.editing_xref = Some((name.clone(), path, referenced));
+        self.dialog = None;
+        self.space_cameras.insert(Some(usize::MAX), self.camera);
+        self.controller.begin_block_edit(editing);
+        self.zoom_extents();
+        self.print(format!("Editing reference {name} in place. REFCLOSE saves the changes into its drawing or discards them."));
+    }
+
     /// Close the block editor, saving or not, and go back to the view it was opened from.
     pub fn close_block(&mut self, save: bool) {
         self.dialog = None;
+        if let Some((name, path, mut referenced)) = self.editing_xref.take() {
+            // The reference's own block is left as it was; its drawing takes the changes and the reference reloads.
+            let edited: Vec<Entity> = self.document().entities().iter().filter(|e| e.attribute.is_none()).cloned().collect();
+            self.controller.end_block_edit(false);
+            if let Some(camera) = self.space_cameras.remove(&Some(usize::MAX)) {
+                self.camera = camera;
+            }
+            if !save {
+                return self.print(format!("Changes to reference {name} discarded."));
+            }
+            match crate::io::files::save_xref_edit(&mut referenced, edited, &path) {
+                Ok(()) => {
+                    self.print(format!("Reference {name} saved to {}.", path.display()));
+                    self.xref_action(&name, false);
+                }
+                Err(error) => self.dialog = Some(Dialog::Message(error.0)),
+            }
+            return;
+        }
         let name = self.document().editing_block().map(|b| b.0.name.clone()).unwrap_or_default();
         let saved = self.controller.end_block_edit(save);
         if let Some(camera) = self.space_cameras.remove(&Some(usize::MAX)) {
@@ -1720,6 +1762,20 @@ impl LinewrightApp {
                 }
             }
             Action::Command("XREF") => self.dialog = Some(Dialog::Xrefs),
+            Action::Command("REFEDIT") => {
+                if self.document().editing_block().is_some() {
+                    self.print("Close the block editor first (BCLOSE or REFCLOSE).");
+                } else {
+                    let picked = self.controller.selected().iter().find_map(|e| match &e.shape {
+                        Shape::Insert { block, .. } if block.0.xref.is_some() => Some(block.clone()),
+                        _ => None,
+                    });
+                    match picked {
+                        Some(block) => self.edit_xref(block),
+                        None => self.print("Select an external reference first, then REFEDIT."),
+                    }
+                }
+            }
             Action::Command("IMAGEATTACH") => {
                 let Some(path) =
                     rfd::FileDialog::new().set_title("Attach image").add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file()
@@ -2342,7 +2398,8 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "QSELECT" => Action::Command("QSELECT"),
         "XATTACH" | "XA" => Action::Command("XATTACH"),
         "BEDIT" | "BE" => Action::Command("BEDIT"),
-        "BCLOSE" | "BC" => Action::Command("BCLOSE"),
+        "BCLOSE" | "BC" | "REFCLOSE" => Action::Command("BCLOSE"),
+        "REFEDIT" => Action::Command("REFEDIT"),
         "XREF" | "XR" | "EXTERNALREFERENCES" => Action::Command("XREF"),
         "IMAGEATTACH" | "IAT" | "IM" | "IMAGE" => Action::Command("IMAGEATTACH"),
         "FIND" => Action::Command("FIND"),
