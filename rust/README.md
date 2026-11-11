@@ -113,7 +113,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - SHX fonts (romans.shx, simplex.shx, txt.shx, isocp.shx, gothice.shx…) drawn from the font's own strokes, on
   screen and in PDFs, sized as AutoCAD sizes them. They are read from the drawing's folder, AutoCAD's `Fonts`
   folders (`C:\Program Files\Autodesk\*\Fonts`, also seen from WSL under `/mnt/c`) and `LINEWRIGHT_FONT_DIRS`.
-  A missing SHX font is replaced by simplex.shx, as AutoCAD does. Asian big fonts are not read yet.
+  A missing SHX font is replaced by simplex.shx, as AutoCAD does. Asian big fonts (gbcbig.shx, extfont.shx,
+  chineset.shx, whgtxt.shx…) named beside a style's font draw the Chinese, Japanese and Korean characters it
+  lacks, found through their GBK, Shift-JIS, Big5 or Korean code page.
 - DWG open and save through the free ODA File Converter, found on the `PATH`, in its default install folder,
   or through `LINEWRIGHT_ODA=/path/to/ODAFileConverter`.
 - PDF plotting at a scale (`1:50`) or fit to the page; on a layout, `PLOT` prints its sheet at 1:1.

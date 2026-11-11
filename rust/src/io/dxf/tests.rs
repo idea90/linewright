@@ -115,6 +115,18 @@ fn named_plot_styles_are_read_and_kept_on_objects_linewright_writes() {
 }
 
 #[test]
+fn a_text_style_s_big_font_is_read_and_written_beside_its_main_font() {
+    let mut document = Document::new();
+    document.text_styles.push(TextStyleDef { name: "Asian".into(), font: "txt.shx,gbcbig.shx".into(), ..TextStyleDef::standard() });
+    let file = dxf_from_document(&document);
+    let entry = file.table_entries("STYLE").into_iter().map(|i| &file.groups[i]).find(|g| g.get(2) == Some("Asian")).unwrap();
+    assert_eq!((entry.get(3), entry.get(4)), (Some("txt.shx"), Some("gbcbig.shx")), "codes 3 and 4, as AutoCAD keeps them");
+    let back = round_trip(&document);
+    let style = back.text_styles.iter().find(|s| s.name == "Asian").unwrap();
+    assert_eq!(style.font, "txt.shx,gbcbig.shx");
+}
+
+#[test]
 fn a_new_drawing_is_in_millimeters() {
     let back = round_trip(&Document::new());
     assert_eq!(unit_names(&back), ("millimeters", "mm"));

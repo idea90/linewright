@@ -1059,7 +1059,13 @@ fn text_style_fonts(file: &DxfFile) -> HashMap<String, String> {
             let name = entry.get(2)?.trim().to_lowercase();
             let xdata = entry.0.iter().skip_while(|p| !(p.code == 1001 && p.value.trim() == "ACAD")).skip(1);
             let family = xdata.take_while(|p| p.code != 1001).find(|p| p.code == 1000).map(|p| p.value.trim().to_string());
-            let font = family.filter(|f| !f.is_empty()).or_else(|| entry.text(3).map(|f| f.trim().to_string()))?;
+            let mut font = family.filter(|f| !f.is_empty()).or_else(|| entry.text(3).map(|f| f.trim().to_string()))?;
+            // A big font beside an SHX font goes with it, as AutoCAD shows the pair: "txt.shx,gbcbig.shx".
+            if let Some(big) = entry.text(4).map(|b| b.trim().to_string()).filter(|b| !b.is_empty())
+                && !font.to_lowercase().ends_with(".ttf")
+            {
+                font = format!("{font},{big}");
+            }
             Some((name, font))
         })
         .collect()
@@ -1130,16 +1136,18 @@ fn write_text_styles(file: &mut DxfFile, writer: &mut Writer, document: &Documen
         let same_font = fonts.get(&style.name.to_lowercase()).is_some_and(|f| f.eq_ignore_ascii_case(&style.font));
         if !same_font {
             entry.0.retain(|p| p.code < 1000);
-            // A family goes in as its file's usual name; AutoCAD finds fonts by file.
-            let lower = style.font.to_lowercase();
-            let file_name = if style.font.is_empty() {
+            // A family goes in as its file's usual name; AutoCAD finds fonts by file. A big font goes in beside it.
+            let (main, big) = style.font.split_once(',').map_or((style.font.as_str(), ""), |(main, big)| (main.trim(), big.trim()));
+            let lower = main.to_lowercase();
+            let file_name = if main.is_empty() {
                 "txt".to_string()
-            } else if lower.ends_with(".shx") || lower.ends_with(".ttf") || lower.ends_with(".ttc") {
-                style.font.clone()
+            } else if lower.ends_with(".shx") || lower.ends_with(".ttf") || lower.ends_with(".ttc") || !big.is_empty() {
+                main.to_string()
             } else {
-                format!("{}.ttf", style.font)
+                format!("{main}.ttf")
             };
             entry.set(3, file_name);
+            entry.set(4, big.to_string());
         }
         writer.text_styles.insert(style.name.to_lowercase(), (style.name.clone(), style.font.clone()));
     }
