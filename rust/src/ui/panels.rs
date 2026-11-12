@@ -688,7 +688,8 @@ pub fn status_bar(app: &mut LinewrightApp, ctx: &egui::Context) {
         .stroke(Stroke::new(1.0_f32, theme::BORDER));
     egui::TopBottomPanel::bottom("status_bar").frame(frame).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            let point = app.controller.cursor.as_ref().map(|c| c.point).unwrap_or_default();
+            // In the current UCS, as typed points are.
+            let point = app.controller.cursor.as_ref().map(|c| app.document().ucs.to_ucs(c.point)).unwrap_or_default();
             let places = app.document().precision;
             let coords = RichText::new(format!("{:.*}, {:.*}", places, point.x, places, point.y)).monospace().strong().color(theme::TEXT);
             ui.add_sized(vec2(COORDS_WIDTH, 22.0), egui::Label::new(coords));
@@ -819,7 +820,8 @@ pub fn command_panel(app: &mut LinewrightApp, ctx: &egui::Context) {
                             if point_prompt {
                                 let base = app.controller.prompt().and_then(|p| p.base);
                                 let cursor = app.controller.cursor.as_ref().map(|c| c.point);
-                                if let Some(entry) = dynamic_entry(&run, app.dynamic_first.as_deref(), base, cursor) {
+                                let ucs = app.document().ucs;
+                                if let Some(entry) = dynamic_entry(&run, app.dynamic_first.as_deref(), base, cursor, &ucs) {
                                     run = entry;
                                 }
                                 app.dynamic_first = None;

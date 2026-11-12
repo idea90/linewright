@@ -510,6 +510,33 @@ impl DxfFile {
         }
     }
 
+    /// A header variable that is a point: its X and Y (codes 10 and 20).
+    pub(super) fn header_point(&self, variable: &str) -> Option<Point> {
+        let (start, _) = self.section("HEADER")?;
+        let pairs = &self.groups[start].0;
+        let at = pairs.iter().position(|p| p.code == 9 && p.value.trim() == variable)?;
+        let values: Vec<&Pair> = pairs[at + 1..].iter().take_while(|p| p.code != 9).collect();
+        let value = |code: i32| values.iter().find(|p| p.code == code).and_then(|p| p.value.trim().parse::<f64>().ok());
+        Some(pt(value(10)?, value(20)?))
+    }
+
+    /// Set a header variable that is a point, keeping its Z (or 0).
+    pub(super) fn set_header_point(&mut self, variable: &str, point: Point) {
+        let Some((start, _)) = self.section("HEADER") else { return };
+        let pairs = &mut self.groups[start].0;
+        let values = [pair(10, point.x), pair(20, point.y), pair(30, 0.0)];
+        match pairs.iter().position(|p| p.code == 9 && p.value.trim() == variable) {
+            Some(at) => {
+                let end = pairs[at + 1..].iter().position(|p| p.code == 9).map_or(pairs.len(), |n| at + 1 + n);
+                pairs.splice(at + 1..end, values);
+            }
+            None => {
+                pairs.push(pair(9, variable));
+                pairs.extend(values);
+            }
+        }
+    }
+
     pub fn version(&self) -> String {
         self.header("$ACADVER").map_or("AC1009".to_string(), |v| v.trim().to_string())
     }

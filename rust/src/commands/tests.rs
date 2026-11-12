@@ -25,6 +25,9 @@ struct FakeHost {
     scales: Vec<ScaleSetting>,
     /// The blocks ATTSYNC asked to sync.
     synced: Vec<crate::model::entities::BlockRef>,
+    /// The UCS typed points are read in, and what UCS asked to change.
+    ucs: crate::model::ucs::Ucs,
+    ucs_requests: Vec<super::prompts::UcsRequest>,
 }
 
 impl FakeHost {
@@ -98,6 +101,12 @@ impl Host for FakeHost {
     }
     fn sync_attributes(&mut self, block: crate::model::entities::BlockRef) {
         self.synced.push(block);
+    }
+    fn ucs(&self) -> crate::model::ucs::Ucs {
+        self.ucs
+    }
+    fn ucs_request(&mut self, request: super::prompts::UcsRequest) {
+        self.ucs_requests.push(request);
     }
 }
 
@@ -1440,4 +1449,98 @@ fn boolean_commands_leave_out_what_is_not_a_region() {
         ["1 object(s) are not regions and are left out. Make regions of them with REGION.", "At least 2 regions are required."]
     );
     assert!(matches!(host.entities[0].shape, Shape::Polyline { .. }), "left as it was");
+}
+
+/// A UCS at 10,0 turned a quarter turn: its X axis is the world's Y axis.
+fn turned_ucs() -> crate::model::ucs::Ucs {
+    crate::model::ucs::Ucs { origin: pt(10.0, 0.0), angle: 90.0 }
+}
+
+fn near(a: Point, b: Point) -> bool {
+    a.dist(b) < 1e-9
+}
+
+#[test]
+fn points_and_angles_are_typed_in_the_ucs() {
+    let mut host = FakeHost { ucs: turned_ucs(), ..FakeHost::default() };
+    let mut session = start("LINE", &mut host, vec![]);
+    typed(&mut session, &mut host, &["0,0", "@5<0", "*0,0", ""]);
+    let Shape::Line { start, end } = host.shapes()[0] else { panic!("a line") };
+    assert!(near(start, pt(10.0, 0.0)) && near(end, pt(10.0, 5.0)), "{start:?} {end:?}");
+    let Shape::Line { end, .. } = host.shapes()[1] else { panic!("a line") };
+    assert!(near(end, pt(0.0, 0.0)), "a starred point is in world coordinates");
+
+    // A direction typed is from the UCS's X axis; a turn is taken as it is.
+    let defaults = Rc::new(RefCell::new(Defaults { ucs: turned_ucs(), ..Defaults::default() }));
+    let mut host = FakeHost { ucs: turned_ucs(), ..FakeHost::default() };
+    let mut session = start_with("TEXT", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["0,0", "1", "", "Hi"]);
+    let Shape::Text { rotation, .. } = host.shapes()[0] else { panic!("text") };
+    assert!((rotation - 90.0).abs() < 1e-9, "the default rotation 0 runs along the UCS's X axis: {rotation}");
+    let target = line(pt(0.0, 0.0), pt(1.0, 0.0));
+    let mut host = FakeHost { entities: vec![target.clone()], ucs: turned_ucs(), ..FakeHost::default() };
+    let mut session = start_with("ROTATE", &mut host, vec![target], defaults);
+    typed(&mut session, &mut host, &["*0,0", "90"]);
+    let Shape::Line { end, .. } = host.shapes()[0] else { panic!("a line") };
+    assert!(near(end, pt(0.0, 1.0)), "rotated by a quarter turn, not by the UCS's turn too: {end:?}");
+}
+
+#[test]
+fn rectangles_dimensions_and_construction_lines_follow_the_ucs() {
+    let defaults = Rc::new(RefCell::new(Defaults { ucs: turned_ucs(), ..Defaults::default() }));
+    let mut host = FakeHost { ucs: turned_ucs(), ..FakeHost::default() };
+    let mut session = start_with("RECTANGLE", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["0,0", "4,2"]);
+    let Shape::Polyline { vertices, .. } = &host.shapes()[0] else { panic!("a rectangle") };
+    let corners: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
+    for (corner, expected) in corners.iter().zip([pt(10.0, 0.0), pt(10.0, 4.0), pt(8.0, 4.0), pt(8.0, 0.0)]) {
+        assert!(near(*corner, expected), "{corners:?}");
+    }
+    let mut session = start_with("ID", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["*10,3"]);
+    assert_eq!(host.reports.last().map(String::as_str), Some("X = 3.0000  Y = 0.0000"));
+    let mut session = start_with("DIMLINEAR", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["0,0", "3,1", "1.5,5"]);
+    let Shape::Dimension { angle, .. } = host.shapes()[1] else { panic!("a dimension") };
+    assert!((angle - 90.0).abs() < 1e-9, "horizontal in the UCS is the world's vertical: {angle}");
+    let mut session = start_with("XLINE", &mut host, vec![], defaults);
+    typed(&mut session, &mut host, &["H", "0,0", ""]);
+    let Shape::XLine { direction, .. } = host.shapes()[2] else { panic!("an xline") };
+    assert!(near(direction, pt(0.0, 1.0)), "{direction:?}");
+}
+
+#[test]
+fn ucs_sets_an_origin_and_axis_and_its_other_options() {
+    use super::prompts::UcsRequest;
+    use crate::model::ucs::Ucs;
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let mut host = FakeHost::default();
+    let mut session = start_with("UCS", &mut host, vec![], defaults.clone());
+    assert_eq!(host.reports[0], "Current ucs name:  World");
+    typed(&mut session, &mut host, &["5,5", "5,10"]);
+    assert_eq!(host.ucs_requests, [UcsRequest::Set(Ucs { origin: pt(5.0, 5.0), angle: 90.0 })]);
+    defaults.borrow_mut().ucs = Ucs { origin: pt(5.0, 5.0), angle: 90.0 };
+    for (answers, expected) in [
+        (vec!["Z", ""], UcsRequest::Set(Ucs { origin: pt(5.0, 5.0), angle: 180.0 })),
+        (vec![""], UcsRequest::Set(Ucs::WORLD)),
+        (vec!["P"], UcsRequest::Previous),
+        (vec!["NA", "S", "Plan"], UcsRequest::Save("Plan".into())),
+    ] {
+        host.ucs_requests.clear();
+        let mut session = start_with("UCS", &mut host, vec![], defaults.clone());
+        typed(&mut session, &mut host, &answers);
+        assert_eq!(host.ucs_requests, [expected], "{answers:?}");
+    }
+    let target = line(pt(1.0, 1.0), pt(1.0, 9.0));
+    host.ucs_requests.clear();
+    let mut session = start_with("UCS", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["OB"]);
+    session.submit_pick(target, pt(1.0, 8.0), false, &mut host);
+    assert_eq!(host.ucs_requests, [UcsRequest::Set(Ucs { origin: pt(1.0, 9.0), angle: 270.0 })], "from the end nearer the pick");
+    let mut session = start_with("UCS", &mut host, vec![], defaults);
+    typed(&mut session, &mut host, &["X"]);
+    assert!(host.reports.last().unwrap().contains("XY plane"));
+    let mut session = start("UCSICON", &mut host, vec![]);
+    typed(&mut session, &mut host, &["OFF"]);
+    assert_eq!(host.ucs_requests.last(), Some(&UcsRequest::Icon(Some(false), None)));
 }

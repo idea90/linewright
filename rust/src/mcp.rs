@@ -757,7 +757,7 @@ fn coords(p: Point) -> String {
 }
 
 fn parse_point(text: &str) -> Option<Point> {
-    crate::commands::parse::parse_point(text, None)
+    crate::commands::parse::parse_point(text, None, &crate::model::ucs::Ucs::WORLD)
 }
 
 fn bounds_of(value: &Value) -> Option<Bounds> {

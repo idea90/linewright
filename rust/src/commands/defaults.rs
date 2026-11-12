@@ -61,6 +61,9 @@ pub struct Defaults {
     pub text_style: crate::model::document::TextStyleDef,
     /// Corners given for new multiline text, for the window to open its editor with.
     pub mtext_request: Option<crate::model::geometry::Point>,
+    /// The current UCS and the ones saved by name, as the window keeps them.
+    pub ucs: crate::model::ucs::Ucs,
+    pub named_ucs: Vec<(String, crate::model::ucs::Ucs)>,
     /// EATTEDIT picked this insert, for the window to open the Enhanced Attribute Editor on.
     pub attribute_edit_request: Option<crate::model::entities::EntityId>,
     /// The multileader style new multileaders follow.
@@ -118,6 +121,8 @@ impl Default for Defaults {
             text_style: crate::model::document::TextStyleDef::standard(),
             mtext_request: None,
             attribute_edit_request: None,
+            ucs: crate::model::ucs::Ucs::WORLD,
+            named_ucs: vec![],
             mleader_style: crate::model::multileader::MleaderStyle::standard(),
             chamfer_distances: (0.0, 0.0),
             wipeout_frame: 1,

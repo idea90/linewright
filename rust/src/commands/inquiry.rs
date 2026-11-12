@@ -126,9 +126,13 @@ pub async fn list_command(io: Io, selected: Vec<Entity>) {
     }
 }
 
-pub async fn id_command(io: Io) {
+/// ID: a point's coordinates in the current UCS.
+pub async fn id_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super::defaults::Defaults>>) {
+    let ucs = defaults.borrow().ucs;
     if let Some(Answer::Point(point)) = io.ask(Prompt::point("Specify point:")).await {
-        io.step(Step::Report(xy(point)));
+        let local = ucs.to_ucs(point);
+        // Adding nothing turns a minus zero, which rounding into the UCS can leave, into zero.
+        io.step(Step::Report(xy(crate::model::geometry::pt(local.x + 0.0, local.y + 0.0))));
     }
 }
 

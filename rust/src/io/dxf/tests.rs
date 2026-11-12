@@ -1045,3 +1045,18 @@ fn a_region_is_saved_as_marked_polylines_and_read_back_as_one_region() {
     assert_eq!(read.len(), 2, "and the line");
     assert!(read.kept_xdata.is_empty(), "Linewright's own data is not kept as another program's");
 }
+
+#[test]
+fn the_ucs_and_named_ones_are_saved_and_read_back() {
+    use crate::model::ucs::Ucs;
+    let mut document = Document::new();
+    document.ucs = Ucs { origin: pt(10.0, 20.0), angle: 30.0 };
+    document.named_ucs = vec![("PLAN".into(), Ucs { origin: pt(5.0, 0.0), angle: 90.0 }), ("SITE".into(), Ucs::WORLD)];
+    let read = document_from_dxf(DxfFile::parse(&dxf_from_document(&document).to_bytes()).unwrap());
+    assert!(read.ucs.origin.dist(pt(10.0, 20.0)) < 1e-9 && (read.ucs.angle - 30.0).abs() < 1e-9, "{:?}", read.ucs);
+    let names: Vec<&str> = read.named_ucs.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["PLAN", "SITE"]);
+    assert!((read.named_ucs[0].1.angle - 90.0).abs() < 1e-9);
+    let again = dxf_from_document(&read);
+    assert_eq!(again.table_entries("UCS").len(), 2, "saving again does not double them");
+}

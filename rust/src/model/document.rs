@@ -307,6 +307,13 @@ pub struct Document {
     pub group_selection: bool,
     /// The drawing's units as $INSUNITS gives them, once set here (UNITS); None keeps the file's.
     pub units: Option<i64>,
+    /// The current user coordinate system, the ones saved by name (UCS NAmed), and the ones before the current one
+    /// for UCS Previous, latest last.
+    pub ucs: crate::model::ucs::Ucs,
+    pub named_ucs: Vec<(String, crate::model::ucs::Ucs)>,
+    pub previous_ucs: Vec<crate::model::ucs::Ucs>,
+    /// UCSICON: whether the UCS icon shows, and whether it sits at the UCS's origin when that is in view.
+    pub ucs_icon: (bool, bool),
     /// Decimal places coordinates and lengths are shown with ($LUPREC).
     pub precision: usize,
     /// Blocks PURGE removed, which saving takes out of the file too.
@@ -388,6 +395,10 @@ impl Document {
             groups: vec![],
             group_selection: true,
             units: None,
+            ucs: crate::model::ucs::Ucs::WORLD,
+            named_ucs: vec![],
+            previous_ucs: vec![],
+            ucs_icon: (true, true),
             precision: 4,
             purged_blocks: vec![],
             shown_only: vec![],

@@ -5,7 +5,7 @@ use super::defaults::Defaults;
 use super::prompts::{Command, Io};
 use super::{
     blocks, curves, dimension, drafting, draw, edit, groups, inquiry, layer_tools, layout, measuring, mledit, modify, qdim, regions,
-    reshape, shapes,
+    reshape, shapes, ucs,
 };
 use crate::model::entities::Entity;
 
@@ -113,6 +113,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("PASTEORIG", "Paste to original coordinates"),
     ("PASTEBLOCK", "Paste as block"),
     ("NCOPY", "Copy nested objects"),
+    ("UCS", "User coordinate system"),
+    ("UCSICON", "Show or hide the UCS icon"),
     ("REGION", "Region from closed objects"),
     ("UNION", "Join regions"),
     ("SUBTRACT", "Subtract regions"),
@@ -251,7 +253,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
         match name.as_str() {
             "LINE" => Box::pin(draw::line_command(io)),
             "PLINE" => Box::pin(draw::polyline_command(io)),
-            "RECTANGLE" => Box::pin(draw::rectangle_command(io)),
+            "RECTANGLE" => Box::pin(draw::rectangle_command(io, defaults)),
             "CIRCLE" => Box::pin(curves::circle_command(io)),
             "ARC" => Box::pin(curves::arc_command(io)),
             "TEXT" => Box::pin(draw::text_command(io, defaults)),
@@ -266,7 +268,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "OOPS" => Box::pin(edit::oops(io, defaults)),
             "MOVE" => Box::pin(edit::move_command(io, selected)),
             "COPY" => Box::pin(edit::copy(io, selected)),
-            "ROTATE" => Box::pin(edit::rotate(io, selected)),
+            "ROTATE" => Box::pin(edit::rotate(io, selected, defaults)),
             "SCALE" => Box::pin(edit::scale(io, selected)),
             "MIRROR" => Box::pin(edit::mirror(io, selected)),
             "OFFSET" => Box::pin(edit::offset(io)),
@@ -284,7 +286,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             // IMAGEATTACH chooses the file in the window, then places it with this.
             "IMAGEPLACE" => Box::pin(drafting::place_image(io, defaults)),
             "POLYGON" => Box::pin(drafting::polygon_command(io)),
-            "XLINE" => Box::pin(drafting::xline_command(io)),
+            "XLINE" => Box::pin(drafting::xline_command(io, defaults)),
             "RAY" => Box::pin(drafting::ray_command(io)),
             "DONUT" => Box::pin(drafting::donut_command(io)),
             "REVCLOUD" => Box::pin(drafting::revcloud_command(io, defaults)),
@@ -365,7 +367,9 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "ATTSYNC" => Box::pin(blocks::attsync_command(io, defaults)),
             "EATTEDIT" => Box::pin(blocks::eattedit_command(io, defaults)),
             "LIST" => Box::pin(inquiry::list_command(io, selected)),
-            "ID" => Box::pin(inquiry::id_command(io)),
+            "ID" => Box::pin(inquiry::id_command(io, defaults)),
+            "UCS" => Box::pin(ucs::ucs_command(io, defaults)),
+            "UCSICON" => Box::pin(ucs::ucsicon_command(io)),
             "ZOOM" => Box::pin(inquiry::zoom_command(io)),
             "TEXTEDIT" => Box::pin(inquiry::textedit_command(io, selected)),
             "SAVETIME" => Box::pin(super::settings::savetime_command(io, defaults)),

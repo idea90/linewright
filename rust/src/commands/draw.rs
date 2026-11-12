@@ -9,8 +9,10 @@ const WIDTH: &str = "W";
 const HALFWIDTH: &str = "H";
 const UNDO: &str = "U";
 
-fn rectangle_shape(first: Point, other: Point) -> Entity {
-    polyline_from(&[first, pt(other.x, first.y), other, pt(first.x, other.y)], true)
+/// A rectangle with opposite corners at two points, its sides along the UCS's axes.
+fn rectangle_shape(first: Point, other: Point, ucs: &crate::model::ucs::Ucs) -> Entity {
+    let (a, b) = (ucs.to_ucs(first), ucs.to_ucs(other));
+    polyline_from(&[first, ucs.to_world(pt(b.x, a.y)), other, ucs.to_world(pt(a.x, b.y))], true)
 }
 
 pub fn line_preview(start: Point) -> impl Fn(Point) -> Vec<Entity> {
@@ -205,11 +207,12 @@ pub async fn polyline_command(io: Io) {
     }
 }
 
-pub async fn rectangle_command(io: Io) {
+pub async fn rectangle_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super::defaults::Defaults>>) {
+    let ucs = defaults.borrow().ucs;
     let Some(Answer::Point(first)) = io.ask(Prompt::point("Specify first corner point:")).await else { return };
-    let prompt = Prompt::point("Specify other corner point:").base(first).preview(move |cursor| vec![rectangle_shape(first, cursor)]);
+    let prompt = Prompt::point("Specify other corner point:").base(first).preview(move |cursor| vec![rectangle_shape(first, cursor, &ucs)]);
     if let Some(Answer::Point(other)) = io.ask(prompt).await {
-        io.step(Step::Drawn(vec![rectangle_shape(first, other)]));
+        io.step(Step::Drawn(vec![rectangle_shape(first, other, &ucs)]));
     }
 }
 

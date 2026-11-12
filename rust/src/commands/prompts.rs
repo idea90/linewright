@@ -18,6 +18,7 @@ use crate::model::document::{DrawOrder, Layer, ObjectGroup};
 use crate::model::entities::{BlockRef, Entity};
 use crate::model::geometry::Point;
 use crate::model::index::Bounds;
+use crate::model::ucs::Ucs;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
@@ -61,6 +62,10 @@ pub struct Prompt {
     pub or_all: bool,
     /// On a point prompt, the point is answered with the region of the drawing closed off around it.
     pub region: bool,
+    /// On an angle prompt, the angle is a turn (how far to rotate), not a direction: typed, it is taken as it is,
+    /// and clicked it is measured from the UCS's X axis. A direction typed is from the UCS's X axis and is
+    /// answered as a world direction; clicked, it is the world direction to the point.
+    pub turn: bool,
     /// On a point prompt, the point is answered with the table it falls inside, as a pick.
     pub table: bool,
     /// On a point prompt, a number typed on its own is a length, answered as a number, rather than refused.
@@ -85,6 +90,7 @@ impl Prompt {
             preview: None,
             or_all: false,
             region: false,
+            turn: false,
             table: false,
             or_length: false,
         }
@@ -126,6 +132,12 @@ impl Prompt {
 
     pub fn table(mut self) -> Prompt {
         self.table = true;
+        self
+    }
+
+    /// An angle prompt that asks how far to turn rather than which way to point (see `turn`).
+    pub fn turn(mut self) -> Prompt {
+        self.turn = true;
         self
     }
 
@@ -215,9 +227,24 @@ pub enum Step {
     WipeoutFrame(u8),
     /// Set one of the drawing's linetype scales.
     LinetypeScale(ScaleSetting),
+    /// Make a UCS current, go back to the one before, or save or delete one by name.
+    Ucs(UcsRequest),
     /// Give every insert of the block the block's attributes as it now defines them (ATTSYNC): values are kept by
     /// tag, new attributes take their defaults, and each is placed afresh. The block itself is redefined to this.
     SyncAttributes(BlockRef),
+}
+
+/// A change to the user coordinate system, as UCS asks.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UcsRequest {
+    /// Make this UCS current; the current one is kept for Previous.
+    Set(Ucs),
+    Previous,
+    /// Save the current UCS under a name, or delete the one of that name.
+    Save(String),
+    Delete(String),
+    /// UCSICON: whether the icon shows, and whether it sits at the origin; None leaves either as it is.
+    Icon(Option<bool>, Option<bool>),
 }
 
 /// A change to what the drawing area shows, as ZOOM asks.
@@ -261,6 +288,12 @@ pub trait Host {
     fn linetype_scale(&mut self, _setting: ScaleSetting) {}
     /// Redefine a block's attributes and bring every insert of it in line, as ATTSYNC does.
     fn sync_attributes(&mut self, _block: BlockRef) {}
+    /// The current user coordinate system, which typed points and angles are read in.
+    fn ucs(&self) -> Ucs {
+        Ucs::WORLD
+    }
+    /// Change the user coordinate system, as UCS does.
+    fn ucs_request(&mut self, _request: UcsRequest) {}
 }
 
 /// One of the drawing's linetype scales, as LTSCALE, PSLTSCALE and CELTSCALE set it.
@@ -368,14 +401,19 @@ impl Session {
     pub fn submit_text(&mut self, text: &str, host: &mut dyn Host) -> Option<&'static str> {
         let prompt = self.prompt.as_ref()?;
         let text = text.trim();
+        let ucs = host.ucs();
         let answer = if text.is_empty() {
-            prompt.default.clone()
+            match &prompt.default {
+                // A direction offered as a default is, like one typed, from the UCS's X axis.
+                Some(Answer::Number(angle)) if prompt.kind == PromptKind::Angle && !prompt.turn => Some(Answer::Number(angle + ucs.angle)),
+                other => other.clone(),
+            }
         } else {
-            match Self::parse(prompt, text) {
+            match Self::parse(prompt, text, &ucs) {
                 None => {
                     // A point typed where a distance or an angle is asked measures it from the base point, as a click does.
                     let measured = matches!(prompt.kind, PromptKind::Number | PromptKind::Length | PromptKind::Angle);
-                    return match prompt.base.and_then(|base| parse_point(text, Some(base)).filter(|point| *point != base)) {
+                    return match prompt.base.and_then(|base| parse_point(text, Some(base), &ucs).filter(|point| *point != base)) {
                         Some(point) if measured => {
                             self.submit_point(point, host);
                             None
@@ -400,8 +438,12 @@ impl Session {
                 if let Some(base) = prompt.base
                     && point != base
                 {
-                    let measured =
-                        if prompt.kind == PromptKind::Angle { base.angle_to(point) } else { base.dist(point) * prompt.click_factor };
+                    let turn_from = if prompt.turn { host.ucs().angle } else { 0.0 };
+                    let measured = if prompt.kind == PromptKind::Angle {
+                        base.angle_to(point) - turn_from
+                    } else {
+                        base.dist(point) * prompt.click_factor
+                    };
                     self.advance(Some(Answer::Number(measured)), host);
                 }
             }
@@ -441,17 +483,17 @@ impl Session {
         }
     }
 
-    fn parse(prompt: &Prompt, text: &str) -> Option<Answer> {
+    fn parse(prompt: &Prompt, text: &str, ucs: &Ucs) -> Option<Answer> {
         let upper = text.to_uppercase();
         if prompt.options.contains(&upper) {
             return Some(Answer::Keyword(upper));
         }
         match prompt.kind {
             PromptKind::Point if prompt.or_length && parse_number(text).is_some() => parse_number(text).map(Answer::Number),
-            PromptKind::Point => parse_point(text, prompt.base).map(Answer::Point),
+            PromptKind::Point => parse_point(text, prompt.base, ucs).map(Answer::Point),
             PromptKind::Number => parse_number(text).map(Answer::Number),
             PromptKind::Length => parse_length(text).map(Answer::Number),
-            PromptKind::Angle => parse_finite(text).map(Answer::Number),
+            PromptKind::Angle => parse_finite(text).map(|angle| Answer::Number(if prompt.turn { angle } else { angle + ucs.angle })),
             PromptKind::Text => Some(Answer::Text(text.to_string())),
             PromptKind::Select | PromptKind::Pick | PromptKind::Window | PromptKind::OverkillDialog => None,
         }
@@ -517,5 +559,6 @@ fn perform(step: Step, host: &mut dyn Host) {
         Step::WipeoutFrame(mode) => host.wipeout_frame(mode),
         Step::LinetypeScale(setting) => host.linetype_scale(setting),
         Step::SyncAttributes(block) => host.sync_attributes(block),
+        Step::Ucs(request) => host.ucs_request(request),
     }
 }

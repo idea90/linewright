@@ -166,6 +166,38 @@ impl Host for Drawing {
         self.note_change();
     }
 
+    fn ucs(&self) -> crate::model::ucs::Ucs {
+        self.document.ucs
+    }
+
+    fn ucs_request(&mut self, request: crate::commands::prompts::UcsRequest) {
+        use crate::commands::prompts::UcsRequest;
+        let document = &mut self.document;
+        match request {
+            UcsRequest::Set(ucs) => {
+                let before = std::mem::replace(&mut document.ucs, ucs);
+                document.previous_ucs.push(before);
+                // AutoCAD keeps the last ten.
+                let excess = document.previous_ucs.len().saturating_sub(10);
+                document.previous_ucs.drain(..excess);
+            }
+            UcsRequest::Previous => match document.previous_ucs.pop() {
+                Some(ucs) => document.ucs = ucs,
+                None => self.print("No previous UCS."),
+            },
+            UcsRequest::Save(name) => {
+                let ucs = document.ucs;
+                document.named_ucs.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                document.named_ucs.push((name, ucs));
+            }
+            UcsRequest::Delete(name) => document.named_ucs.retain(|(n, _)| !n.eq_ignore_ascii_case(&name)),
+            UcsRequest::Icon(on, origin) => {
+                document.ucs_icon = (on.unwrap_or(document.ucs_icon.0), origin.unwrap_or(document.ucs_icon.1));
+            }
+        }
+        self.note_change();
+    }
+
     fn sync_attributes(&mut self, block: BlockRef) {
         let count = self.sync_inserts(&block);
         self.report(format!("ATTSYNC block {}: {count} insert(s) updated.", block.0.name));
@@ -597,6 +629,8 @@ impl Controller {
                 defaults.mline_style = style.clone();
             }
             defaults.wipeout_frame = document.wipeout_frame;
+            defaults.ucs = document.ucs;
+            defaults.named_ucs = document.named_ucs.clone();
             defaults.ltscale = document.ltscale;
             defaults.psltscale = document.psltscale;
             defaults.celtscale = document.celtscale;
@@ -937,7 +971,13 @@ impl Controller {
         };
         let aperture = SNAP_APERTURE_PIXELS / self.scale;
         let near = self.drawing.document.entities_in(&Bounds::square_around(cursor, aperture));
-        let scene = SnapScene { aperture, grid_step: grid_spacing(self.scale), entities: &near, acquired: &self.acquired };
+        let scene = SnapScene {
+            aperture,
+            grid_step: grid_spacing(self.scale),
+            entities: &near,
+            acquired: &self.acquired,
+            ucs: self.drawing.document.ucs,
+        };
         match self.snap_override {
             // An override snaps to its kind alone, even with running snaps off.
             Some(kind) => {
@@ -1033,7 +1073,7 @@ impl Controller {
         }
         self.snap_override = None;
         if kind == PromptKind::Window {
-            match crate::commands::parse::parse_point(text, self.prompt().and_then(|p| p.base)) {
+            match crate::commands::parse::parse_point(text, self.prompt().and_then(|p| p.base), &self.drawing.document.ucs) {
                 Some(point) => self.answer_window(point),
                 None if text.trim().is_empty() => {
                     if let Some(session) = &mut self.session {

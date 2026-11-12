@@ -108,6 +108,14 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   blocks and external references as they show. Dynamic input takes a length and angle (Tab between
   them) or a distance along the cursor.
 - Points as `x,y`, `@dx,dy` or `@distance<angle`; `U`/`UNDO`, `REDO`, `ALL`.
+- User coordinate systems: `UCS` sets an origin and X axis, `World`, `Previous`, `Z` (turn), `OBject` (along a
+  line, polyline segment, arc, circle, text, block or dimension), `View`, and `NAmed` (`Save`, `Restore`, `Delete`,
+  `?`). Typed points and angles are in the current UCS (`*x,y` or `@*dx,dy` for world coordinates); the grid, grid
+  snap, ortho, polar and object snap tracking, the crosshair, the coordinates on the status bar, `ID`, `RECTANG`,
+  `DIMLINEAR`'s horizontal and vertical, and `XLINE`'s Hor and Ver follow it. `UCSICON` (`ON`/`OFF`/`Noorigin`/
+  `ORigin`) shows the UCS icon at the origin when it is in view. The UCS and saved ones are kept in the DXF file.
+  Linewright draws in the XY plane, so a UCS turns only about Z (`X`, `Y`, `ZAxis` and `Face` are refused), and
+  `PLAN` (turning the view to the UCS) is not there yet.
 - Object snaps (endpoint, midpoint, center, intersection, perpendicular, node), grid snap, ortho and polar
   tracking: F3, F7–F10.
 - Layers with color, linetype, on/off and lock in the Layers palette (`LAYER`, `LA`), and AutoCAD's layer tools

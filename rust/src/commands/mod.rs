@@ -20,6 +20,7 @@ pub mod registry;
 pub mod reshape;
 pub mod settings;
 pub mod shapes;
+pub mod ucs;
 
 #[cfg(test)]
 mod tests;

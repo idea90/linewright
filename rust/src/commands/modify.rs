@@ -150,7 +150,7 @@ async fn polar_array(io: &Io, objects: &[Entity]) {
     if !array_fits(io, items, objects) {
         return;
     }
-    let prompt = Prompt::new(PromptKind::Angle, "Specify the angle to fill (+=ccw, -=cw) <360>:").default(Answer::Number(360.0));
+    let prompt = Prompt::new(PromptKind::Angle, "Specify the angle to fill (+=ccw, -=cw) <360>:").turn().default(Answer::Number(360.0));
     let Some(Answer::Number(fill)) = io.ask(prompt).await else { return };
     // A full circle shares its turn among all the items; anything less puts the last item at the end of it.
     let step = if (fill.abs() - 360.0).abs() < 1e-9 { fill / items as f64 } else { fill / (items.max(2) - 1) as f64 };

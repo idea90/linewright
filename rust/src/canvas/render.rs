@@ -14,11 +14,14 @@ use crate::fonts::display_text;
 use crate::model::document::{Document, EntityStore, Layout};
 use crate::model::entities::{Entity, EntityId, Shape as EntityShape};
 use crate::model::entities::{HAlign, TextAlign, VAlign};
+use crate::model::geometry::pt;
 use crate::model::geometry::{Point, direction};
+use crate::model::index::Bounds;
 use crate::model::lineweight;
 use crate::model::mtext::{RichText, RunStyle, layout};
 use crate::model::parts::{BOLD_OFFSET, TextLook};
 use crate::model::styles::{BYLAYER_LINETYPE, scaled_pattern};
+use crate::model::ucs::Ucs;
 use crate::model::viewport::{frame_corners, viewport_scale};
 use crate::snap::osnap::SnapKind;
 use crate::ui::controller::Controller;
@@ -895,21 +898,26 @@ fn color32((r, g, b): (u8, u8, u8)) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-fn draw_grid(shapes: &mut Vec<Shape>, screen: &Screen) {
+/// The grid, along the UCS's axes from its origin.
+fn draw_grid(shapes: &mut Vec<Shape>, screen: &Screen, ucs: &Ucs) {
     let visible = screen.camera.visible(screen.rect.width() as f64, screen.rect.height() as f64);
+    // What is in view, as the UCS sees it: the box around the view's corners in UCS coordinates.
+    let corners = [pt(visible.x0, visible.y0), pt(visible.x1, visible.y0), pt(visible.x1, visible.y1), pt(visible.x0, visible.y1)];
+    let seen = Bounds::around(corners.map(|c| ucs.to_ucs(c)));
     let minor = grid_spacing(screen.camera.scale);
     for (step, color) in [(minor, theme::GRID_MINOR), (minor * MAJOR_GRID_EVERY, theme::GRID_MAJOR)] {
         let stroke = Stroke::new(1.0_f32, color);
-        let mut x = (visible.x0 / step).floor() * step;
-        while x <= visible.x1 {
-            let sx = screen.pos(Point { x, y: 0.0 }).x;
-            shapes.push(Shape::line_segment([pos2(sx, screen.rect.top()), pos2(sx, screen.rect.bottom())], stroke));
+        let line = |shapes: &mut Vec<Shape>, a: Point, b: Point| {
+            shapes.push(Shape::line_segment([screen.pos(ucs.to_world(a)), screen.pos(ucs.to_world(b))], stroke));
+        };
+        let mut x = (seen.x0 / step).floor() * step;
+        while x <= seen.x1 {
+            line(shapes, pt(x, seen.y0), pt(x, seen.y1));
             x += step;
         }
-        let mut y = (visible.y0 / step).floor() * step;
-        while y <= visible.y1 {
-            let sy = screen.pos(Point { x: 0.0, y }).y;
-            shapes.push(Shape::line_segment([pos2(screen.rect.left(), sy), pos2(screen.rect.right(), sy)], stroke));
+        let mut y = (seen.y0 / step).floor() * step;
+        while y <= seen.y1 {
+            line(shapes, pt(seen.x0, y), pt(seen.x1, y));
             y += step;
         }
     }
@@ -1032,22 +1040,35 @@ fn draw_dynamic_input(
     }
 }
 
-fn draw_axes_icon(shapes: &mut Vec<Shape>, ctx: &egui::Context, rect: Rect) {
-    let origin = pos2(rect.left() + AXES_MARGIN.x, rect.bottom() - AXES_MARGIN.y);
-    for (color, vector, label_offset, label) in
-        [(theme::AXIS_X, vec2(AXES_LENGTH, 0.0), vec2(5.0, 5.0), "X"), (theme::AXIS_Y, vec2(0.0, -AXES_LENGTH), vec2(-4.0, -12.0), "Y")]
-    {
-        let tip = origin + vector;
+/// The UCS icon: the UCS's X and Y axes, at its origin when that is in view (UCSICON ORigin), else in the lower left
+/// corner. The square at its corner says it is the world coordinate system.
+fn draw_axes_icon(shapes: &mut Vec<Shape>, ctx: &egui::Context, screen: &Screen, document: &Document) {
+    let (shown, at_origin) = document.ucs_icon;
+    if !shown {
+        return;
+    }
+    let (rect, ucs) = (screen.rect, document.ucs);
+    let corner = pos2(rect.left() + AXES_MARGIN.x, rect.bottom() - AXES_MARGIN.y);
+    let inner = rect.shrink2(AXES_MARGIN);
+    let origin = Some(screen.pos(ucs.origin)).filter(|o| at_origin && inner.contains(*o)).unwrap_or(corner);
+    // The screen's Y runs down.
+    let on_screen = |v: Point| vec2(v.x as f32, -v.y as f32);
+    let (x_axis, y_axis) = (on_screen(ucs.x_axis()), on_screen(ucs.y_axis()));
+    for (color, axis, label) in [(theme::AXIS_X, x_axis, "X"), (theme::AXIS_Y, y_axis, "Y")] {
+        let tip = origin + axis * AXES_LENGTH;
         shapes.push(Shape::line_segment([origin, tip], Stroke::new(1.6_f32, color)));
         let galley = ctx.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::proportional(12.0), color));
-        shapes.push(Shape::galley(tip + label_offset - vec2(0.0, 6.0), galley, color));
+        let at = tip + axis * 9.0 - galley.size() / 2.0;
+        shapes.push(Shape::galley(at, galley, color));
     }
-    shapes.push(Shape::rect_stroke(
-        Rect::from_center_size(origin, vec2(6.0, 6.0)),
-        0.0,
-        Stroke::new(1.0_f32, theme::TEXT_DIM),
-        StrokeKind::Middle,
-    ));
+    if ucs.is_world() {
+        shapes.push(Shape::rect_stroke(
+            Rect::from_center_size(origin, vec2(6.0, 6.0)),
+            0.0,
+            Stroke::new(1.0_f32, theme::TEXT_DIM),
+            StrokeKind::Middle,
+        ));
+    }
 }
 
 fn draw_selection_box(shapes: &mut Vec<Shape>, screen: &Screen, first: Point, second: Point) {
@@ -1063,11 +1084,14 @@ fn draw_selection_box(shapes: &mut Vec<Shape>, screen: &Screen, first: Point, se
     }
 }
 
-fn draw_crosshair(shapes: &mut Vec<Shape>, rect: Rect, center: Pos2, pickbox: bool) {
+/// The crosshair, its arms along the UCS's axes (`angle`, in degrees).
+fn draw_crosshair(shapes: &mut Vec<Shape>, rect: Rect, center: Pos2, pickbox: bool, angle: f64) {
     let stroke = Stroke::new(1.0_f32, theme::CROSSHAIR);
     let arm = rect.width() * CROSSHAIR_ARM_FRACTION;
-    shapes.push(Shape::line_segment([center - vec2(arm, 0.0), center + vec2(arm, 0.0)], stroke));
-    shapes.push(Shape::line_segment([center - vec2(0.0, arm), center + vec2(0.0, arm)], stroke));
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let (along, across) = (vec2(cos as f32, -sin as f32) * arm, vec2(-sin as f32, -cos as f32) * arm);
+    shapes.push(Shape::line_segment([center - along, center + along], stroke));
+    shapes.push(Shape::line_segment([center - across, center + across], stroke));
     if pickbox {
         shapes.push(Shape::rect_stroke(
             Rect::from_center_size(center, vec2(2.0 * PICKBOX_HALF, 2.0 * PICKBOX_HALF)),
@@ -1117,7 +1141,7 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
                 }
             }
         }
-        None if overlay.show_grid => draw_grid(&mut shapes, screen),
+        None if overlay.show_grid => draw_grid(&mut shapes, screen, &document.ucs),
         None => {}
     }
     let through = document.through_viewport().and_then(|viewport| viewport_screen(screen, viewport));
@@ -1131,13 +1155,13 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
             }
         }
         shapes.push(Shape::rect_stroke(*frame, 0.0, Stroke::new(ACTIVE_VIEWPORT_WIDTH, theme::ACCENT), StrokeKind::Outside));
-        draw_axes_icon(&mut shapes, ctx, screen.rect);
+        draw_axes_icon(&mut shapes, ctx, screen, document);
         ui.painter().with_clip_rect(screen.rect).extend(std::mem::take(&mut shapes));
         let selected: Vec<&Entity> = controller.selection.ids().iter().filter_map(|id| document.get(*id)).collect();
         draw_work(&mut shapes, ctx, inside, controller, overlay, selected);
         let pointer_inside = overlay.pointer.filter(|p| frame.contains(*p));
         if let (Some(pointer), false) = (pointer_inside, overlay.panning) {
-            draw_crosshair(&mut shapes, *frame, pointer, controller.picking());
+            draw_crosshair(&mut shapes, *frame, pointer, controller.picking(), document.ucs.angle);
         }
         ui.painter().with_clip_rect(frame.intersect(screen.rect)).extend(shapes);
         return;
@@ -1171,13 +1195,13 @@ pub fn paint(ui: &egui::Ui, screen: &Screen, controller: &Controller, overlay: &
             draw_entity(&mut shapes, ctx, screen, document, entity, &Look::Own);
         }
     }
-    draw_axes_icon(&mut shapes, ctx, screen.rect);
+    draw_axes_icon(&mut shapes, ctx, screen, document);
     if let Some((picture, placement)) = &selection_picture {
         show_picture(&mut shapes, ctx, screen, picture, *placement);
     }
     draw_work(&mut shapes, ctx, screen, controller, overlay, selected);
     if let (Some(pointer), false) = (overlay.pointer, overlay.panning) {
-        draw_crosshair(&mut shapes, screen.rect, pointer, controller.picking());
+        draw_crosshair(&mut shapes, screen.rect, pointer, controller.picking(), document.ucs.angle);
     }
     ui.painter().with_clip_rect(screen.rect).extend(shapes);
 }

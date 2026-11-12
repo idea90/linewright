@@ -1,3 +1,4 @@
+use crate::model::ucs::Ucs;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,14 +14,16 @@ use crate::model::geometry::Point;
 
 const SAME_POINT: &str = "The points are the same.";
 
-/// Horizontal when the cursor sits above or below the two points more than beside them, otherwise vertical.
-fn linear_angle(start: Point, end: Point, cursor: Point) -> f64 {
+/// Horizontal when the cursor sits above or below the two points more than beside them, otherwise vertical: along
+/// the UCS's X axis or its Y axis.
+fn linear_angle(start: Point, end: Point, cursor: Point, ucs: &Ucs) -> f64 {
+    let (start, end, cursor) = (ucs.to_ucs(start), ucs.to_ucs(end), ucs.to_ucs(cursor));
     let beside = (start.x.min(end.x) - cursor.x).max(cursor.x - start.x.max(end.x)).max(0.0);
     let above = (start.y.min(end.y) - cursor.y).max(cursor.y - start.y.max(end.y)).max(0.0);
-    if above >= beside { 0.0 } else { 90.0 }
+    ucs.angle + if above >= beside { 0.0 } else { 90.0 }
 }
 
-fn aligned_angle(start: Point, end: Point, _cursor: Point) -> f64 {
+fn aligned_angle(start: Point, end: Point, _cursor: Point, _ucs: &Ucs) -> f64 {
     start.angle_to(end)
 }
 
@@ -37,12 +40,12 @@ async fn second_origin(io: &Io, start: Point) -> Option<Point> {
     }
 }
 
-async fn dimension_command(io: Io, choose_angle: fn(Point, Point, Point) -> f64, defaults: Rc<RefCell<Defaults>>) {
-    let look = defaults.borrow().dimension_look.clone();
+async fn dimension_command(io: Io, choose_angle: fn(Point, Point, Point, &Ucs) -> f64, defaults: Rc<RefCell<Defaults>>) {
+    let (look, ucs) = (defaults.borrow().dimension_look.clone(), defaults.borrow().ucs);
     let Some(Answer::Point(start)) = io.ask(Prompt::point("Specify first extension line origin:")).await else { return };
     let Some(end) = second_origin(&io, start).await else { return };
     let dimension_at = move |cursor: Point| -> Entity {
-        let angle = choose_angle(start, end, cursor);
+        let angle = choose_angle(start, end, cursor, &ucs);
         Entity::new(Shape::Dimension { start, end, line_point: cursor, angle, look: look.clone() })
     };
     let dimension_at = Rc::new(dimension_at);

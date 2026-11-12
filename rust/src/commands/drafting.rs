@@ -239,7 +239,8 @@ async fn xlines_through(io: &Io, direction: Point) {
 
 /// XLINE: endless construction lines through a point and each point given after, or Horizontal, Vertical or at
 /// an Angle through each point given.
-pub async fn xline_command(io: Io) {
+pub async fn xline_command(io: Io, defaults: std::rc::Rc<std::cell::RefCell<super::defaults::Defaults>>) {
+    let ucs = defaults.borrow().ucs;
     let prompt = Prompt::point("Specify a point or [Hor/Ver/Ang]:").options(&[HORIZONTAL, VERTICAL, ANGLE]);
     match io.ask(prompt).await {
         Some(Answer::Point(base)) => loop {
@@ -250,8 +251,9 @@ pub async fn xline_command(io: Io) {
                 io.step(Step::Drawn(vec![line]));
             }
         },
-        Some(answer) if answer.is(HORIZONTAL) => xlines_through(&io, pt(1.0, 0.0)).await,
-        Some(answer) if answer.is(VERTICAL) => xlines_through(&io, pt(0.0, 1.0)).await,
+        // Horizontal and vertical are along the UCS's axes.
+        Some(answer) if answer.is(HORIZONTAL) => xlines_through(&io, ucs.x_axis()).await,
+        Some(answer) if answer.is(VERTICAL) => xlines_through(&io, ucs.y_axis()).await,
         Some(answer) if answer.is(ANGLE) => {
             let Some(Answer::Number(angle)) =
                 io.ask(Prompt::new(PromptKind::Angle, "Enter angle of xline (0):").default(Answer::Number(0.0))).await

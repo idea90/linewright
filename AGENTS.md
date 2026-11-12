@@ -115,6 +115,9 @@ rust/                the app (Cargo crate "linewright")
 | `model/dimension.rs`, `annotation.rs`, `multileader.rs` | Dimensions, leaders and multileaders: their styles and what they draw |
 | `model/mtext.rs`, `table.rs` | MTEXT formatting codes and layout; tables |
 | `model/properties.rs` | Rows of the Properties palette, and setting a property by typing a value |
+| `model/ucs.rs` | The user coordinate system: origin and X axis, points between UCS and world coordinates |
+| `model/region.rs` | Regions: loops of closed objects, their area, and UNION/SUBTRACT/INTERSECT (through `i_overlay`, arcs fitted back) |
+| `model/attributes.rs` | Block inserts' attributes kept in line with their block's definitions (ATTSYNC, BATTMAN, EATTEDIT) |
 | `model/spline.rs`, `xline.rs`, `viewport.rs`, `lineweight.rs`, `styles.rs`, `find.rs`, `measure.rs`, `calc.rs` | Smaller topics, named for what they hold |
 | **`commands/`** | **Every command, each an `async fn`** |
 | `commands/prompts.rs` | How a command talks to the user: `Io::ask(Prompt)` returns an `Answer`; `Io::step(Step)` changes the drawing. `Session` drives a command; `Host` is the drawing side |
@@ -124,6 +127,7 @@ rust/                the app (Cargo crate "linewright")
 | `commands/edit.rs`, `modify.rs`, `reshape.rs` | Editing commands (MOVE, COPY, TRIM, FILLET, ARRAY, JOIN, OVERKILL, LENGTHEN, PEDIT…) |
 | `commands/dimension.rs`, `qdim.rs` | Dimension and leader commands |
 | `commands/blocks.rs`, `groups.rs`, `layer_tools.rs`, `layout.rs` | Blocks and clipboard, groups, LAY* tools, layouts and viewports |
+| `commands/regions.rs`, `ucs.rs` | REGION and the Boolean commands; UCS and UCSICON |
 | `commands/settings.rs` | Commands that change the program's own settings (SAVETIME); `ui/settings.rs` keeps them in the settings file |
 | `commands/inquiry.rs`, `measuring.rs` | LIST, ID, ZOOM, text edit, grip dragging; DISTANCE and AREA |
 | `commands/parse.rs` | Parsing typed numbers, lengths and points |
@@ -183,6 +187,9 @@ R12 fallback, plus any CLASS or OBJECTS entries AutoCAD needs). Add a DXF round-
 - Names follow AutoCAD's vocabulary (entity, block, insert, layer, linetype, ByLayer, model space, layout).
 - User-facing messages copy AutoCAD's wording where AutoCAD has a message for the same thing.
 - Keep geometry pure and testable in `model/`; commands in `commands/` only ask and step.
+- The drawing is kept in world coordinates. Typed points are read in the current UCS (`parse_point` takes it), angle
+  prompts are directions from the UCS's X axis unless marked `.turn()`, and commands that draw along axes take
+  `defaults.ucs`. The window keeps `Defaults::ucs` up to date when a command starts.
 - Large drawings must stay quick. Nothing that runs on every frame, mouse move or small edit may go through every
   object of the drawing: look objects up by id or by area (`Document::get`, `ids_in`), and keep what is costly to
   work out until `Document::revision` changes. Maps and sets keyed by object id use `IdMap` and `IdSet`.

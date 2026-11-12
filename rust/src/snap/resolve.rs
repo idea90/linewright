@@ -2,6 +2,7 @@ use super::osnap::{SnapKind, find_osnap};
 use super::tracking::{constrain_ortho, constrain_polar, snap_to_grid};
 use crate::model::entities::Entity;
 use crate::model::geometry::Point;
+use crate::model::ucs::Ucs;
 
 pub const DEFAULT_POLAR_INCREMENT: f64 = 45.0;
 
@@ -90,6 +91,8 @@ pub struct SnapScene<'a> {
     pub entities: &'a [Entity],
     /// Snap points acquired for object snap tracking.
     pub acquired: &'a [Point],
+    /// The grid, ortho, polar tracking and tracking lines follow the UCS's axes, and the grid its origin.
+    pub ucs: Ucs,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,26 +103,32 @@ pub struct SnapResult {
     pub tracked: Vec<Point>,
 }
 
-/// Object snaps win. Otherwise the grid rounds the cursor, then ortho or polar constrains it to the base.
+/// Object snaps win. Otherwise the grid rounds the cursor, then ortho or polar constrains it to the base. All but
+/// the object snaps work in the UCS: along its axes, the grid from its origin.
 pub fn resolve_point(cursor: Point, base: Option<Point>, settings: &SnapSettings, scene: &SnapScene) -> SnapResult {
     if settings.osnap
         && let Some(hit) = find_osnap(cursor, scene.aperture, scene.entities, base, &settings.kinds)
     {
         return SnapResult { point: hit.point, kind: Some(hit.kind), tracked: vec![] };
     }
-    if settings.tracking
-        && let Some((point, tracked)) = track(cursor, scene.acquired, scene.aperture)
-    {
-        return SnapResult { point, kind: None, tracked };
+    let ucs = &scene.ucs;
+    let local = ucs.to_ucs(cursor);
+    if settings.tracking {
+        let acquired: Vec<Point> = scene.acquired.iter().map(|p| ucs.to_ucs(*p)).collect();
+        if let Some((point, tracked)) = track(local, &acquired, scene.aperture) {
+            return SnapResult { point: ucs.to_world(point), kind: None, tracked: tracked.into_iter().map(|p| ucs.to_world(p)).collect() };
+        }
     }
-    let mut point = if settings.grid { snap_to_grid(cursor, scene.grid_step) } else { cursor };
-    if let Some(base) = base {
+    let mut point = if settings.grid { snap_to_grid(local, scene.grid_step) } else { local };
+    if let Some(base) = base.map(|b| ucs.to_ucs(b)) {
         if settings.ortho {
             point = constrain_ortho(base, point);
         } else if settings.polar {
             point = constrain_polar(base, point, settings.polar_increment);
         }
     }
+    // Nothing moved the cursor: it is given back exactly, not through the UCS and back.
+    let point = if point == local { cursor } else { ucs.to_world(point) };
     SnapResult { point, kind: None, tracked: vec![] }
 }
 
@@ -152,7 +161,7 @@ mod tests {
     fn object_snap_wins_over_ortho() {
         let entities = [line(pt(3.0, 3.0), pt(10.0, 10.0))];
         let settings = SnapSettings { ortho: true, ..SnapSettings::default() };
-        let scene = SnapScene { aperture: 0.5, grid_step: 1.0, entities: &entities, acquired: &[] };
+        let scene = SnapScene { aperture: 0.5, grid_step: 1.0, entities: &entities, acquired: &[], ucs: Ucs::WORLD };
         let hit = resolve_point(pt(3.1, 3.1), Some(pt(0.0, 0.0)), &settings, &scene);
         assert_eq!(hit.point, pt(3.0, 3.0));
         let free = resolve_point(pt(6.0, 1.0), Some(pt(0.0, 0.0)), &settings, &scene);
@@ -175,5 +184,23 @@ mod tests {
         let (corner, both) = track(pt(10.2, 0.2), &acquired, 0.5).unwrap();
         assert_eq!((corner, both.len()), (pt(10.0, 0.0), 2), "where the two lines cross");
         assert!(track(pt(5.0, 5.0), &acquired, 0.5).is_none());
+    }
+}
+
+#[cfg(test)]
+mod ucs_tests {
+    use super::*;
+    use crate::model::geometry::pt;
+
+    #[test]
+    fn ortho_and_the_grid_follow_the_ucs() {
+        let ucs = Ucs { origin: pt(0.5, 0.0), angle: 45.0 };
+        let scene = SnapScene { aperture: 0.1, grid_step: 1.0, entities: &[], acquired: &[], ucs };
+        let ortho = SnapSettings { ortho: true, ..SnapSettings::default() };
+        let along = resolve_point(pt(3.0, 2.6), Some(pt(0.0, 0.0)), &ortho, &scene).point;
+        assert!((along.x - along.y).abs() < 1e-9, "along the UCS's X axis, at 45 degrees: {along:?}");
+        let grid = SnapSettings { grid: true, ..SnapSettings::default() };
+        let snapped = ucs.to_ucs(resolve_point(pt(2.1, 1.3), None, &grid, &scene).point);
+        assert!((snapped.x - snapped.x.round()).abs() < 1e-9 && (snapped.y - snapped.y.round()).abs() < 1e-9, "{snapped:?}");
     }
 }

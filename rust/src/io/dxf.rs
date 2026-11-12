@@ -25,6 +25,7 @@ use crate::model::mtext::decode_percent_codes;
 use crate::model::multileader::MleaderStyle;
 use crate::model::parts::{BYBLOCK_LINETYPE, TextSpec, clamped_knots, ellipse_point, entity_parts, spline_points};
 use crate::model::styles::{BYLAYER_LINETYPE, canonical_linetype};
+use crate::model::ucs::Ucs;
 
 pub mod file;
 use file::pair;
@@ -1368,6 +1369,21 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
     document.model_plot = model_plot_settings(&file);
     document.wipeout_frame = wipeout_frame_mode(&file).unwrap_or(1);
     document.named_plot_styles = header_int("$PSTYLEMODE") == Some(0);
+    let x_axis = file.header_point("$UCSXDIR").filter(|x| x.length() > 1e-12);
+    document.ucs =
+        Ucs { origin: file.header_point("$UCSORG").unwrap_or_default(), angle: x_axis.map_or(0.0, |x| x.y.atan2(x.x).to_degrees()) };
+    document.named_ucs = file
+        .table_entries("UCS")
+        .into_iter()
+        .filter_map(|i| {
+            let entry = &file.groups[i];
+            let x = entry.point(11).filter(|x| x.length() > 1e-12).unwrap_or(pt(1.0, 0.0));
+            Some((
+                entry.get(2)?.trim().to_string(),
+                Ucs { origin: entry.point(10).unwrap_or_default(), angle: x.y.atan2(x.x).to_degrees() },
+            ))
+        })
+        .collect();
     document.plot_style_names = read_plot_style_names(&file);
     document.layer_plot_styles = file
         .table_entries("LAYER")
@@ -3427,6 +3443,41 @@ const WIPEOUT_VARIABLES_CLASS: (&str, &str, &str, i32, i32) =
 
 /// Declares a class in the CLASSES section, unless the file already does: name, C++ class, application, proxy
 /// flags and whether it is an entity.
+/// The current UCS in the header, and the UCS table as the drawing's saved ones. AutoCAD keeps the UCS of each
+/// view as well; only the one drawn in is written.
+fn write_ucs(file: &mut DxfFile, writer: &mut Writer, document: &Document) {
+    let ucs = document.ucs;
+    file.set_header_point("$UCSORG", ucs.origin);
+    file.set_header_point("$UCSXDIR", ucs.x_axis());
+    file.set_header_point("$UCSYDIR", ucs.y_axis());
+    let Some((table, _)) = file.table("UCS") else { return };
+    let owner = file.groups[table].handle().map_or("0".to_string(), |h| h.trim().to_string());
+    for at in file.table_entries("UCS").into_iter().rev() {
+        file.groups.remove(at);
+    }
+    let Some((_, end)) = file.table("UCS") else { return };
+    let mut entries = vec![];
+    for (name, ucs) in &document.named_ucs {
+        let mut entry = vec![pair(0, "UCS"), pair(5, writer.handle())];
+        if writer.modern {
+            entry.extend([pair(330, &owner), pair(100, "AcDbSymbolTableRecord"), pair(100, "AcDbUCSTableRecord")]);
+        }
+        entry.extend([pair(2, name), pair(70, 0)]);
+        for (code, point) in [(10, ucs.origin), (11, ucs.x_axis()), (12, ucs.y_axis())] {
+            entry.extend([pair(code, number(point.x)), pair(code + 10, number(point.y)), pair(code + 20, 0)]);
+        }
+        if writer.modern {
+            entry.extend([pair(79, 0), pair(146, 0)]);
+        }
+        entries.push(Group(entry));
+    }
+    let count = entries.len();
+    file.groups.splice(end..end, entries);
+    if let Some(table) = file.table("UCS").map(|(table, _)| table) {
+        file.groups[table].set(70, count.to_string());
+    }
+}
+
 /// Add an application to the APPID table, which every name extended data is filed under must be in.
 fn register_application(file: &mut DxfFile, writer: &mut Writer, name: &str) {
     if file.table_entries("APPID").into_iter().any(|i| file.groups[i].get(2).is_some_and(|n| n.trim().eq_ignore_ascii_case(name))) {
@@ -4118,6 +4169,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     if writer.regions > 0 {
         register_application(&mut file, &mut writer, LINEWRIGHT_APPLICATION);
     }
+    write_ucs(&mut file, &mut writer, document);
     if writer.modern {
         write_wipeout_variables(&mut file, &mut writer, document);
     }

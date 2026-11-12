@@ -130,7 +130,8 @@ async fn reference(io: &Io, kind: PromptKind, message: &str, default: f64) -> Op
 
 /// ROTATE: by an angle typed or shown, with Copy to keep the originals and Reference to turn from one angle to
 /// another.
-pub async fn rotate(io: Io, selected: Vec<Entity>) {
+pub async fn rotate(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>) {
+    let ucs = defaults.borrow().ucs;
     let objects = objects_to_edit(&io, selected).await;
     if objects.is_empty() {
         return;
@@ -138,10 +139,12 @@ pub async fn rotate(io: Io, selected: Vec<Entity>) {
     let Some(base) = base_point(&io).await else { return };
     let mut copy = false;
     loop {
+        // A turn, measured from the UCS's X axis when the cursor shows it.
         let prompt = Prompt::new(PromptKind::Angle, "Specify rotation angle or [Copy/Reference]:")
             .base(base)
+            .turn()
             .options(&[COPY, REFERENCE])
-            .preview(preview(&objects, move |cursor| rotation(base, base.angle_to(cursor))));
+            .preview(preview(&objects, move |cursor| rotation(base, base.angle_to(cursor) - ucs.angle)));
         match io.ask(prompt).await {
             Some(Answer::Number(angle)) => return place(&io, &objects, &rotation(base, angle), copy),
             Some(Answer::Keyword(k)) if k == COPY => {

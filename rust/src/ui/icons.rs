@@ -234,6 +234,9 @@ fn shape(name: &str) -> Option<&'static str> {
         "BOUNDARY" => {
             r##"<path d="M3 7h18M3 17h18M7 3v18M17 3v18" stroke-width="1"/><rect x="7" y="7" width="10" height="10" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1" stroke-width="2.2"/>"##
         }
+        "UCS" | "UCSICON" => {
+            r##"<path d="M5 19 19 5" stroke-width="1" stroke-dasharray="2 2"/><path d="M5 19h13M5 19V6" stroke="#4ea3f1"/><path d="M5 19 14.5 9.5M5 19l-4.5-4.5" stroke-width="1.6"/>"##
+        }
         "REGION" => {
             r##"<path d="M4 6h10a6 6 0 0 1 6 6v6H4Z" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1"/><circle cx="10" cy="13" r="2.5"/>"##
         }

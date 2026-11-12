@@ -29,5 +29,6 @@ pub mod styles;
 pub mod table;
 pub mod transform;
 pub mod trimming;
+pub mod ucs;
 pub mod viewport;
 pub mod xline;
