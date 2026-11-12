@@ -63,7 +63,9 @@ fn quietly(uninstalling: bool, folder: Option<PathBuf>) -> Result<(), String> {
         return Ok(());
     }
     let folder = folder.or(installed).unwrap_or_else(|| system.default_folder());
-    let choices = Choices { folder, menu: true, desktop: cfg!(windows), associate: true };
+    // An update keeps what was chosen when Linewright was installed.
+    let (menu, desktop, associate) = Installed::read(&folder).and_then(|i| i.chosen).unwrap_or((true, cfg!(windows), true));
+    let choices = Choices { folder, menu, desktop, associate };
     let program = install::payload().ok_or("This setup was built without the Linewright program in it.")?;
     let setup = std::env::current_exe().and_then(std::fs::read).map_err(|e| format!("The setup cannot read itself: {e}"))?;
     let installed = install::install(&choices, &program, &setup, system.as_ref(), &mut step)?;
@@ -120,7 +122,10 @@ impl Setup {
         Setup {
             page,
             folder_text: folder.display().to_string(),
-            choices: Choices { folder, menu: true, desktop: cfg!(windows), associate: true },
+            choices: {
+                let (menu, desktop, associate) = installed.as_ref().and_then(|i| i.chosen).unwrap_or((true, cfg!(windows), true));
+                Choices { folder, menu, desktop, associate }
+            },
             installed,
             program_ready: install::payload().is_some(),
             #[cfg(debug_assertions)]

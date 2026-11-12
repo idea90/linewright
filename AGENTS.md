@@ -52,6 +52,12 @@ Notes:
   with `cargo run --release`, so the first start compiles for a few minutes; `.claude/settings.json` raises
   `MCP_TIMEOUT` to 10 minutes so the connection waits for it. After changing the code, reconnect it with `/mcp`.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
+- Updates: `update.rs` finds a newer release (one whose assets include the setup for the system and `SHA256SUMS`),
+  downloads and checks it and runs the setup; `ui/updates.rs` checks once a day and shows the dialog.
+  `LINEWRIGHT_NO_UPDATE_CHECK=1` turns the daily check off (it is also off while `LINEWRIGHT_CAPTURE` is set), and
+  `LINEWRIGHT_UPDATE_URL` reads the list of releases from another address, to try an update out with a local server.
+  A release must keep publishing the setups and `SHA256SUMS` under their present names, or installed copies stop
+  finding updates.
 - `LINEWRIGHT_NO_GPU=1` keeps the canvas's pictures off the graphics card (everything is then drawn through egui), for
   a driver that draws them wrong, and for comparing the two ways of drawing.
 - `tests/speed.rs` times what a person waits on in a large drawing (opening, a frame, a mouse move, selecting,
@@ -89,6 +95,7 @@ rust/                the app (Cargo crate "linewright")
 | `main.rs`, `lib.rs` | Entry point (opens a file given on the command line, or `--mcp` serves MCP) and the module list |
 | `mcp.rs` | The MCP server for AI agents: tools that type at the command line through `ui::controller::Controller`, render PNGs and open and save |
 | `fonts.rs` | Fonts for text in any script: the drawing's fonts, system fallbacks, legacy code pages |
+| `update.rs` | Finding a newer release on GitHub, downloading its setup and checking its SHA-256, running it |
 | `threads.rs` | Sharing work over many items among the processors (`map_runs`): the canvas's picture, reading a file |
 | `shx.rs` | AutoCAD SHX stroke fonts (romans, simplex, txt…), read from AutoCAD's font folders |
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
@@ -141,6 +148,7 @@ rust/                the app (Cargo crate "linewright")
 | `ui/panels.rs` | The header, palettes, dialogs, command line and status bar |
 | `ui/ribbon.rs` | The ribbon: its tabs, panels, flyouts, the layer drop-down and the Properties panel's drop-downs |
 | `ui/undo.rs` | Undo and redo: every change is a `Change` pushed here |
+| `ui/updates.rs` | The daily update check, the Linewright Update dialog and the header's update button |
 | `ui/layers.rs`, `icons.rs`, `theme.rs`, `frame.rs`, `recent.rs`, `debug_capture.rs` | Layer edits, icons, colors, the custom window frame, recent files, screenshot aid |
 
 ## How to make common changes

@@ -117,6 +117,8 @@ pub enum Action {
     CommandWith(&'static str, &'static str),
     /// Type an answer to the running command's prompt, as choosing one of its options does.
     Answer(String),
+    /// Look for a newer version of Linewright now.
+    CheckForUpdates,
 }
 
 /// Which right-click menu is open, as AutoCAD's shortcut menus: with nothing selected, with a selection, while a
@@ -146,6 +148,8 @@ pub enum Then {
     Close,
     /// Open the autosave copy Drawing Recovery picked.
     OpenAutosave,
+    /// Start the updated program (kept in `restart_into`), then close.
+    Restart,
 }
 
 pub struct PlotForm {
@@ -417,6 +421,10 @@ pub struct LinewrightApp {
     pub renaming: Option<(String, String)>,
     pub dialog: Option<Dialog>,
     pub actions: Vec<Action>,
+    /// Looking for, downloading and installing a newer Linewright.
+    pub updates: super::updates::Updates,
+    /// The updated program to start once the drawing is saved or discarded.
+    restart_into: Option<PathBuf>,
     /// AUDIT found errors and asks on the command line whether to fix them; the next line typed answers.
     audit_question: bool,
     opening: Option<Opening>,
@@ -467,6 +475,7 @@ impl LinewrightApp {
         if !app.leftover_copies().is_empty() {
             app.show_recovery();
         }
+        app.updates.check_if_due(&cc.egui_ctx);
         app
     }
 
@@ -498,6 +507,8 @@ impl LinewrightApp {
             palette_row: None,
             renaming: None,
             dialog: None,
+            updates: Default::default(),
+            restart_into: None,
             actions: vec![],
             audit_question: false,
             opening: None,
@@ -840,6 +851,18 @@ impl LinewrightApp {
                 if let Some(copy) = self.pending_recovery.take() {
                     self.open_recovery_in_background(copy);
                 }
+            }
+            Then::Restart => {
+                // The new program opens the drawing that was open, as saved.
+                if let Some(program) = self.restart_into.take() {
+                    let mut command = std::process::Command::new(&program);
+                    command.args(self.document().path.iter());
+                    if let Err(error) = command.spawn() {
+                        self.dialog = Some(Dialog::Message(format!("Linewright could not be started again: {error}")));
+                        return;
+                    }
+                }
+                self.proceed(Then::Close, ctx);
             }
         }
     }
@@ -1636,6 +1659,7 @@ impl LinewrightApp {
             Action::New => self.confirm_discard(Then::New, ctx),
             Action::Open => self.confirm_discard(Then::Open, ctx),
             Action::Recover => self.confirm_discard(Then::Recover, ctx),
+            Action::CheckForUpdates => self.updates.check(ctx, true),
             Action::Save => {
                 self.save();
             }
@@ -2295,7 +2319,8 @@ impl eframe::App for LinewrightApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::Discard(Then::Close));
         }
-        if self.dialog.is_none() {
+        self.updates.tick();
+        if self.dialog.is_none() && !self.updates.shown {
             self.shortcuts(ctx);
         }
         self.on_window_edge = frame::resize_from_edges(ctx);
@@ -2321,6 +2346,12 @@ impl eframe::App for LinewrightApp {
         }
         self.open_prompt_dialogs();
         panels::dialogs(self, ctx);
+        if self.dialog.is_none()
+            && let Some(super::updates::Request::Restart(program)) = self.updates.dialog(ctx)
+        {
+            self.restart_into = Some(program);
+            self.confirm_discard(Then::Restart, ctx);
+        }
         if let Some(id) = self.controller.edit_text_request.take() {
             self.open_text_editor(id);
         }

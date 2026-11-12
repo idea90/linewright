@@ -49,17 +49,23 @@ pub struct Installed {
     pub version: String,
     /// Everything put on the computer, the folder's own files and those elsewhere.
     pub files: Vec<PathBuf>,
+    /// What was chosen: menu entry, desktop shortcut, file types. An update keeps them.
+    pub chosen: Option<(bool, bool, bool)>,
 }
 
 impl Installed {
     /// Read what an installation in `folder` left in its record.
     pub fn read(folder: &Path) -> Option<Installed> {
         let text = fs::read_to_string(folder.join(RECORD)).ok()?;
-        let mut installed = Installed { folder: folder.to_path_buf(), version: String::new(), files: vec![] };
+        let mut installed = Installed { folder: folder.to_path_buf(), version: String::new(), files: vec![], chosen: None };
         for line in text.lines() {
             match line.split_once(' ') {
                 Some(("version", version)) => installed.version = version.to_string(),
                 Some(("file", path)) => installed.files.push(PathBuf::from(path)),
+                Some(("chosen", chosen)) => {
+                    let has = |word: &str| chosen.split_whitespace().any(|w| w == word);
+                    installed.chosen = Some((has("menu"), has("desktop"), has("associate")));
+                }
                 _ => {}
             }
         }
@@ -68,6 +74,11 @@ impl Installed {
 
     fn write(&self) -> std::io::Result<()> {
         let mut text = format!("# Linewright, as its setup installed it. Its uninstaller removes these files.\nversion {}\n", self.version);
+        if let Some((menu, desktop, associate)) = self.chosen {
+            let words = [(menu, "menu"), (desktop, "desktop"), (associate, "associate")];
+            let chosen: Vec<&str> = words.iter().filter(|(on, _)| *on).map(|(_, word)| *word).collect();
+            text.push_str(&format!("chosen {}\n", chosen.join(" ")));
+        }
         for file in &self.files {
             text.push_str(&format!("file {}\n", file.display()));
         }
@@ -159,7 +170,8 @@ pub fn install(
     step(if cfg!(windows) { "Adding shortcuts and file types" } else { "Adding the menu entry" });
     let mut files = vec![program_path.clone(), uninstaller.clone()];
     files.extend(system.integrate(choices, &program_path)?);
-    let installed = Installed { folder: folder.clone(), version: VERSION.to_string(), files };
+    let chosen = Some((choices.menu, choices.desktop, choices.associate));
+    let installed = Installed { folder: folder.clone(), version: VERSION.to_string(), files, chosen };
     installed.write().map_err(|e| could_not("installed in", folder, &e))?;
     step("Registering Linewright");
     system.register(&installed, &uninstaller)?;
@@ -173,6 +185,7 @@ pub fn uninstall(folder: &Path, system: &dyn System, step: &mut dyn FnMut(&str))
         folder: folder.to_path_buf(),
         version: String::new(),
         files: vec![folder.join(PROGRAM), folder.join(UNINSTALLER)],
+        chosen: None,
     });
     step("Removing shortcuts and file types");
     system.unintegrate();
@@ -230,6 +243,7 @@ mod tests {
         assert_eq!(Installed::read(&folder), Some(installed.clone()));
         assert_eq!(installed.version, VERSION);
         assert_eq!(installed.files.len(), 5);
+        assert_eq!(installed.chosen, Some((true, false, true)));
     }
 
     #[test]

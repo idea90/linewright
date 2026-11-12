@@ -12,3 +12,4 @@ pub mod ribbon;
 pub mod settings;
 pub mod theme;
 pub mod undo;
+pub mod updates;
