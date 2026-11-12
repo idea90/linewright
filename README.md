@@ -5,13 +5,11 @@ Linux (X11 and Wayland) and Windows.
 
 Download the latest build from [Releases](https://github.com/idea90/linewright/releases):
 
-- **Windows:** run `linewright-setup-windows-x86_64.exe`. It installs for you alone without asking for an
-  administrator (or for everyone, if you choose), adds Linewright to the Start menu, can open DXF and DWG files
-  with it, and is removed from Settings → Apps. `linewright-windows-x86_64.exe` is the bare program, to run without
-  installing.
-- **Linux:** unpack `linewright-linux-x86_64.tar.gz` and run `./install.sh` in it. That puts Linewright in
-  `~/.local` with a menu entry and icon that opens DXF and DWG files; `sudo ./install.sh --system` installs it in
-  `/usr/local` for everyone, and `./install.sh --uninstall` removes it. `linewright-linux-x86_64` is the bare program.
+- **Setup:** run `linewright-setup-windows-x86_64.exe` on Windows, or `linewright-setup-linux-x86_64` on Linux
+  (`chmod +x` it first). It installs Linewright for you alone, without asking for an administrator, adds it to the
+  Start menu or applications menu, can open DXF and DWG drawings with it, and removes it again from Settings → Apps
+  on Windows or by running the setup once more. `--quiet` installs with no window, and `--uninstall --quiet` removes.
+- **Just the program:** `linewright-windows-x86_64.exe` and `linewright-linux-x86_64` run without installing.
 
 Or build it yourself:
 

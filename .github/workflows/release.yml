@@ -24,11 +24,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: linewright
-            asset: linewright-linux-x86_64
+            suffix: ""
+            system: linux
           - os: windows-latest
-            binary: linewright.exe
-            asset: linewright-windows-x86_64.exe
+            suffix: .exe
+            system: windows
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -40,32 +40,21 @@ jobs:
         with:
           workspaces: rust
       - run: cargo build --release
-      - name: Name the binary for the release
+      - name: Build the setup with the program inside
         shell: bash
-        # Steps run in rust/, and the artifact is taken from the top of the checkout.
-        run: cp target/release/${{ matrix.binary }} ../${{ matrix.asset }}
-      - name: Make the Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
+        run: LINEWRIGHT_PAYLOAD=target/release/linewright${{ matrix.suffix }} cargo build --release -p linewright-setup
+      - name: Name the programs for the release
+        shell: bash
+        # Steps run in rust/, and the artifacts are taken from the top of the checkout.
         run: |
-          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc /Q "/DVersion=$version" "/DBinary=$PWD\target\release\linewright.exe" "/DOutput=$PWD\.." ..\installer\windows\linewright.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Pack the Linux program with its installer
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p ../pack/linewright
-          cp target/release/linewright ../installer/linux/install.sh ../installer/linux/linewright.png ../LICENSE ../pack/linewright/
-          tar -czf ../linewright-linux-x86_64.tar.gz -C ../pack linewright
+          cp target/release/linewright${{ matrix.suffix }} ../linewright-${{ matrix.system }}-x86_64${{ matrix.suffix }}
+          cp target/release/linewright-setup${{ matrix.suffix }} ../linewright-setup-${{ matrix.system }}-x86_64${{ matrix.suffix }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
+          name: linewright-${{ matrix.system }}
           path: |
-            ${{ matrix.asset }}
-            linewright-setup-windows-x86_64.exe
-            linewright-linux-x86_64.tar.gz
+            linewright-${{ matrix.system }}-x86_64${{ matrix.suffix }}
+            linewright-setup-${{ matrix.system }}-x86_64${{ matrix.suffix }}
           if-no-files-found: error
 
   publish:
@@ -84,10 +73,10 @@ jobs:
           pattern: linewright-*
           merge-multiple: true
       - name: Write checksums
-        run: sha256sum linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-linux-x86_64.tar.gz linewright-linux-x86_64 > SHA256SUMS
+        run: sha256sum linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-setup-linux-x86_64 linewright-linux-x86_64 > SHA256SUMS
       - name: Upload to the release, creating it if needed
         run: |
-          files="linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-linux-x86_64.tar.gz linewright-linux-x86_64 SHA256SUMS"
+          files="linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-setup-linux-x86_64 linewright-linux-x86_64 SHA256SUMS"
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           else

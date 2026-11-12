@@ -25,13 +25,19 @@ All Rust commands run from `rust/`:
 ```sh
 cargo run --release                 # an empty drawing
 cargo run --release -- plan.dxf     # open a drawing
-cargo test                          # all tests
-cargo fmt                           # format (max_width 140, see rustfmt.toml)
-cargo clippy --all-targets -- -D warnings
+cargo test                          # the app's tests
+cargo fmt --all                     # format (max_width 140, see rustfmt.toml)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace              # the setup's tests too
+
+# the setup, with the program built into it
+cargo build --release && LINEWRIGHT_PAYLOAD=target/release/linewright cargo build --release -p linewright-setup
 ```
 
-CI (`.github/workflows/rust.yml`) runs `cargo fmt --check`, clippy with warnings as errors, `cargo test` and a
-release build on Ubuntu and Windows. **Run fmt, clippy and the tests before calling a change done.**
+`rust/` is a Cargo workspace of the app and `setup/`; the version is `[workspace.package]` in `rust/Cargo.toml`.
+
+CI (`.github/workflows/rust.yml`) runs `cargo fmt --check`, clippy with warnings as errors, the workspace's tests, a
+release build and the setup on Ubuntu and Windows. **Run fmt, clippy and the tests before calling a change done.**
 
 `./compile` (at the root) builds release binaries into `dist/` for Linux and Windows. From Linux it cross-builds
 Windows with MinGW if installed, otherwise with Zig and cargo-zigbuild installed into `~/.cache/linewright-build`.
@@ -55,10 +61,10 @@ Notes:
 ## Releasing
 
 Push a tag named `v*` (for example `v1.0.0-alpha.4`) and `.github/workflows/release.yml` builds the Linux and
-Windows binaries, the Windows installer (`installer/windows/linewright.iss`, built with Inno Setup) and the Linux
-package (the program with `installer/linux/install.sh`), writes `SHA256SUMS` and uploads them to the GitHub release for
-that tag, creating the release if it does not exist. CI builds the Windows installer and runs the Linux one on every
-push, so a broken installer shows before a release. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
+Windows binaries and the setup for each (the `setup/` crate with the program built into it), writes `SHA256SUMS` and
+uploads them to the GitHub release for that tag, creating the release if it does not exist. CI builds the setups and
+installs and removes Linewright with them (`--quiet`) on both systems on every push, so a broken setup shows before a
+release. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
 
 ## Repository layout
 
@@ -68,11 +74,12 @@ README.md            short intro, links to rust/README.md
 LICENSE              MIT
 compile              build script for Linux/Windows binaries into dist/
 .github/workflows/   CI for the Rust crate, and the release build on a `v*` tag
-installer/windows/   linewright.iss: the Inno Setup script for the Windows installer
-installer/linux/     install.sh and the icon, packed with the program as linewright-linux-x86_64.tar.gz
 rust/                the app (Cargo crate "linewright")
   README.md          full feature and command list
   src/               see below
+  setup/             the setup (crate "linewright-setup", a workspace member): its own egui window that installs,
+                     updates and removes Linewright; the program is built into it (setup/build.rs)
+  build/             windows_icon.rs, the Windows icon resource both build scripts include
 ```
 
 ### `rust/src/`
