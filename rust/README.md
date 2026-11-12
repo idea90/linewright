@@ -97,6 +97,12 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   manages a block's attribute definitions (tag, prompt, default, invisible, order, remove) and carries them to every
   insert; `ATTSYNC` (`?`, `Name`, `Select`) brings inserts in line with their block, keeping values by tag; `BURST`
   explodes blocks keeping attribute values as text.
+- Regions: `REGION` (`REG`) turns closed objects, and lines, arcs and polylines that close a loop end to end, into
+  regions; `UNION` (`UNI`), `SUBTRACT` (`SU`) and `INTERSECT` (`IN`) combine them, keeping arcs as arcs. `LIST`,
+  `AREA` and the Properties palette give a region's area (holes taken out) and perimeter; `EXPLODE` turns it back
+  into lines and arcs. AutoCAD stores regions as ACIS solid data, which Linewright cannot write: a region is saved
+  as one closed polyline for each loop, marked so that Linewright reads them back as one region. AutoCAD shows those
+  as polylines; regions made in AutoCAD are kept in the file but not shown.
 - Clipboard and blocks: `COPYBASE` (Ctrl+Shift+C) copies by a chosen base point, `PASTEBLOCK` (Ctrl+Shift+V) pastes
   the clipboard as one new block, `PASTEORIG` pastes at the original coordinates, `NCOPY` copies objects out of
   blocks and external references as they show. Dynamic input takes a length and angle (Tab between

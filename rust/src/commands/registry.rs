@@ -4,7 +4,8 @@ use std::rc::Rc;
 use super::defaults::Defaults;
 use super::prompts::{Command, Io};
 use super::{
-    blocks, curves, dimension, drafting, draw, edit, groups, inquiry, layer_tools, layout, measuring, mledit, modify, qdim, reshape, shapes,
+    blocks, curves, dimension, drafting, draw, edit, groups, inquiry, layer_tools, layout, measuring, mledit, modify, qdim, regions,
+    reshape, shapes,
 };
 use crate::model::entities::Entity;
 
@@ -112,6 +113,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("PASTEORIG", "Paste to original coordinates"),
     ("PASTEBLOCK", "Paste as block"),
     ("NCOPY", "Copy nested objects"),
+    ("REGION", "Region from closed objects"),
+    ("UNION", "Join regions"),
+    ("SUBTRACT", "Subtract regions"),
+    ("INTERSECT", "Intersect regions"),
     ("BURST", "Explode keeping attribute values"),
     ("ATTSYNC", "Synchronize attributes"),
     ("EATTEDIT", "Edit attributes"),
@@ -217,6 +222,10 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("DDINSERT", "INSERT"),
     ("B", "BLOCK"),
     ("PASTE", "PASTECLIP"),
+    ("REG", "REGION"),
+    ("UNI", "UNION"),
+    ("SU", "SUBTRACT"),
+    ("IN", "INTERSECT"),
     ("LI", "LIST"),
     ("LS", "LIST"),
     ("Z", "ZOOM"),
@@ -348,6 +357,10 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "PASTEORIG" => Box::pin(blocks::pasteorig_command(io, defaults)),
             "PASTEBLOCK" => Box::pin(blocks::pasteblock_command(io, defaults)),
             "NCOPY" => Box::pin(blocks::ncopy_command(io)),
+            "REGION" => Box::pin(regions::region_command(io, selected)),
+            "UNION" => Box::pin(regions::union_command(io, selected)),
+            "SUBTRACT" => Box::pin(regions::subtract_command(io, selected)),
+            "INTERSECT" => Box::pin(regions::intersect_command(io, selected)),
             "BURST" => Box::pin(blocks::burst_command(io, selected)),
             "ATTSYNC" => Box::pin(blocks::attsync_command(io, defaults)),
             "EATTEDIT" => Box::pin(blocks::eattedit_command(io, defaults)),

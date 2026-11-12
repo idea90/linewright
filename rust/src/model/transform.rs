@@ -103,6 +103,14 @@ pub fn reflection(first: Point, second: Point) -> Similarity {
 pub fn transform_shape(shape: &Shape, sim: &Similarity) -> Shape {
     match shape {
         Shape::Line { start, end } => Shape::Line { start: sim.point(*start), end: sim.point(*end) },
+        Shape::Region { loops } => Shape::Region {
+            loops: crate::model::region::loop_shapes(loops)
+                .filter_map(|l| match transform_shape(&l, sim) {
+                    Shape::Polyline { vertices, .. } => Some(vertices),
+                    _ => None,
+                })
+                .collect(),
+        },
         Shape::Circle { center, radius } => Shape::Circle { center: sim.point(*center), radius: radius * sim.scale() },
         Shape::Arc { center, radius, start_angle, end_angle } => {
             let (mut first, mut last) = (sim.angle(*start_angle), sim.angle(*end_angle));

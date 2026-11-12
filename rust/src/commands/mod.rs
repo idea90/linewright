@@ -15,6 +15,7 @@ pub mod modify;
 pub mod parse;
 pub mod prompts;
 pub mod qdim;
+pub mod regions;
 pub mod registry;
 pub mod reshape;
 pub mod settings;

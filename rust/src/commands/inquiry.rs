@@ -52,6 +52,10 @@ pub fn describe(entity: &Entity) -> Vec<String> {
         Shape::Polyline { vertices, closed } => {
             add(format!("{} vertices, {}", vertices.len(), if *closed { "closed" } else { "open" }));
         }
+        Shape::Region { loops } => {
+            let measured = crate::model::region::measure(loops);
+            add(format!("{} loop(s)  area {:.4}  perimeter {:.4}", loops.len(), measured.area, measured.perimeter));
+        }
         Shape::Text { position, text, height, rotation, .. } => {
             add(format!("text \"{}\"", text.replace('\n', "\\P")));
             add(format!("position {}  height {height:.4}  rotation {rotation:.0}", xy(*position)));

@@ -318,6 +318,11 @@ pub enum Shape {
     Wipeout {
         corners: Vec<Point>,
     },
+    /// A region (REGION, UNION, SUBTRACT, INTERSECT): closed loops of straight and arc segments, each loop's
+    /// vertices carrying the bulge of the segment after them. A loop inside an odd number of others is a hole.
+    Region {
+        loops: Vec<Vec<Vertex>>,
+    },
     /// A multiline: the lines of `style` drawn along the path through `vertices`, `scale` times as far apart as the
     /// style sets them, with the line `justification` names running along the path.
     Mline {
@@ -380,6 +385,7 @@ impl Shape {
             Shape::Point { .. } => "Point",
             Shape::Solid { .. } => "Solid",
             Shape::Wipeout { .. } => "Wipeout",
+            Shape::Region { .. } => "Region",
             Shape::Mline { .. } => "MLine",
             Shape::Hatch { .. } => "Hatch",
             Shape::Insert { .. } => "Block reference",

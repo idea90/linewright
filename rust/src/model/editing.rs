@@ -29,6 +29,10 @@ fn styled(entity: &Entity, style: &Styled, shape: Shape) -> Entity {
 /// a dimension its lines, arrowheads and text, a hatch its boundaries.
 pub fn explode(entity: &Entity) -> Option<Vec<Entity>> {
     match &entity.shape {
+        // A region comes apart into the lines and arcs of its loops.
+        Shape::Region { loops } => {
+            Some(crate::model::region::loop_shapes(loops).filter_map(|shape| explode(&entity.derive(shape))).flatten().collect())
+        }
         Shape::Polyline { vertices, closed } => {
             let count = if *closed { vertices.len() } else { vertices.len().saturating_sub(1) };
             Some(
@@ -175,6 +179,12 @@ pub fn stretch(entity: &Entity, window: &Bounds, shift: Point) -> Option<Entity>
         Shape::Polyline { vertices, closed } => Shape::Polyline {
             vertices: vertices.iter().map(|v| Vertex { x: moved(&v.point()).x, y: moved(&v.point()).y, ..*v }).collect(),
             closed: *closed,
+        },
+        Shape::Region { loops } => Shape::Region {
+            loops: loops
+                .iter()
+                .map(|l| l.iter().map(|v| Vertex { x: moved(&v.point()).x, y: moved(&v.point()).y, ..*v }).collect())
+                .collect(),
         },
         Shape::Dimension { start, end, line_point, angle, look } => Shape::Dimension {
             start: moved(start),
@@ -362,6 +372,7 @@ pub fn grip_points(shape: &Shape) -> Vec<Point> {
     match shape {
         Shape::Line { start, end } => vec![*start, start.midpoint(*end), *end],
         Shape::Polyline { vertices, .. } => vertices.iter().map(|v| v.point()).collect(),
+        Shape::Region { loops } => loops.iter().flatten().map(|v| v.point()).collect(),
         Shape::Circle { center, radius } => {
             std::iter::once(*center).chain([0.0, 90.0, 180.0, 270.0].map(|a| *center + direction(a) * *radius)).collect()
         }

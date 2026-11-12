@@ -244,6 +244,7 @@ fn numbers(shape: &Shape) -> Vec<f64> {
         Shape::Circle { center, radius } => coords(&[*center]).chain([*radius]).collect(),
         Shape::Arc { center, radius, start_angle, end_angle } => coords(&[*center]).chain([*radius, *start_angle, *end_angle]).collect(),
         Shape::Polyline { vertices, .. } => vertices.iter().flat_map(|v| [v.x, v.y, v.bulge, v.start_width, v.end_width]).collect(),
+        Shape::Region { loops } => loops.iter().flatten().flat_map(|v| [v.x, v.y, v.bulge]).collect(),
         Shape::Text { position, height, rotation, line_spacing, width_factor, oblique, .. } => {
             coords(&[*position]).chain([*height, *rotation, *line_spacing, *width_factor, *oblique]).collect()
         }

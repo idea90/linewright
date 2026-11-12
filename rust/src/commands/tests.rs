@@ -1368,3 +1368,76 @@ fn eattedit_asks_for_a_block_with_attributes() {
     assert!(!session.active());
     assert_eq!(defaults.borrow().attribute_edit_request, Some(insert.id));
 }
+
+fn square(x: f64, y: f64, side: f64) -> Entity {
+    polyline_from(&[pt(x, y), pt(x + side, y), pt(x + side, y + side), pt(x, y + side)], true)
+}
+
+fn area_of(entity: &Entity) -> f64 {
+    let Shape::Region { loops } = &entity.shape else { panic!("a region, not {:?}", entity.shape) };
+    crate::model::region::measure(loops).area
+}
+
+#[test]
+fn region_makes_regions_of_closed_objects_and_of_lines_closing_a_loop() {
+    let triangle = vec![line(pt(20.0, 0.0), pt(30.0, 0.0)), line(pt(30.0, 0.0), pt(20.0, 10.0)), line(pt(20.0, 10.0), pt(20.0, 0.0))];
+    let (box_, round, stray) = (square(0.0, 0.0, 10.0), circle(pt(50.0, 0.0), 1.0), line(pt(0.0, 50.0), pt(5.0, 50.0)));
+    let mut all = vec![box_, round, stray.clone()];
+    all.extend(triangle);
+    let mut host = FakeHost::with(all.clone());
+    start("REGION", &mut host, all);
+    assert_eq!(host.reports[0], "3 loop(s) extracted. 3 Region(s) created.");
+    let regions: Vec<f64> = host.entities.iter().filter(|e| matches!(e.shape, Shape::Region { .. })).map(area_of).collect();
+    assert_eq!(regions.len(), 3);
+    assert!((regions[0] - 100.0).abs() < 1e-9 && (regions[1] - std::f64::consts::PI).abs() < 1e-9 && (regions[2] - 50.0).abs() < 1e-6);
+    assert_eq!(host.entities.len(), 4, "the line that closes nothing stays");
+    assert!(host.entities.iter().any(|e| e.id == stray.id));
+    host.retract();
+    assert_eq!(host.entities.len(), 6, "undone in one step");
+}
+
+#[test]
+fn union_subtract_and_intersect_combine_regions() {
+    let regions = |host: &mut FakeHost| {
+        let squares = vec![square(0.0, 0.0, 10.0), square(5.0, 5.0, 10.0)];
+        *host = FakeHost::with(squares.clone());
+        start("REGION", host, squares);
+        host.entities.clone()
+    };
+    let mut host = FakeHost::default();
+    let made = regions(&mut host);
+    start("UNION", &mut host, made);
+    assert_eq!(host.entities.len(), 1);
+    assert!((area_of(&host.entities[0]) - 175.0).abs() < 1e-6);
+
+    let made = regions(&mut host);
+    let mut session = start("SUBTRACT", &mut host, vec![made[0].clone()]);
+    assert_eq!(session.prompt.as_ref().unwrap().message, "Select solids, surfaces, and regions to subtract ..");
+    session.submit_objects(vec![made[1].clone()], &mut host);
+    assert_eq!(host.entities.len(), 1);
+    assert!((area_of(&host.entities[0]) - 75.0).abs() < 1e-6);
+
+    let made = regions(&mut host);
+    start("INTERSECT", &mut host, made);
+    assert!((area_of(&host.entities[0]) - 25.0).abs() < 1e-6);
+
+    let mut host = FakeHost::with(vec![square(0.0, 0.0, 1.0), square(5.0, 5.0, 1.0)]);
+    let squares = host.entities.clone();
+    start("REGION", &mut host, squares);
+    let made = host.entities.clone();
+    start("INTERSECT", &mut host, made);
+    assert!(host.entities.is_empty());
+    assert_eq!(host.reports.last().map(String::as_str), Some("Null region created - deleted."));
+}
+
+#[test]
+fn boolean_commands_leave_out_what_is_not_a_region() {
+    let mut host = FakeHost::with(vec![square(0.0, 0.0, 1.0)]);
+    let chosen = host.entities.clone();
+    start("UNION", &mut host, chosen);
+    assert_eq!(
+        host.reports,
+        ["1 object(s) are not regions and are left out. Make regions of them with REGION.", "At least 2 regions are required."]
+    );
+    assert!(matches!(host.entities[0].shape, Shape::Polyline { .. }), "left as it was");
+}

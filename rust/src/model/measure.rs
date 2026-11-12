@@ -42,7 +42,7 @@ pub fn polygon(vertices: &[Vertex]) -> Option<Measured> {
     Some(Measured { area: area.abs(), perimeter })
 }
 
-/// Area and perimeter of a circle, a whole ellipse or a closed polyline, or None for anything else.
+/// Area and perimeter of a circle, a whole ellipse, a closed polyline or a region, or None for anything else.
 pub fn measure_entity(entity: &Entity) -> Option<Measured> {
     match &entity.shape {
         Shape::Circle { radius, .. } => Some(Measured { area: PI * radius.powi(2), perimeter: 2.0 * PI * radius }),
@@ -55,6 +55,7 @@ pub fn measure_entity(entity: &Entity) -> Option<Measured> {
             Some(Measured { area: PI * a * b, perimeter })
         }
         Shape::Polyline { vertices, closed: true } => polygon(vertices),
+        Shape::Region { loops } => Some(crate::model::region::measure(loops)),
         _ => None,
     }
 }

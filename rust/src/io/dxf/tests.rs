@@ -1017,3 +1017,31 @@ fn a_file_cut_off_inside_an_object_keeps_the_objects_before_it() {
     let (document, _) = recovered(&lines);
     assert_eq!(document.len(), 2, "the circle, cut short, is not drawn");
 }
+
+#[test]
+fn a_region_is_saved_as_marked_polylines_and_read_back_as_one_region() {
+    use crate::model::region::{Boolean, combine, loop_of};
+    let plate =
+        loop_of(&crate::model::entities::polyline_from(&[pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)], true)).unwrap();
+    let hole = loop_of(&crate::model::entities::circle(pt(5.0, 5.0), 2.0)).unwrap();
+    let loops = combine(&[plate], &[hole], Boolean::Subtract);
+    let mut region = Entity::new(Shape::Region { loops: loops.clone() });
+    region.layer = "PLATES".into();
+    let mut document = Document::new();
+    document.add(region);
+    document.add(crate::model::entities::line(pt(0.0, 20.0), pt(1.0, 20.0)));
+    let file = dxf_from_document(&document);
+    let written: Vec<&Group> = file.groups.iter().filter(|g| g.kind() == "LWPOLYLINE" && g.get(8) == Some("PLATES")).collect();
+    assert_eq!(written.len(), 2, "one polyline for each loop");
+    assert!(file.table_entries("APPID").into_iter().any(|i| file.groups[i].get(2) == Some("LINEWRIGHT")));
+    let read = document_from_dxf(DxfFile::parse(&file.to_bytes()).unwrap());
+    let regions: Vec<&Entity> = read.entities().iter().filter(|e| matches!(e.shape, Shape::Region { .. })).collect();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].layer, "PLATES");
+    let Shape::Region { loops: back } = &regions[0].shape else { unreachable!() };
+    assert_eq!(back.len(), 2);
+    let area = crate::model::region::measure(back).area;
+    assert!((area - (100.0 - std::f64::consts::PI * 4.0)).abs() < 1e-6, "{area}");
+    assert_eq!(read.len(), 2, "and the line");
+    assert!(read.kept_xdata.is_empty(), "Linewright's own data is not kept as another program's");
+}

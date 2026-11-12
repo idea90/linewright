@@ -234,6 +234,16 @@ fn shape(name: &str) -> Option<&'static str> {
         "BOUNDARY" => {
             r##"<path d="M3 7h18M3 17h18M7 3v18M17 3v18" stroke-width="1"/><rect x="7" y="7" width="10" height="10" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1" stroke-width="2.2"/>"##
         }
+        "REGION" => {
+            r##"<path d="M4 6h10a6 6 0 0 1 6 6v6H4Z" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1"/><circle cx="10" cy="13" r="2.5"/>"##
+        }
+        "UNION" => r##"<path d="M3.5 5.5h10v4h7v9h-10v-4h-7Z" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1"/>"##,
+        "SUBTRACT" => {
+            r##"<path d="M3.5 5.5h10v4h-3v5h-7Z" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1"/><rect x="10.5" y="9.5" width="10" height="9" stroke-dasharray="2 1.5"/>"##
+        }
+        "INTERSECT" => {
+            r##"<rect x="3.5" y="5.5" width="10" height="9" stroke-dasharray="2 1.5"/><rect x="10.5" y="9.5" width="10" height="9" stroke-dasharray="2 1.5"/><rect x="10.5" y="9.5" width="3" height="5" fill="#4ea3f1" stroke="#4ea3f1"/>"##
+        }
         "POLYGON" => {
             r##"<path d="M12 3.5 19.36 7.75v8.5L12 20.5l-7.36-4.25v-8.5Z"/><path d="M12 12 19.36 7.75" stroke="#4ea3f1"/><rect x="10.2" y="10.2" width="3.6" height="3.6" fill="#4ea3f1" stroke="none"/>"##
         }

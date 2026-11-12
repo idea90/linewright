@@ -46,6 +46,7 @@ impl Primitive {
 pub fn primitives(entity: &Entity) -> Vec<Primitive> {
     match &entity.shape {
         Shape::Line { start, end } => vec![seg(*start, *end)],
+        Shape::Region { loops } => crate::model::region::loop_shapes(loops).flat_map(|shape| primitives(&entity.derive(shape))).collect(),
         Shape::Circle { center, radius } => vec![Primitive::Circle { center: *center, radius: *radius }],
         Shape::Arc { center, radius, start_angle, end_angle } => {
             vec![Primitive::Arc { center: *center, radius: *radius, start_angle: *start_angle, end_angle: *end_angle }]

@@ -158,6 +158,12 @@ pub fn entity_parts(entity: &Entity, tolerance: f64) -> Parts {
     let path = |points: Vec<Point>| Parts { paths: vec![points], ..Parts::default() };
     match &entity.shape {
         Shape::Line { start, end } => path(vec![*start, *end]),
+        Shape::Region { loops } => Parts {
+            paths: crate::model::region::loop_shapes(loops)
+                .flat_map(|shape| entity_parts(&entity.derive(shape), tolerance).paths)
+                .collect(),
+            ..Parts::default()
+        },
         Shape::Circle { center, radius } => path(arc_points(*center, *radius, 0.0, TAU, tolerance)),
         Shape::Arc { center, radius, start_angle, end_angle } => {
             let sweep = modulo(end_angle - start_angle, 360.0);

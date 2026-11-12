@@ -91,6 +91,12 @@ pub fn properties(entity: &Entity) -> Vec<Property> {
             let length: f64 = entity_parts(entity, 1e-6).paths.iter().flat_map(|p| p.windows(2).map(|w| w[0].dist(w[1]))).sum();
             rows.push(fixed("Length", number(length)));
         }
+        Shape::Region { loops } => {
+            let measured = crate::model::region::measure(loops);
+            rows.push(fixed("Loops", loops.len().to_string()));
+            rows.push(fixed("Area", number(measured.area)));
+            rows.push(fixed("Perimeter", number(measured.perimeter)));
+        }
         Shape::Text { position, text, height, rotation, style, width_factor, oblique, .. } => {
             rows.push(text_field("Contents", text));
             rows.push(fixed("Style", if style.is_empty() { "Standard".into() } else { style.clone() }));

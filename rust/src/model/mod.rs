@@ -23,6 +23,7 @@ pub mod overkill;
 pub mod parts;
 pub mod primitives;
 pub mod properties;
+pub mod region;
 pub mod spline;
 pub mod styles;
 pub mod table;

@@ -1253,6 +1253,48 @@ const XDATA_APPLICATION_CODE: i32 = 1001;
 /// AutoCAD's own name there. What it keeps there goes with how it draws the object (a dimension's overrides, say),
 /// and is written afresh with the object rather than kept.
 const AUTOCAD_APPLICATION: &str = "ACAD";
+/// The application name Linewright's own extended data goes under: a region's loops, written as polylines, carry
+/// `REGION` and the region's number, so they come back as one region.
+const LINEWRIGHT_APPLICATION: &str = "LINEWRIGHT";
+const REGION_MARK: &str = "REGION";
+
+/// The number of the region a polyline is a loop of, from Linewright's extended data on it.
+fn region_mark(group: &Group) -> Option<i64> {
+    let start =
+        group.0.iter().position(|p| p.code == XDATA_APPLICATION_CODE && p.value.trim().eq_ignore_ascii_case(LINEWRIGHT_APPLICATION))?;
+    let data: Vec<&Pair> = group.0[start + 1..].iter().take_while(|p| p.code != XDATA_APPLICATION_CODE).collect();
+    let marked = data.iter().any(|p| p.code == 1000 && p.value.trim() == REGION_MARK);
+    marked.then(|| data.iter().find(|p| p.code == 1071).and_then(|p| p.value.trim().parse().ok())).flatten()
+}
+
+/// The loops of regions, read as closed polylines, put back together: one region for each number, in the place of
+/// its first loop.
+fn merge_regions(entities: Vec<Entity>, marks: &HashMap<EntityId, i64>) -> Vec<Entity> {
+    if marks.is_empty() {
+        return entities;
+    }
+    let mut first: HashMap<i64, usize> = HashMap::new();
+    let mut merged: Vec<Entity> = Vec::with_capacity(entities.len());
+    for entity in entities {
+        let (Some(&number), Shape::Polyline { vertices, .. }) = (marks.get(&entity.id), &entity.shape) else {
+            merged.push(entity);
+            continue;
+        };
+        match first.get(&number) {
+            Some(&at) => {
+                if let Shape::Region { loops } = &mut merged[at].shape {
+                    loops.push(vertices.clone());
+                }
+            }
+            None => {
+                first.insert(number, merged.len());
+                let loops = vec![vertices.clone()];
+                merged.push(entity.with_shape(Shape::Region { loops }));
+            }
+        }
+    }
+    merged
+}
 
 /// The named plot style an entity's own part names (code 390), as the handle of the style's entry in the file.
 fn plot_style_handle(group: &Group) -> Option<String> {
@@ -1289,7 +1331,8 @@ fn keep_foreign_xdata(document: &mut Document, id: EntityId, group: &Group) {
     let (mut kept, mut foreign) = (vec![], false);
     for pair in &group.0[start..] {
         if pair.code == XDATA_APPLICATION_CODE {
-            foreign = !pair.value.trim().eq_ignore_ascii_case(AUTOCAD_APPLICATION);
+            let name = pair.value.trim();
+            foreign = !name.eq_ignore_ascii_case(AUTOCAD_APPLICATION) && !name.eq_ignore_ascii_case(LINEWRIGHT_APPLICATION);
         }
         if foreign {
             kept.push(pair.clone());
@@ -1362,6 +1405,8 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
     let mut hatch_links: Vec<(EntityId, Vec<String>)> = vec![];
     let mut taken: HashSet<usize, crate::model::entities::IdBuildHasher> = HashSet::default();
     let mut stale_blocks: Vec<String> = vec![];
+    // Polylines that are loops of a region Linewright wrote, by the region's number.
+    let mut region_marks: HashMap<EntityId, i64> = HashMap::new();
     if let Some((start, end)) = file.section("ENTITIES") {
         let body = &file.groups[start + 1..end];
         let runs = entity_runs(body);
@@ -1395,6 +1440,9 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                         handles.insert(handle.trim().to_uppercase(), entity.id);
                     }
                     keep_entity_extras(&mut document, entity.id, &run[0]);
+                    if let Some(number) = region_mark(&run[0]) {
+                        region_marks.insert(entity.id, number);
+                    }
                     if run[0].kind() == "HATCH" && run[0].int(71).unwrap_or(0) != 0 {
                         // One closed object for each loop, or the hatch follows nothing here.
                         let codes = run[0].0.iter().take_while(|p| p.code < 1000);
@@ -1457,6 +1505,9 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                             handles.insert(handle.trim().to_uppercase(), entity.id);
                         }
                         keep_entity_extras(&mut document, entity.id, &run[0]);
+                        if let Some(number) = region_mark(&run[0]) {
+                            region_marks.insert(entity.id, number);
+                        }
                         on_layout.push(entity);
                         if DIMENSION_KINDS.contains(&run[0].kind()) || run[0].kind() == "ACAD_TABLE" {
                             stale_blocks.extend(run[0].text(2).map(|n| n.trim().to_string()));
@@ -1469,7 +1520,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
         }
         document.layouts.push(layout);
         let space = document.layouts.len() - 1;
-        document.set_space_entities(Some(space), on_layout);
+        document.set_space_entities(Some(space), merge_regions(on_layout, &region_marks));
     }
     // Every named block the file defines, for INSERT. Anonymous ones (*D1, *U2) belong to the objects using them.
     let names: Vec<String> = reader.definitions.keys().filter(|n| !n.starts_with('*')).cloned().collect();
@@ -1545,7 +1596,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
             *association = Some(Association::Objects(ids));
         }
     }
-    document.set_entities(entities);
+    document.set_entities(merge_regions(entities, &region_marks));
     document.source = Some(file);
     document
 }
@@ -1874,6 +1925,8 @@ struct Writer {
     image_reactors: Vec<(String, String, String)>,
     /// Whether any wipeout was written, which AutoCAD needs its class declared for.
     wipeouts: bool,
+    /// How many regions were written, each numbered in the extended data of its loops.
+    regions: i64,
     /// The file's multiline styles' handles by lower-case name.
     mline_styles: HashMap<String, String>,
     /// The table style tables are written with: its handle, and the text height to make it with when the file
@@ -2014,6 +2067,21 @@ impl Writer {
         }
         match &entity.shape {
             Shape::Line { start, end } => vec![self.line(owner, layer, color, linetype, *start, *end)],
+            // AutoCAD keeps a region as ACIS solid-modelling data. Here each loop is a closed polyline, which any
+            // program shows, marked as a loop of the region so that Linewright reads them back as one.
+            Shape::Region { loops } => {
+                self.regions += 1;
+                let number = self.regions;
+                let mut groups = vec![];
+                for shape in crate::model::region::loop_shapes(loops) {
+                    let mut written = self.entity_groups(&entity.derive(shape), linetype, dimension_style, owner);
+                    if let Some(first) = written.first_mut() {
+                        first.0.extend([pair(XDATA_APPLICATION_CODE, LINEWRIGHT_APPLICATION), pair(1000, REGION_MARK), pair(1071, number)]);
+                    }
+                    groups.extend(written);
+                }
+                groups
+            }
             Shape::Circle { center, radius } => {
                 let mut pairs = self.head("CIRCLE", owner, layer, color, linetype, &["AcDbCircle"]);
                 pairs.extend(point_pairs(10, *center));
@@ -3359,6 +3427,21 @@ const WIPEOUT_VARIABLES_CLASS: (&str, &str, &str, i32, i32) =
 
 /// Declares a class in the CLASSES section, unless the file already does: name, C++ class, application, proxy
 /// flags and whether it is an entity.
+/// Add an application to the APPID table, which every name extended data is filed under must be in.
+fn register_application(file: &mut DxfFile, writer: &mut Writer, name: &str) {
+    if file.table_entries("APPID").into_iter().any(|i| file.groups[i].get(2).is_some_and(|n| n.trim().eq_ignore_ascii_case(name))) {
+        return;
+    }
+    let Some((table, end)) = file.table("APPID") else { return };
+    let owner = file.groups[table].handle().map_or("0".to_string(), |h| h.trim().to_string());
+    let mut entry = vec![pair(0, "APPID"), pair(5, writer.handle())];
+    if writer.modern {
+        entry.extend([pair(330, owner), pair(100, "AcDbSymbolTableRecord"), pair(100, "AcDbRegAppTableRecord")]);
+    }
+    entry.extend([pair(2, name), pair(70, 0)]);
+    file.groups.insert(end, Group(entry));
+}
+
 fn declare_class(file: &mut DxfFile, (name, class, application, flags, entity): (&str, &str, &str, i32, i32)) {
     let Some((_, end)) = file.section("CLASSES") else { return };
     if file.groups.iter().any(|g| g.kind() == "CLASS" && g.get(1).is_some_and(|n| n.trim() == name)) {
@@ -3875,6 +3958,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         image_defs: vec![],
         image_reactors: vec![],
         wipeouts: false,
+        regions: 0,
         mline_styles: HashMap::new(),
         table_style: None,
         lineweight: lineweight::BYLAYER,
@@ -4030,6 +4114,9 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     write_images(&mut file, &mut writer);
     if writer.wipeouts {
         declare_class(&mut file, WIPEOUT_CLASS);
+    }
+    if writer.regions > 0 {
+        register_application(&mut file, &mut writer, LINEWRIGHT_APPLICATION);
     }
     if writer.modern {
         write_wipeout_variables(&mut file, &mut writer, document);

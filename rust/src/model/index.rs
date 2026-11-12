@@ -34,6 +34,11 @@ pub fn entity_extent(entity: &Entity) -> Bounds {
     match &entity.shape {
         Shape::Line { start, end } => Bounds::around([*start, *end]),
         Shape::Circle { center, radius } | Shape::Arc { center, radius, .. } => Bounds::square_around(*center, *radius),
+        Shape::Region { loops } => loops
+            .iter()
+            .map(|l| entity_extent(&Entity::new(Shape::Polyline { vertices: l.clone(), closed: true })))
+            .reduce(Bounds::union)
+            .unwrap_or_else(|| Bounds::around(Vec::<Point>::new())),
         Shape::Polyline { vertices, .. } => {
             let mut points: Vec<Point> = vertices.iter().map(|v| v.point()).collect();
             for (index, v) in vertices.iter().enumerate() {
