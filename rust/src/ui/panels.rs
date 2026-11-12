@@ -171,6 +171,11 @@ pub fn header(app: &mut LinewrightApp, ctx: &egui::Context) {
                             ui.close_menu();
                         }
                     }
+                    ui.separator();
+                    if ui.button("Check for Updates...").clicked() {
+                        app.actions.push(Action::CheckForUpdates);
+                        ui.close_menu();
+                    }
                 },
             );
             divider(ui, 18.0);
@@ -208,6 +213,9 @@ pub fn header(app: &mut LinewrightApp, ctx: &egui::Context) {
                 }
                 if window_button(ui, "WIN_MINIMIZE", "Minimize", false).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                if !app.updates.shown {
+                    app.updates.header_button(ui);
                 }
                 let title = format!("{}{}", app.file_name(), if app.modified() { "*" } else { "" });
                 ui.with_layout(Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {

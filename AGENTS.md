@@ -14,7 +14,7 @@ behave, do what AutoCAD does.
 - It was first written in Python with Qt (PySide6 + ezdxf). That version was removed after 1.0 Alpha 3 and lives
   only in the git history (tag `v1.0.0-alpha.3` and earlier).
 - License: MIT. Releases are published on GitHub (`idea90/linewright`) as pre-releases with Linux and Windows
-  binaries; the current version is `1.0.0-alpha.6.3`.
+  binaries; the current version is `1.0.0-alpha.6.4`.
 
 `rust/README.md` lists every command and feature. Keep it up to date when adding user-facing behaviour.
 
@@ -25,13 +25,19 @@ All Rust commands run from `rust/`:
 ```sh
 cargo run --release                 # an empty drawing
 cargo run --release -- plan.dxf     # open a drawing
-cargo test                          # all tests
-cargo fmt                           # format (max_width 140, see rustfmt.toml)
-cargo clippy --all-targets -- -D warnings
+cargo test                          # the app's tests
+cargo fmt --all                     # format (max_width 140, see rustfmt.toml)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace              # the setup's tests too
+
+# the setup, with the program built into it
+cargo build --release && LINEWRIGHT_PAYLOAD=target/release/linewright cargo build --release -p linewright-setup
 ```
 
-CI (`.github/workflows/rust.yml`) runs `cargo fmt --check`, clippy with warnings as errors, `cargo test` and a
-release build on Ubuntu and Windows. **Run fmt, clippy and the tests before calling a change done.**
+`rust/` is a Cargo workspace of the app and `setup/`; the version is `[workspace.package]` in `rust/Cargo.toml`.
+
+CI (`.github/workflows/rust.yml`) runs `cargo fmt --check`, clippy with warnings as errors, the workspace's tests, a
+release build and the setup on Ubuntu and Windows. **Run fmt, clippy and the tests before calling a change done.**
 
 `./compile` (at the root) builds release binaries into `dist/` for Linux and Windows. From Linux it cross-builds
 Windows with MinGW if installed, otherwise with Zig and cargo-zigbuild installed into `~/.cache/linewright-build`.
@@ -46,6 +52,12 @@ Notes:
   with `cargo run --release`, so the first start compiles for a few minutes; `.claude/settings.json` raises
   `MCP_TIMEOUT` to 10 minutes so the connection waits for it. After changing the code, reconnect it with `/mcp`.
 - DWG support needs the free ODA File Converter (on `PATH`, its default install folder, or `LINEWRIGHT_ODA`).
+- Updates: `update.rs` finds a newer release (one whose assets include the setup for the system and `SHA256SUMS`),
+  downloads and checks it and runs the setup; `ui/updates.rs` checks once a day and shows the dialog.
+  `LINEWRIGHT_NO_UPDATE_CHECK=1` turns the daily check off (it is also off while `LINEWRIGHT_CAPTURE` is set), and
+  `LINEWRIGHT_UPDATE_URL` reads the list of releases from another address, to try an update out with a local server.
+  A release must keep publishing the setups and `SHA256SUMS` under their present names, or installed copies stop
+  finding updates.
 - `LINEWRIGHT_NO_GPU=1` keeps the canvas's pictures off the graphics card (everything is then drawn through egui), for
   a driver that draws them wrong, and for comparing the two ways of drawing.
 - `tests/speed.rs` times what a person waits on in a large drawing (opening, a frame, a mouse move, selecting,
@@ -55,8 +67,10 @@ Notes:
 ## Releasing
 
 Push a tag named `v*` (for example `v1.0.0-alpha.4`) and `.github/workflows/release.yml` builds the Linux and
-Windows binaries, writes `SHA256SUMS` and uploads all three to the GitHub release for that tag, creating the release
-if it does not exist. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
+Windows binaries and the setup for each (the `setup/` crate with the program built into it), writes `SHA256SUMS` and
+uploads them to the GitHub release for that tag, creating the release if it does not exist. CI builds the setups and
+installs and removes Linewright with them (`--quiet`) on both systems on every push, so a broken setup shows before a
+release. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
 
 ## Repository layout
 
@@ -69,6 +83,9 @@ compile              build script for Linux/Windows binaries into dist/
 rust/                the app (Cargo crate "linewright")
   README.md          full feature and command list
   src/               see below
+  setup/             the setup (crate "linewright-setup", a workspace member): its own egui window that installs,
+                     updates and removes Linewright; the program is built into it (setup/build.rs)
+  build/             windows_icon.rs, the Windows icon resource both build scripts include
 ```
 
 ### `rust/src/`
@@ -78,6 +95,7 @@ rust/                the app (Cargo crate "linewright")
 | `main.rs`, `lib.rs` | Entry point (opens a file given on the command line, or `--mcp` serves MCP) and the module list |
 | `mcp.rs` | The MCP server for AI agents: tools that type at the command line through `ui::controller::Controller`, render PNGs and open and save |
 | `fonts.rs` | Fonts for text in any script: the drawing's fonts, system fallbacks, legacy code pages |
+| `update.rs` | Finding a newer release on GitHub, downloading its setup and checking its SHA-256, running it |
 | `threads.rs` | Sharing work over many items among the processors (`map_runs`): the canvas's picture, reading a file |
 | `shx.rs` | AutoCAD SHX stroke fonts (romans, simplex, txt…), read from AutoCAD's font folders |
 | **`model/`** | **The drawing itself: geometry, entities and the document. No UI code.** |
@@ -130,6 +148,7 @@ rust/                the app (Cargo crate "linewright")
 | `ui/panels.rs` | The header, palettes, dialogs, command line and status bar |
 | `ui/ribbon.rs` | The ribbon: its tabs, panels, flyouts, the layer drop-down and the Properties panel's drop-downs |
 | `ui/undo.rs` | Undo and redo: every change is a `Change` pushed here |
+| `ui/updates.rs` | The daily update check, the Linewright Update dialog and the header's update button |
 | `ui/layers.rs`, `icons.rs`, `theme.rs`, `frame.rs`, `recent.rs`, `debug_capture.rs` | Layer edits, icons, colors, the custom window frame, recent files, screenshot aid |
 
 ## How to make common changes

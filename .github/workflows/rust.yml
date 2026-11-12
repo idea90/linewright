@@ -26,11 +26,45 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
       - run: cargo build --release
+      - name: Build the setup with the program inside
+        shell: bash
+        run: LINEWRIGHT_PAYLOAD=target/release/${{ matrix.binary }} cargo build --release -p linewright-setup
+      # The setup installs and removes Linewright with no window, which shows it works without anyone to click.
+      - name: Install and remove with the setup (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export HOME="$RUNNER_TEMP/home" XDG_DATA_HOME=
+          target/release/linewright-setup --quiet
+          test -x "$HOME/.local/share/linewright/linewright"
+          test -L "$HOME/.local/bin/linewright"
+          test -f "$HOME/.local/share/applications/linewright.desktop"
+          "$HOME/.local/share/linewright/linewright-setup" --uninstall --quiet
+          test ! -e "$HOME/.local/share/linewright"
+          test ! -e "$HOME/.local/bin/linewright"
+          test ! -e "$HOME/.local/share/applications/linewright.desktop"
+      - name: Install and remove with the setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $folder = Join-Path $env:RUNNER_TEMP "Linewright"
+          $run = { param($program, $arguments) (Start-Process $program -ArgumentList $arguments -Wait -PassThru).ExitCode }
+          if ((& $run "target\release\linewright-setup.exe" @("--quiet", "--folder=$folder")) -ne 0) { throw "install failed" }
+          if (-not (Test-Path "$folder\linewright.exe")) { throw "the program is missing" }
+          if (-not (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Linewright")) { throw "not in Installed apps" }
+          $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Linewright.lnk'
+          if (-not (Test-Path $menu)) { throw "no Start menu entry" }
+          if ((& $run "$folder\uninstall.exe" @("--uninstall", "--quiet")) -ne 0) { throw "uninstall failed" }
+          Start-Sleep -Seconds 8
+          if (Test-Path $folder) { throw "the folder is left: $(Get-ChildItem $folder)" }
+          if (Test-Path $menu) { throw "the Start menu entry is left" }
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Linewright") { throw "still in Installed apps" }
       - uses: actions/upload-artifact@v4
         with:
           name: linewright-${{ matrix.os }}
-          path: rust/target/release/${{ matrix.binary }}
+          path: |
+            rust/target/release/${{ matrix.binary }}
+            rust/target/release/linewright-setup${{ runner.os == 'Windows' && '.exe' || '' }}

@@ -71,6 +71,11 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   off), kept in the `autosave` folder of the settings folder (`~/.config/linewright`, or `%APPDATA%\Linewright`).
   After a crash or kill, the Drawing Recovery dialog at start-up (or `DRAWINGRECOVERY`) opens each copy as an
   unsaved "(recovered)" drawing, or deletes it. A copy goes once its drawing is saved or discarded.
+- Updates: once a day Linewright asks GitHub for a newer release (turned off in the update dialog), and the
+  application menu's Check for Updates asks at once. A newer one is offered with Update, Later or Skip This Version;
+  Update downloads its setup, checks it against the release's SHA256SUMS and installs it over this one (a
+  Linewright that was not installed with the setup opens the setup instead), then offers to restart, asking to save
+  the drawing first. A button in the header shows an update waiting.
 - AutoCAD habits: Space and right-click are Enter, Enter repeats the last command, grips on selected objects,
   double-click to edit text, Ctrl+C / Ctrl+X / Ctrl+V for objects (`COPYCLIP`, `CUTCLIP`, `PASTECLIP`), Ctrl+A
   (`SELECTALL`, `AI_SELALL`), Ctrl+1 for the Properties palette
@@ -186,3 +191,4 @@ that does the same.
 | `canvas` | Camera, rendering with egui, PDF plotting, PNG pictures |
 | `ui` | The window: controller, undo stack, layers, panels |
 | `mcp` | The MCP server (`--mcp`) that drives the controller for an AI agent |
+| `update` | Finding a newer release on GitHub, downloading and checking its setup, and running it |

@@ -13,3 +13,4 @@ pub mod shx;
 pub mod snap;
 pub mod threads;
 pub mod ui;
+pub mod update;

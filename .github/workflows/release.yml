@@ -24,11 +24,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: linewright
-            asset: linewright-linux-x86_64
+            suffix: ""
+            system: linux
           - os: windows-latest
-            binary: linewright.exe
-            asset: linewright-windows-x86_64.exe
+            suffix: .exe
+            system: windows
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -40,14 +40,22 @@ jobs:
         with:
           workspaces: rust
       - run: cargo build --release
-      - name: Name the binary for the release
+      - name: Build the setup with the program inside
         shell: bash
-        # Steps run in rust/, and the artifact is taken from the top of the checkout.
-        run: cp target/release/${{ matrix.binary }} ../${{ matrix.asset }}
+        run: LINEWRIGHT_PAYLOAD=target/release/linewright${{ matrix.suffix }} cargo build --release -p linewright-setup
+      - name: Name the programs for the release
+        shell: bash
+        # Steps run in rust/, and the artifacts are taken from the top of the checkout.
+        run: |
+          cp target/release/linewright${{ matrix.suffix }} ../linewright-${{ matrix.system }}-x86_64${{ matrix.suffix }}
+          cp target/release/linewright-setup${{ matrix.suffix }} ../linewright-setup-${{ matrix.system }}-x86_64${{ matrix.suffix }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          name: linewright-${{ matrix.system }}
+          path: |
+            linewright-${{ matrix.system }}-x86_64${{ matrix.suffix }}
+            linewright-setup-${{ matrix.system }}-x86_64${{ matrix.suffix }}
+          if-no-files-found: error
 
   publish:
     needs: build
@@ -65,10 +73,10 @@ jobs:
           pattern: linewright-*
           merge-multiple: true
       - name: Write checksums
-        run: sha256sum linewright-linux-x86_64 linewright-windows-x86_64.exe > SHA256SUMS
+        run: sha256sum linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-setup-linux-x86_64 linewright-linux-x86_64 > SHA256SUMS
       - name: Upload to the release, creating it if needed
         run: |
-          files="linewright-linux-x86_64 linewright-windows-x86_64.exe SHA256SUMS"
+          files="linewright-setup-windows-x86_64.exe linewright-windows-x86_64.exe linewright-setup-linux-x86_64 linewright-linux-x86_64 SHA256SUMS"
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           else

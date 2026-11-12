@@ -3,7 +3,15 @@
 A 2D CAD program in the style of AutoCAD: draw, edit, dimension and plot DXF and DWG drawings. It runs natively on
 Linux (X11 and Wayland) and Windows.
 
-Download the latest build from [Releases](https://github.com/idea90/linewright/releases), or build it yourself:
+Download the latest build from [Releases](https://github.com/idea90/linewright/releases):
+
+- **Setup:** run `linewright-setup-windows-x86_64.exe` on Windows, or `linewright-setup-linux-x86_64` on Linux
+  (`chmod +x` it first). It installs Linewright for you alone, without asking for an administrator, adds it to the
+  Start menu or applications menu, can open DXF and DWG drawings with it, and removes it again from Settings → Apps
+  on Windows or by running the setup once more. `--quiet` installs with no window, and `--uninstall --quiet` removes.
+- **Just the program:** `linewright-windows-x86_64.exe` and `linewright-linux-x86_64` run without installing.
+
+Or build it yourself:
 
 ```sh
 ./compile                            # Linux and Windows programs, in dist/
