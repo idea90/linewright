@@ -2,7 +2,7 @@
 members = ["setup"]
 
 [workspace.package]
-version = "1.0.0-alpha.6.3"
+version = "1.0.0-alpha.6.4"
 
 [package]
 name = "linewright"

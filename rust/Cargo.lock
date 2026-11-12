@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "linewright"
-version = "1.0.0-alpha.6.3"
+version = "1.0.0-alpha.6.4"
 dependencies = [
  "ar-reshaper",
  "eframe",
@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "linewright-setup"
-version = "1.0.0-alpha.6.3"
+version = "1.0.0-alpha.6.4"
 dependencies = [
  "eframe",
  "flate2",

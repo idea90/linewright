@@ -14,7 +14,7 @@ behave, do what AutoCAD does.
 - It was first written in Python with Qt (PySide6 + ezdxf). That version was removed after 1.0 Alpha 3 and lives
   only in the git history (tag `v1.0.0-alpha.3` and earlier).
 - License: MIT. Releases are published on GitHub (`idea90/linewright`) as pre-releases with Linux and Windows
-  binaries; the current version is `1.0.0-alpha.6.3`.
+  binaries; the current version is `1.0.0-alpha.6.4`.
 
 `rust/README.md` lists every command and feature. Keep it up to date when adding user-facing behaviour.
 
