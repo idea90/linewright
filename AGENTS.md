@@ -55,8 +55,10 @@ Notes:
 ## Releasing
 
 Push a tag named `v*` (for example `v1.0.0-alpha.4`) and `.github/workflows/release.yml` builds the Linux and
-Windows binaries, writes `SHA256SUMS` and uploads all three to the GitHub release for that tag, creating the release
-if it does not exist. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
+Windows binaries, the Windows installer (`installer/windows/linewright.iss`, built with Inno Setup) and the Linux
+package (the program with `installer/linux/install.sh`), writes `SHA256SUMS` and uploads them to the GitHub release for
+that tag, creating the release if it does not exist. CI builds the Windows installer and runs the Linux one on every
+push, so a broken installer shows before a release. A tag containing `alpha`, `beta` or `rc` makes a pre-release. `./compile` stays for local builds.
 
 ## Repository layout
 
@@ -66,6 +68,8 @@ README.md            short intro, links to rust/README.md
 LICENSE              MIT
 compile              build script for Linux/Windows binaries into dist/
 .github/workflows/   CI for the Rust crate, and the release build on a `v*` tag
+installer/windows/   linewright.iss: the Inno Setup script for the Windows installer
+installer/linux/     install.sh and the icon, packed with the program as linewright-linux-x86_64.tar.gz
 rust/                the app (Cargo crate "linewright")
   README.md          full feature and command list
   src/               see below

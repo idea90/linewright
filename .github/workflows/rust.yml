@@ -30,6 +30,23 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      - name: Check the Windows installer builds
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /Q "/DBinary=$PWD\target\release\linewright.exe" "/DOutput=$PWD\installer" ..\installer\windows\linewright.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check the Linux installer installs and removes
+        if: runner.os == 'Linux'
+        run: |
+          cp target/release/linewright ../installer/linux/
+          ../installer/linux/install.sh --prefix="$RUNNER_TEMP/root"
+          test -x "$RUNNER_TEMP/root/bin/linewright" && test -f "$RUNNER_TEMP/root/share/applications/linewright.desktop"
+          ../installer/linux/install.sh --prefix="$RUNNER_TEMP/root" --uninstall
+          test ! -e "$RUNNER_TEMP/root/bin/linewright"
+          rm ../installer/linux/linewright
       - uses: actions/upload-artifact@v4
         with:
           name: linewright-${{ matrix.os }}
