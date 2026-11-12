@@ -2,7 +2,7 @@
 
 use crate::model::dimension::DimensionStyle;
 use crate::model::document::ObjectGroup;
-use crate::model::document::{Document, Layer};
+use crate::model::document::{Document, Layer, Layout, SavedLayout};
 use crate::model::entities::{Entity, EntityId};
 
 /// Everything a layer change can touch: the layers, which one is current, and objects renamed with a layer.
@@ -43,6 +43,16 @@ pub enum Change {
     Groups {
         before: Vec<ObjectGroup>,
         after: Vec<ObjectGroup>,
+    },
+    /// A layout taken out of the drawing with what was on it: where it stood among the layouts, and the layout
+    /// kept to put back. It is never the open space's own layout.
+    LayoutRemoved {
+        index: usize,
+        layout: SavedLayout,
+    },
+    LayoutRenamed {
+        before: String,
+        after: String,
     },
     Group(Vec<Change>),
 }
@@ -116,6 +126,16 @@ impl Change {
             Change::Groups { after, .. } => document.groups = after.clone(),
             Change::Reorder { after, .. } => document.set_order(after),
             Change::DimensionStyles { after, .. } => (document.dimension_styles, document.current_dimension_style) = after.clone(),
+            Change::LayoutRemoved { index, layout } => {
+                // By name, since other layouts may have come and gone; what it holds now is what undo puts back.
+                if let Some(at) = document.layouts.iter().position(|l| l.name == layout.name)
+                    && document.active_layout() != Some(at)
+                    && let Some(removed) = document.remove_layout(at)
+                {
+                    (*index, *layout) = (at, removed.saved());
+                }
+            }
+            Change::LayoutRenamed { before, after } => rename_layout(document, before, after),
             Change::Group(changes) => {
                 for change in changes.iter_mut() {
                     change.redo(document);
@@ -147,12 +167,28 @@ impl Change {
             Change::Groups { before, .. } => document.groups = before.clone(),
             Change::Reorder { before, .. } => document.set_order(before),
             Change::DimensionStyles { before, .. } => (document.dimension_styles, document.current_dimension_style) = before.clone(),
+            Change::LayoutRemoved { index, layout } => {
+                if !document.layouts.iter().any(|l| l.name == layout.name) {
+                    document.insert_layout(*index, Layout::from_saved(layout));
+                }
+            }
+            Change::LayoutRenamed { before, after } => rename_layout(document, after, before),
             Change::Group(changes) => {
                 for change in changes.iter_mut().rev() {
                     change.undo(document);
                 }
             }
         }
+    }
+}
+
+/// Give the layout called `from` the name `to`, unless another has taken that name since.
+fn rename_layout(document: &mut Document, from: &str, to: &str) {
+    if document.layouts.iter().any(|l| l.name == to) {
+        return;
+    }
+    if let Some(layout) = document.layouts.iter_mut().find(|l| l.name == from) {
+        layout.name = to.to_string();
     }
 }
 

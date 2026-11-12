@@ -1,5 +1,6 @@
-//! Color-dependent plot style tables (.ctb), as AutoCAD's Plot Style Table Editor saves them: for each of the 255
-//! index colors, the color it prints in, whether in grays, how strongly (screening) and with what lineweight.
+//! Plot style tables, as AutoCAD's Plot Style Table Editor saves them: color-dependent ones (.ctb) give each of the
+//! 255 index colors the color it prints in, whether in grays, how strongly (screening) and with what lineweight;
+//! named ones (.stb) give the same to plot styles by name, which layers and objects choose.
 //!
 //! A table is a short text header, then a zlib-compressed text body of `key=value` lines and `name{ … }` blocks.
 //! Tables are found where AutoCAD keeps them; monochrome.ctb, grayscale.ctb and acad.ctb work without AutoCAD too.
@@ -52,11 +53,16 @@ impl PenStyle {
     }
 }
 
+/// The plot style every named table has, which prints objects as they are.
+pub const NORMAL_STYLE: &str = "Normal";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlotStyleTable {
     pub description: String,
-    /// The pens for index colors 1 to 255, in order.
+    /// The pens: for index colors 1 to 255 in order, or for the named styles in `names`.
     pub pens: Vec<PenStyle>,
+    /// A named table's style names, one for each pen; empty for a color-dependent table.
+    pub names: Vec<String>,
 }
 
 impl PlotStyleTable {
@@ -65,8 +71,24 @@ impl PlotStyleTable {
         usize::try_from(aci - 1).ok().and_then(|i| self.pens.get(i)).cloned().unwrap_or_default()
     }
 
+    /// Whether this is a named table (.stb), whose pens go by the plot style a layer or object names.
+    pub fn is_named(&self) -> bool {
+        !self.names.is_empty()
+    }
+
+    /// The pen of a named plot style, matched as AutoCAD matches names, whatever their case. Normal, and a name the
+    /// table does not have, print objects as they are.
+    pub fn named_pen(&self, name: &str) -> PenStyle {
+        self.names.iter().position(|n| n.eq_ignore_ascii_case(name.trim())).and_then(|i| self.pens.get(i)).cloned().unwrap_or_default()
+    }
+
     fn uniform(description: &str, pen: PenStyle) -> PlotStyleTable {
-        PlotStyleTable { description: description.into(), pens: vec![pen; 255] }
+        PlotStyleTable { description: description.into(), pens: vec![pen; 255], names: vec![] }
+    }
+
+    /// A named table whose one style besides Normal prints every object with this pen, and Normal does too.
+    fn named(description: &str, pen: PenStyle) -> PlotStyleTable {
+        PlotStyleTable { description: description.into(), pens: vec![pen.clone(), pen], names: vec![NORMAL_STYLE.into(), "Style 1".into()] }
     }
 }
 
@@ -101,8 +123,10 @@ pub fn parse(bytes: &[u8]) -> Option<PlotStyleTable> {
             }
         }
     }
+    // A named table says it has no table by color index.
+    let named = text.lines().find_map(|l| value(l, "aci_table_available")).is_some_and(|v| v.trim().eq_ignore_ascii_case("FALSE"));
     let start = text.find("plot_style{")?;
-    let mut pens = vec![];
+    let (mut pens, mut names) = (vec![], vec![]);
     let mut pen: Option<HashMap<String, String>> = None;
     for line in text[start..].lines().skip(1) {
         let trimmed = line.trim();
@@ -110,14 +134,20 @@ pub fn parse(bytes: &[u8]) -> Option<PlotStyleTable> {
             pen = Some(HashMap::new());
         } else if trimmed == "}" {
             match pen.take() {
-                Some(fields) => pens.push(pen_style(&fields, &lineweights)),
+                Some(fields) => {
+                    names.push(fields.get("name").cloned().unwrap_or_default());
+                    pens.push(pen_style(&fields, &lineweights));
+                }
                 None => break, // the end of plot_style
             }
         } else if let (Some(fields), Some((key, v))) = (pen.as_mut(), trimmed.split_once('=')) {
             fields.insert(key.to_string(), v.trim_start_matches('"').to_string());
         }
     }
-    (!pens.is_empty()).then_some(PlotStyleTable { description, pens })
+    if !named {
+        names.clear();
+    }
+    (!pens.is_empty()).then_some(PlotStyleTable { description, pens, names })
 }
 
 fn pen_style(fields: &HashMap<String, String>, lineweights: &[f64]) -> PenStyle {
@@ -147,11 +177,15 @@ fn built_in(name: &str) -> Option<PlotStyleTable> {
         }
         "grayscale.ctb" => Some(PlotStyleTable::uniform("Colors print as grays", PenStyle { grayscale: true, ..Default::default() })),
         "acad.ctb" => Some(PlotStyleTable::uniform("Objects print as they are", PenStyle::default())),
+        "acad.stb" => Some(PlotStyleTable::named("Objects print as they are", PenStyle::default())),
+        "monochrome.stb" => {
+            Some(PlotStyleTable::named("All objects print black", PenStyle { color: Some((0, 0, 0)), ..Default::default() }))
+        }
         _ => None,
     }
 }
 
-const BUILT_IN: [&str; 3] = ["acad.ctb", "monochrome.ctb", "grayscale.ctb"];
+const BUILT_IN: [&str; 5] = ["acad.ctb", "monochrome.ctb", "grayscale.ctb", "acad.stb", "monochrome.stb"];
 
 /// Folders named "Plot Styles" under a folder, a few levels down.
 fn plot_style_folders(root: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -208,7 +242,8 @@ pub fn available() -> Vec<String> {
     for folder in search_folders() {
         for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.to_lowercase().ends_with(".ctb") && !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+            let table = name.to_lowercase().ends_with(".ctb") || name.to_lowercase().ends_with(".stb");
+            if table && !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
                 names.push(name);
             }
         }
@@ -277,6 +312,18 @@ mod tests {
         assert_eq!(yellow.lineweight, None, "lineweight 0 is the object's own");
         assert_eq!(yellow.apply((0, 0, 0)), (128, 128, 128), "black at half strength");
         assert_eq!(table.pen(200), PenStyle::default());
+    }
+
+    #[test]
+    fn a_named_table_s_pens_go_by_style_name() {
+        let body = "description=\"Named\naci_table_available=FALSE\nplot_style{\n 0{\n  name=\"Normal\n  color=-1\n  screen=100\n  lineweight=0\n }\n 1{\n  name=\"Hidden\n  color=-1006632961\n  color_policy=3\n  screen=40\n  lineweight=0\n }\n}\n";
+        let table = parse(&ctb(body)).unwrap();
+        assert!(table.is_named());
+        assert_eq!(table.names, ["Normal", "Hidden"]);
+        assert_eq!(table.named_pen("hidden").apply((0, 0, 0)), (153, 153, 153), "found whatever the case: gray at 40%");
+        assert_eq!(table.named_pen("Normal"), PenStyle::default());
+        assert_eq!(table.named_pen("Nowhere"), PenStyle::default(), "a style the table lacks prints as Normal");
+        assert_eq!(built_in("monochrome.stb").unwrap().named_pen("Normal").apply((255, 0, 0)), (0, 0, 0));
     }
 
     #[test]

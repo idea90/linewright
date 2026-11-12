@@ -108,6 +108,49 @@ fn xref_entities_nested(path: &Path, depth: usize) -> Result<Vec<Entity>, FileEr
         .collect())
 }
 
+/// An external reference's drawing opened for editing in place (REFEDIT): the drawing as read, and its model space
+/// as the reference shows it, each object's by-layer look fixed to its layer's there.
+pub fn open_xref_for_edit(path: &Path) -> Result<(Document, Vec<Entity>), FileError> {
+    let referenced = open_drawing(path)?;
+    let shown = referenced
+        .space_entities(None)
+        .iter()
+        .map(|e| {
+            let layer = referenced.layer_of(e);
+            let mut own = e.clone();
+            if own.color == BYLAYER {
+                own.color = layer.color;
+            }
+            if own.linetype == BYLAYER_LINETYPE {
+                own.linetype = layer.linetype.clone();
+            }
+            own
+        })
+        .collect();
+    Ok((referenced, shown))
+}
+
+/// Save what was drawn while editing an external reference in place back into its drawing. An object whose color or
+/// linetype is its layer's goes back to ByLayer, as the reference showed it fixed to its layer's; objects keep who
+/// they were, so what the file had on them that Linewright keeps stays with them.
+pub fn save_xref_edit(referenced: &mut Document, edited: Vec<Entity>, path: &Path) -> Result<(), FileError> {
+    let entities = edited
+        .into_iter()
+        .map(|mut e| {
+            let layer = referenced.layer_of(&e);
+            if e.color == layer.color {
+                e.color = BYLAYER;
+            }
+            if e.linetype.eq_ignore_ascii_case(&layer.linetype) {
+                e.linetype = BYLAYER_LINETYPE.to_string();
+            }
+            e
+        })
+        .collect();
+    referenced.set_space_entities(None, entities);
+    save_drawing(referenced, path)
+}
+
 /// Fill each external reference with what its drawing holds. One that cannot be read stays empty.
 fn resolve_xrefs(document: &mut Document, depth: usize) {
     if depth >= MAX_XREF_DEPTH {
@@ -565,6 +608,28 @@ mod tests {
         // A copy that is not kept, as when the disk fills up, takes itself away.
         drop(copy_beside(&staged, &target).unwrap());
         assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn an_external_reference_edited_in_place_is_saved_back_with_by_layer_kept() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("part.dxf");
+        let mut part = Document::with_entities(vec![line(pt(0.0, 0.0), pt(3.0, 4.0)), circle(pt(5.0, 5.0), 2.0)]);
+        part.layers[0].color = 3;
+        save_drawing(&mut part, &path).unwrap();
+        let (mut referenced, mut shown) = open_xref_for_edit(&path).unwrap();
+        assert!(shown.iter().all(|e| e.color == 3), "shown in the layer's color");
+        // Move the circle, recolor the line on purpose, and add a point.
+        shown[1].shape = crate::model::entities::Shape::Circle { center: pt(9.0, 9.0), radius: 2.0 };
+        shown[0].color = 1;
+        shown.push(crate::model::entities::point(pt(1.0, 1.0)));
+        save_xref_edit(&mut referenced, shown, &path).unwrap();
+        let back = open_drawing(&path).unwrap();
+        let entities = back.space_entities(None);
+        assert_eq!(entities.len(), 3);
+        assert_eq!(entities[0].color, 1, "a color of its own stays");
+        assert_eq!(entities[1].color, BYLAYER, "the layer's color goes back to ByLayer");
+        assert_eq!(entities[1].shape, crate::model::entities::Shape::Circle { center: pt(9.0, 9.0), radius: 2.0 });
     }
 
     #[test]

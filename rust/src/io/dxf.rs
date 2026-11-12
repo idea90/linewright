@@ -1059,7 +1059,13 @@ fn text_style_fonts(file: &DxfFile) -> HashMap<String, String> {
             let name = entry.get(2)?.trim().to_lowercase();
             let xdata = entry.0.iter().skip_while(|p| !(p.code == 1001 && p.value.trim() == "ACAD")).skip(1);
             let family = xdata.take_while(|p| p.code != 1001).find(|p| p.code == 1000).map(|p| p.value.trim().to_string());
-            let font = family.filter(|f| !f.is_empty()).or_else(|| entry.text(3).map(|f| f.trim().to_string()))?;
+            let mut font = family.filter(|f| !f.is_empty()).or_else(|| entry.text(3).map(|f| f.trim().to_string()))?;
+            // A big font beside an SHX font goes with it, as AutoCAD shows the pair: "txt.shx,gbcbig.shx".
+            if let Some(big) = entry.text(4).map(|b| b.trim().to_string()).filter(|b| !b.is_empty())
+                && !font.to_lowercase().ends_with(".ttf")
+            {
+                font = format!("{font},{big}");
+            }
             Some((name, font))
         })
         .collect()
@@ -1130,16 +1136,18 @@ fn write_text_styles(file: &mut DxfFile, writer: &mut Writer, document: &Documen
         let same_font = fonts.get(&style.name.to_lowercase()).is_some_and(|f| f.eq_ignore_ascii_case(&style.font));
         if !same_font {
             entry.0.retain(|p| p.code < 1000);
-            // A family goes in as its file's usual name; AutoCAD finds fonts by file.
-            let lower = style.font.to_lowercase();
-            let file_name = if style.font.is_empty() {
+            // A family goes in as its file's usual name; AutoCAD finds fonts by file. A big font goes in beside it.
+            let (main, big) = style.font.split_once(',').map_or((style.font.as_str(), ""), |(main, big)| (main.trim(), big.trim()));
+            let lower = main.to_lowercase();
+            let file_name = if main.is_empty() {
                 "txt".to_string()
-            } else if lower.ends_with(".shx") || lower.ends_with(".ttf") || lower.ends_with(".ttc") {
-                style.font.clone()
+            } else if lower.ends_with(".shx") || lower.ends_with(".ttf") || lower.ends_with(".ttc") || !big.is_empty() {
+                main.to_string()
             } else {
-                format!("{}.ttf", style.font)
+                format!("{main}.ttf")
             };
             entry.set(3, file_name);
+            entry.set(4, big.to_string());
         }
         writer.text_styles.insert(style.name.to_lowercase(), (style.name.clone(), style.font.clone()));
     }
@@ -1246,6 +1254,35 @@ const XDATA_APPLICATION_CODE: i32 = 1001;
 /// and is written afresh with the object rather than kept.
 const AUTOCAD_APPLICATION: &str = "ACAD";
 
+/// The named plot style an entity's own part names (code 390), as the handle of the style's entry in the file.
+fn plot_style_handle(group: &Group) -> Option<String> {
+    let own = group.0.iter().skip_while(|p| !(p.code == 100 && p.value.trim() == "AcDbEntity")).skip(1);
+    own.take_while(|p| p.code != 100).find(|p| p.code == 390).map(|p| p.value.trim().to_uppercase())
+}
+
+/// Note what an entity being read has that Linewright writes back as it found it: its named plot style, and
+/// extended data other programs attached to it.
+fn keep_entity_extras(document: &mut Document, id: EntityId, group: &Group) {
+    if let Some(handle) = plot_style_handle(group) {
+        document.object_plot_styles.insert(id, handle);
+    }
+    keep_foreign_xdata(document, id, group);
+}
+
+/// The named plot styles in the file: each style's entry (an ACDBPLACEHOLDER) by its handle, with its name.
+fn read_plot_style_names(file: &DxfFile) -> HashMap<String, String> {
+    let Some((start, _)) = file.section("OBJECTS") else { return HashMap::new() };
+    let root = &file.groups[start + 1].0;
+    let Some(at) = root.iter().position(|p| p.code == 3 && p.value.trim() == "ACAD_PLOTSTYLENAME") else { return HashMap::new() };
+    let Some(dictionary) = root.get(at + 1).and_then(|p| object_index(file, p.value.trim())) else { return HashMap::new() };
+    let pairs = &file.groups[dictionary].0;
+    pairs
+        .windows(2)
+        .filter(|w| w[0].code == 3 && (w[1].code == 350 || w[1].code == 360))
+        .map(|w| (w[1].value.trim().to_uppercase(), w[0].value.trim().to_string()))
+        .collect()
+}
+
 /// Note the extended data other programs attached to an entity being read, so that saving puts it back.
 fn keep_foreign_xdata(document: &mut Document, id: EntityId, group: &Group) {
     let Some(start) = group.0.iter().position(|p| p.code >= FIRST_XDATA_CODE) else { return };
@@ -1287,6 +1324,13 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
     document.celtscale = header_scale("$CELTSCALE").unwrap_or(1.0);
     document.model_plot = model_plot_settings(&file);
     document.wipeout_frame = wipeout_frame_mode(&file).unwrap_or(1);
+    document.named_plot_styles = header_int("$PSTYLEMODE") == Some(0);
+    document.plot_style_names = read_plot_style_names(&file);
+    document.layer_plot_styles = file
+        .table_entries("LAYER")
+        .into_iter()
+        .filter_map(|i| Some((file.groups[i].get(2)?.trim().to_string(), file.groups[i].get(390)?.trim().to_uppercase())))
+        .collect();
     let reader = Reader::new(&file);
     let styles = reader.styles.all();
     if !styles.is_empty() {
@@ -1350,7 +1394,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                     if let Some(handle) = run[0].handle() {
                         handles.insert(handle.trim().to_uppercase(), entity.id);
                     }
-                    keep_foreign_xdata(&mut document, entity.id, &run[0]);
+                    keep_entity_extras(&mut document, entity.id, &run[0]);
                     if run[0].kind() == "HATCH" && run[0].int(71).unwrap_or(0) != 0 {
                         // One closed object for each loop, or the hatch follows nothing here.
                         let codes = run[0].0.iter().take_while(|p| p.code < 1000);
@@ -1412,7 +1456,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                         if let Some(handle) = run[0].handle() {
                             handles.insert(handle.trim().to_uppercase(), entity.id);
                         }
-                        keep_foreign_xdata(&mut document, entity.id, &run[0]);
+                        keep_entity_extras(&mut document, entity.id, &run[0]);
                         on_layout.push(entity);
                         if DIMENSION_KINDS.contains(&run[0].kind()) || run[0].kind() == "ACAD_TABLE" {
                             stale_blocks.extend(run[0].text(2).map(|n| n.trim().to_string()));
@@ -3003,11 +3047,15 @@ fn find_model_space(file: &DxfFile) -> String {
 }
 
 /// Entities written for one owner, each linetype and dimension style as the file names them.
+/// A space's entities to write, with what the file had on them that Linewright keeps: other programs' extended data
+/// and named plot styles, by entity.
+type SpaceToWrite<'a> = (&'a [Entity], &'a HashMap<EntityId, Vec<Pair>>, &'a crate::model::entities::IdMap<EntityId, String>);
+
 fn write_entities(
     file: &mut DxfFile,
     writer: &mut Writer,
     linetypes: &mut BTreeMap<String, String>,
-    (entities, kept_xdata): (&[Entity], &HashMap<EntityId, Vec<Pair>>),
+    (entities, kept_xdata, plot_styles): SpaceToWrite,
     owner: &str,
     (style_names, dimension_style): (&HashMap<String, String>, &str),
 ) -> Vec<Group> {
@@ -3035,6 +3083,13 @@ fn write_entities(
         // What other programs attached to the object goes back after everything Linewright writes for it.
         if let (Some(first), Some(kept)) = (written.first_mut(), kept_xdata.get(&entity.id)) {
             first.0.extend(kept.iter().cloned());
+        }
+        // The named plot style it had, in its own part, before the part of its kind starts.
+        if writer.modern
+            && let (Some(first), Some(handle)) = (written.first_mut(), plot_styles.get(&entity.id))
+            && let Some(at) = first.0.iter().enumerate().filter(|(_, p)| p.code == 100).nth(1).map(|(i, _)| i)
+        {
+            first.0.insert(at, pair(390, handle));
         }
         if let Some(handle) = written.first().and_then(|g| g.handle()) {
             writer.entity_handles.insert(entity.id, handle.trim().to_string());
@@ -3103,7 +3158,7 @@ fn write_layouts(
                 file,
                 writer,
                 linetypes,
-                (document.space_entities(Some(index)), &document.kept_xdata),
+                (document.space_entities(Some(index)), &document.kept_xdata, &document.object_plot_styles),
                 &owner,
                 styles,
             ));
@@ -3223,8 +3278,14 @@ fn write_layouts(
         {
             file.groups[at].set(340, object.clone());
         }
-        let mut groups =
-            write_entities(file, writer, linetypes, (document.space_entities(Some(index)), &document.kept_xdata), &record, styles);
+        let mut groups = write_entities(
+            file,
+            writer,
+            linetypes,
+            (document.space_entities(Some(index)), &document.kept_xdata, &document.object_plot_styles),
+            &record,
+            styles,
+        );
         if record.eq_ignore_ascii_case(&paper_record) {
             for group in &mut groups {
                 group.on_paper();
@@ -3857,8 +3918,14 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
     let mut linetypes: BTreeMap<String, String> = BTreeMap::new();
     let styles = (&style_names, dimension_style.as_str());
     let owner = writer.model_space.clone();
-    let mut entity_groups =
-        write_entities(&mut file, &mut writer, &mut linetypes, (document.space_entities(None), &document.kept_xdata), &owner, styles);
+    let mut entity_groups = write_entities(
+        &mut file,
+        &mut writer,
+        &mut linetypes,
+        (document.space_entities(None), &document.kept_xdata, &document.object_plot_styles),
+        &owner,
+        styles,
+    );
     entity_groups.extend(write_layouts(&mut file, &mut writer, &mut linetypes, document, styles));
     // Blocks the file lacks, with their entities (which may insert further blocks the file lacks).
     while let Some(block) = writer.blocks_to_define.pop() {

@@ -49,12 +49,12 @@ pub fn fillet_lines(first: &Entity, first_pick: Point, second: &Entity, second_p
     if a == b || c == d {
         return Err("A line has no length.".into());
     }
-    let corner = line_line_meeting(a, b, c, d).ok_or("The lines are parallel.")?;
+    let Some(corner) = line_line_meeting(a, b, c, d) else { return fillet_parallel_lines(first, first_pick, second) };
     let toward_first = toward_pick((a, b), first_pick, corner);
     let toward_second = toward_pick((c, d), second_pick, corner);
     let angle = toward_first.dot(toward_second).clamp(-1.0, 1.0).acos();
     if !(EPSILON..=std::f64::consts::PI - EPSILON).contains(&angle) {
-        return Err("The lines are parallel.".into());
+        return fillet_parallel_lines(first, first_pick, second);
     }
     let tangent_length = radius / (angle / 2.0).tan();
     let tangent_first = corner + toward_first * tangent_length;
@@ -70,6 +70,152 @@ pub fn fillet_lines(first: &Entity, first_pick: Point, second: &Entity, second_p
     rounded.layer = first.layer.clone();
     rounded.color = first.color;
     Ok(FilletResult { first: new_first, second: new_second, arc: Some(rounded) })
+}
+
+/// Parallel lines are joined by a half circle whatever the radius, as in AutoCAD: it starts at the end of the first
+/// line nearer its pick, and the second line is cut or lengthened to meet it.
+fn fillet_parallel_lines(first: &Entity, first_pick: Point, second: &Entity) -> Result<FilletResult, String> {
+    let (a, b) = ends(first);
+    let (c, d) = ends(second);
+    let (from, other) = if first_pick.dist(a) <= first_pick.dist(b) { (a, b) } else { (b, a) };
+    let outward = (from - other) * (1.0 / from.dist(other));
+    // Straight across from the first line's end, on the second line.
+    let along = (d - c) * (1.0 / c.dist(d));
+    let across = c + along * (from - c).dot(along);
+    let gap = from.dist(across);
+    if gap < EPSILON {
+        return Err("The lines lie on one another.".into());
+    }
+    let reach = |p: Point| (p - across).dot(outward);
+    let kept = if reach(c) <= reach(d) { c } else { d };
+    if reach(kept) >= -EPSILON {
+        return Err("The second line does not reach back past the first line's end.".into());
+    }
+    let new_second =
+        second.with_shape(if kept == c { Shape::Line { start: c, end: across } } else { Shape::Line { start: across, end: d } });
+    let center = from.midpoint(across);
+    let degrees = |v: Point| modulo(v.y.atan2(v.x).to_degrees(), 360.0);
+    let (start, end, bulge) = (degrees(from - center), degrees(across - center), degrees(outward));
+    // Of the two half circles between the ends, the one that bows outward.
+    let mut rounded = if modulo(bulge - start, 360.0) < modulo(end - start, 360.0) {
+        arc(center, gap / 2.0, start, end)
+    } else {
+        arc(center, gap / 2.0, end, start)
+    };
+    rounded.layer = first.layer.clone();
+    rounded.color = first.color;
+    Ok(FilletResult { first: first.clone(), second: new_second, arc: Some(rounded) })
+}
+
+/// A line, arc or circle as FILLET sees it.
+enum Curve {
+    Line(Point, Point),
+    /// An arc with its angles in degrees, or a whole circle with none.
+    Round(Point, f64, Option<(f64, f64)>),
+}
+
+fn curve_of(entity: &Entity) -> Option<Curve> {
+    match entity.shape {
+        Shape::Line { start, end } if start != end => Some(Curve::Line(start, end)),
+        Shape::Arc { center, radius, start_angle, end_angle } => Some(Curve::Round(center, radius, Some((start_angle, end_angle)))),
+        Shape::Circle { center, radius } => Some(Curve::Round(center, radius, None)),
+        _ => None,
+    }
+}
+
+impl Curve {
+    /// Where the center of a circle of `radius` touching this curve can lie: two lines beside a line, or circles
+    /// inside and outside a circle, each as something to cross with the other curve's.
+    fn offsets(&self, radius: f64) -> Vec<Curve> {
+        match *self {
+            Curve::Line(a, b) => {
+                let aside = super::geometry::pt(a.y - b.y, b.x - a.x) * (radius / a.dist(b));
+                vec![Curve::Line(a + aside, b + aside), Curve::Line(a - aside, b - aside)]
+            }
+            Curve::Round(center, r, _) => {
+                let mut circles = vec![Curve::Round(center, r + radius, None)];
+                if r - radius > EPSILON {
+                    circles.push(Curve::Round(center, r - radius, None));
+                }
+                circles
+            }
+        }
+    }
+
+    fn crossings(&self, other: &Curve) -> Vec<Point> {
+        match (self, other) {
+            (Curve::Line(a, b), Curve::Line(c, d)) => line_line_meeting(*a, *b, *c, *d).into_iter().collect(),
+            (Curve::Line(a, b), Curve::Round(center, r, _)) | (Curve::Round(center, r, _), Curve::Line(a, b)) => {
+                crate::model::intersect::line_circle(*a, *b, *center, *r)
+            }
+            (Curve::Round(c1, r1, _), Curve::Round(c2, r2, _)) => crate::model::intersect::circle_circle(*c1, *r1, *c2, *r2),
+        }
+    }
+
+    /// Where a circle centered at `center` touches this curve.
+    fn touch(&self, center: Point) -> Point {
+        match *self {
+            Curve::Line(a, b) => {
+                let along = (b - a) * (1.0 / a.dist(b));
+                a + along * (center - a).dot(along)
+            }
+            Curve::Round(own, r, _) => own + (center - own) * (r / own.dist(center)),
+        }
+    }
+
+    /// The object cut back or lengthened to end at `touch`, keeping the part the pick is on. A circle stays whole.
+    fn ending_at(&self, entity: &Entity, touch: Point, pick: Point) -> Entity {
+        match *self {
+            Curve::Line(a, b) => {
+                let side = |p: Point| (p - touch).dot(pick - touch);
+                let kept = if side(a) >= side(b) { a } else { b };
+                entity.with_shape(if kept == a { Shape::Line { start: a, end: touch } } else { Shape::Line { start: touch, end: b } })
+            }
+            Curve::Round(_, _, None) => entity.clone(),
+            Curve::Round(center, radius, Some((start, end))) => {
+                let degrees = |p: Point| modulo((p.y - center.y).atan2(p.x - center.x).to_degrees(), 360.0);
+                let sweep = modulo(end - start, 360.0);
+                let (at, picked) = (modulo(degrees(touch) - start, 360.0), modulo(degrees(pick) - start, 360.0));
+                // On the arc, the part on the pick's side stays; past an end, the arc grows from that end.
+                let keep_end = if at <= sweep { picked > at } else { 360.0 - at < at - sweep };
+                let (start_angle, end_angle) = if keep_end { (degrees(touch), end) } else { (start, degrees(touch)) };
+                entity.with_shape(Shape::Arc { center, radius, start_angle, end_angle })
+            }
+        }
+    }
+}
+
+/// Round the corner between two objects of which at least one is an arc or a circle: lines and arcs are cut back
+/// or lengthened to where the rounding touches them, circles stay whole. Of the circles of that radius touching
+/// both, the one whose touching points are nearest the picks is used, as in AutoCAD.
+pub fn fillet_curves(first: &Entity, first_pick: Point, second: &Entity, second_pick: Point, radius: f64) -> Result<FilletResult, String> {
+    let (Some(a), Some(b)) = (curve_of(first), curve_of(second)) else {
+        return Err("Fillet works on lines, arcs, circles and polylines.".into());
+    };
+    if radius <= 0.0 {
+        return Err("Set a radius above zero to fillet arcs and circles.".into());
+    }
+    let mut best: Option<(f64, Point)> = None;
+    for one in a.offsets(radius) {
+        for other in b.offsets(radius) {
+            for center in one.crossings(&other) {
+                let far = a.touch(center).dist(first_pick) + b.touch(center).dist(second_pick);
+                if best.is_none_or(|(least, _)| far < least) {
+                    best = Some((far, center));
+                }
+            }
+        }
+    }
+    let Some((_, center)) = best else { return Err("The radius is too large for these objects.".into()) };
+    let (touch_first, touch_second) = (a.touch(center), b.touch(center));
+    let mut rounded = arc_between(center, radius, touch_first, touch_second);
+    rounded.layer = first.layer.clone();
+    rounded.color = first.color;
+    Ok(FilletResult {
+        first: a.ending_at(first, touch_first, first_pick),
+        second: b.ending_at(second, touch_second, second_pick),
+        arc: Some(rounded),
+    })
 }
 
 /// Join two lines with a bevel: each is cut back from their corner by its distance, and a line closes the gap.
@@ -261,6 +407,36 @@ mod tests {
     use crate::model::geometry::pt;
 
     #[test]
+    fn parallel_lines_are_joined_by_a_half_circle() {
+        let (low, high) = (line(pt(0.0, 0.0), pt(10.0, 0.0)), line(pt(0.0, 4.0), pt(7.0, 4.0)));
+        let result = fillet_lines(&low, pt(9.0, 0.0), &high, pt(6.0, 4.0), 1.0).unwrap();
+        assert_eq!(result.second.shape, Shape::Line { start: pt(0.0, 4.0), end: pt(10.0, 4.0) }, "lengthened to match");
+        let Some(Shape::Arc { center, radius, start_angle, end_angle }) = result.arc.map(|a| a.shape) else { panic!("no arc") };
+        assert_eq!((center, radius, start_angle, end_angle), (pt(10.0, 2.0), 2.0, 270.0, 90.0), "it bows away from the lines");
+    }
+
+    #[test]
+    fn a_line_and_a_circle_are_rounded_where_the_picks_are() {
+        // A circle of radius 5 at the origin, and a level line 8 above its center: nothing crosses.
+        let round = crate::model::entities::circle(pt(0.0, 0.0), 5.0);
+        let level = line(pt(-20.0, 8.0), pt(20.0, 8.0));
+        let result = fillet_curves(&level, pt(15.0, 8.0), &round, pt(4.0, 3.0), 2.0).unwrap();
+        let Some(Shape::Arc { center, radius, .. }) = result.arc.as_ref().map(|a| a.shape.clone()) else { panic!("no arc") };
+        assert!((radius - 2.0).abs() < 1e-9 && (center.y - 6.0).abs() < 1e-9 && center.x > 0.0, "on the picks' side: {center:?}");
+        assert!((center.dist(pt(0.0, 0.0)) - 7.0).abs() < 1e-9, "touching the circle from outside");
+        assert_eq!(result.second.shape, round.shape, "a circle stays whole");
+        let Shape::Line { start, end } = result.first.shape else { panic!("no line") };
+        assert!((start.x - center.x).abs() < 1e-9 && end == pt(20.0, 8.0), "the line keeps the part picked: {start:?} {end:?}");
+        // An arc is cut back to where the rounding touches it, keeping the part picked.
+        let bow = arc(pt(0.0, 0.0), 5.0, 0.0, 180.0);
+        let post = line(pt(3.0, -10.0), pt(3.0, 10.0));
+        let result = fillet_curves(&bow, pt(-4.0, 3.0), &post, pt(3.0, 8.0), 1.0).unwrap();
+        let Shape::Arc { start_angle, end_angle, .. } = result.first.shape else { panic!("no arc") };
+        assert!(start_angle > 0.0 && start_angle < 90.0 && end_angle == 180.0, "{start_angle} to {end_angle}");
+        assert!(fillet_curves(&bow, pt(0.0, 5.0), &post, pt(3.0, 0.0), 0.0).is_err(), "no radius, no rounding");
+    }
+
+    #[test]
     fn rounded_corner_between_crossing_lines() {
         let horizontal = line(pt(-10.0, 0.0), pt(10.0, 0.0));
         let vertical = line(pt(0.0, -10.0), pt(0.0, 10.0));
@@ -296,10 +472,10 @@ mod tests {
     }
 
     #[test]
-    fn parallel_lines_and_short_lines_are_refused() {
+    fn lines_on_one_another_and_short_lines_are_refused() {
         let a = line(pt(0.0, 0.0), pt(5.0, 0.0));
-        let b = line(pt(0.0, 1.0), pt(5.0, 1.0));
-        assert_eq!(fillet_lines(&a, pt(1.0, 0.0), &b, pt(1.0, 1.0), 1.0).err().unwrap(), "The lines are parallel.");
+        let b = line(pt(2.0, 0.0), pt(9.0, 0.0));
+        assert_eq!(fillet_lines(&a, pt(1.0, 0.0), &b, pt(8.0, 0.0), 1.0).err().unwrap(), "The lines lie on one another.");
         let c = line(pt(0.0, 0.5), pt(0.0, 1.0));
         let message = fillet_lines(&a, pt(1.0, 0.0), &c, pt(0.0, 0.8), 3.0).err().unwrap();
         assert!(message.contains("too short"), "{message}");

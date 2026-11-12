@@ -196,7 +196,44 @@ impl Default for PlotSettings {
     }
 }
 
+/// A layout as it is kept while it is out of the drawing, so that undoing its deletion puts it back whole.
+#[derive(Clone, Debug)]
+pub struct SavedLayout {
+    pub name: String,
+    paper_origin: Point,
+    paper_size: (f64, f64),
+    record: Option<String>,
+    object: Option<String>,
+    plot: PlotSettings,
+    entities: Vec<Entity>,
+}
+
 impl Layout {
+    /// The layout and what is on it, to keep. It must not be the open one, whose entities the drawing holds.
+    pub fn saved(&self) -> SavedLayout {
+        SavedLayout {
+            name: self.name.clone(),
+            paper_origin: self.paper_origin,
+            paper_size: self.paper_size,
+            record: self.record.clone(),
+            object: self.object.clone(),
+            plot: self.plot.clone(),
+            entities: self.store.entities.clone(),
+        }
+    }
+
+    pub fn from_saved(saved: &SavedLayout) -> Layout {
+        Layout {
+            name: saved.name.clone(),
+            paper_origin: saved.paper_origin,
+            paper_size: saved.paper_size,
+            record: saved.record.clone(),
+            object: saved.object.clone(),
+            plot: saved.plot.clone(),
+            store: EntityStore::with(saved.entities.clone()),
+        }
+    }
+
     pub fn sheet(&self) -> Bounds {
         Bounds::from_corners(self.paper_origin, self.paper_origin + super::geometry::pt(self.paper_size.0, self.paper_size.1))
     }
@@ -244,6 +281,13 @@ pub struct Document {
     /// The extended data other programs attached to the objects read from the file (DXF codes 1000 and up), by
     /// object. Saving writes it back onto each object that is still in the drawing.
     pub kept_xdata: HashMap<EntityId, Vec<Pair>>,
+    /// Named plot styles, when the drawing uses them (PSTYLEMODE 0) rather than color-dependent ones: the style each
+    /// object read from the file names, by object, as the handle of the style's entry in the file; the style each
+    /// layer names, by layer name; and each style's name by its handle. An object without one plots ByLayer.
+    pub named_plot_styles: bool,
+    pub object_plot_styles: IdMap<EntityId, String>,
+    pub layer_plot_styles: HashMap<String, String>,
+    pub plot_style_names: HashMap<String, String>,
     pub skipped: BTreeMap<String, usize>,
     /// The named blocks the drawing's file defines, by upper-case name.
     pub blocks: BTreeMap<String, BlockRef>,
@@ -328,6 +372,10 @@ impl Document {
             path: None,
             source: None,
             kept_xdata: HashMap::new(),
+            named_plot_styles: false,
+            object_plot_styles: IdMap::default(),
+            layer_plot_styles: HashMap::new(),
+            plot_style_names: HashMap::new(),
             skipped: BTreeMap::new(),
             blocks: BTreeMap::new(),
             dimension_styles: vec![DimensionStyle::standard()],
@@ -800,6 +848,28 @@ impl Document {
             self.active_layout = Some(active - 1);
         }
         Some(layout)
+    }
+
+    /// The named plot style an object plots with: its own, else its layer's, else Normal.
+    pub fn plot_style_of(&self, id: EntityId, layer: &str) -> String {
+        let name = |handle: &String| self.plot_style_names.get(&handle.to_uppercase()).cloned();
+        self.object_plot_styles
+            .get(&id)
+            .and_then(name)
+            .or_else(|| self.layer_plot_styles.iter().find(|(l, _)| l.eq_ignore_ascii_case(layer)).and_then(|(_, h)| name(h)))
+            .unwrap_or_else(|| crate::io::ctb::NORMAL_STYLE.to_string())
+    }
+
+    /// Put a layout into the drawing at a place among its layouts, as undoing its deletion does.
+    pub fn insert_layout(&mut self, index: usize, layout: Layout) {
+        let index = index.min(self.layouts.len());
+        self.layouts.insert(index, layout);
+        if let Some(active) = self.active_layout.filter(|&a| a >= index) {
+            self.active_layout = Some(active + 1);
+        }
+        if let Some(through) = self.through.as_mut().filter(|t| t.layout >= index) {
+            through.layout += 1;
+        }
     }
 
     fn reposition(&mut self) {

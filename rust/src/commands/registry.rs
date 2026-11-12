@@ -368,6 +368,8 @@ pub const WINDOW_COMMANDS: &[(&str, &str)] = &[
     ("XATTACH", "Attach external reference"),
     ("BEDIT", "Block editor"),
     ("BCLOSE", "Close block editor"),
+    ("REFEDIT", "Edit external reference in place"),
+    ("REFCLOSE", "Close reference editing"),
     ("XREF", "External references"),
     ("SELECTSIMILAR", "Select similar objects"),
     ("FIND", "Find and replace text"),

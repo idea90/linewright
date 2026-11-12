@@ -1,8 +1,9 @@
 //! AutoCAD's SHX stroke fonts (romans.shx, simplex.shx, txt.shx…): read from the font files AutoCAD installs, and
 //! turned into the strokes AutoCAD draws for text, so text in them looks and measures as it does there.
 //!
-//! Both kinds of text font are read: the older shapes files (one byte per character) and unifonts (any Unicode
-//! character). Each character is a little program of pen moves: vectors in sixteen directions, displacements,
+//! All three kinds of font are read: the older shapes files (one byte per character), unifonts (any Unicode
+//! character) and big fonts (the two-byte characters of Chinese, Japanese and Korean code pages), which a text style
+//! names beside its main font, as "txt.shx,gbcbig.shx". Each character is a little program of pen moves: vectors in sixteen directions, displacements,
 //! arcs by octant, fraction or bulge, sub-shapes, scale changes and a position stack.
 
 use std::collections::HashMap;
@@ -26,11 +27,19 @@ pub struct Glyph {
 pub struct ShxFont {
     pub above: f64,
     pub below: f64,
-    /// Unifonts number their sub-shapes in two bytes, shapes files in one.
+    /// Unifonts and big fonts number their sub-shapes in two bytes, shapes files in one.
     unicode: bool,
+    /// A big font's characters are numbered in an Asian code page rather than in Unicode.
+    big: bool,
     shapes: HashMap<u32, Vec<u8>>,
     glyphs: Mutex<HashMap<u32, Option<Arc<Glyph>>>>,
+    /// The big font a text style names beside this one, for the characters this one lacks.
+    pub big_font: Option<Arc<ShxFont>>,
 }
+
+/// The code pages big fonts number their characters in, tried in turn: Chinese (GBK), Japanese (Shift-JIS),
+/// traditional Chinese (Big5) and Korean.
+const BIG_FONT_CODE_PAGES: [&encoding_rs::Encoding; 4] = [encoding_rs::GBK, encoding_rs::SHIFT_JIS, encoding_rs::BIG5, encoding_rs::EUC_KR];
 
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]))
@@ -54,7 +63,26 @@ impl ShxFont {
         let mut at = header_end + 1;
         let mut shapes: HashMap<u32, Vec<u8>> = HashMap::new();
         let unicode = header.contains("unifont");
-        if unicode {
+        let big = header.contains("bigfont");
+        if big {
+            // An index of characters by code, each with its length and where it is in the file, after the ranges
+            // of lead bytes that start a two-byte code.
+            let count = u16_at(bytes, at + 2)? as usize;
+            let ranges = u16_at(bytes, at + 4)? as usize;
+            at += 6 + ranges * 4;
+            for i in 0..count {
+                let entry = at + i * 8;
+                let (Some(number), Some(length), Some(offset)) = (u16_at(bytes, entry), u16_at(bytes, entry + 2), u32_at(bytes, entry + 4))
+                else {
+                    break;
+                };
+                if length == 0 {
+                    continue;
+                }
+                let Some(definition) = bytes.get(offset as usize..offset as usize + length as usize) else { continue };
+                shapes.insert(number as u32, if number == 0 { definition.to_vec() } else { without_name(definition) });
+            }
+        } else if unicode {
             let count = u32_at(bytes, at)?;
             let info_length = u16_at(bytes, at + 4)? as usize;
             at += 6;
@@ -86,7 +114,35 @@ impl ShxFont {
         let after_name = info.iter().position(|b| *b == 0)? + 1;
         let above = *info.get(after_name)? as f64;
         let below = *info.get(after_name + 1)? as f64;
-        (above > 0.0).then(|| ShxFont { above, below, unicode, shapes, glyphs: Mutex::new(HashMap::new()) })
+        let unicode = unicode || big;
+        (above > 0.0).then(|| ShxFont { above, below, unicode, big, shapes, glyphs: Mutex::new(HashMap::new()), big_font: None })
+    }
+
+    /// A character's number in a big font: its two bytes in the first code page that has it and whose number the
+    /// font defines. None for one it lacks.
+    fn big_code(&self, c: char) -> Option<u32> {
+        let mut buffer = [0u8; 4];
+        let text = c.encode_utf8(&mut buffer);
+        BIG_FONT_CODE_PAGES.iter().find_map(|page| {
+            let (bytes, _, failed) = page.encode(text);
+            match (failed, &bytes[..]) {
+                (false, [lead, trail]) => Some((*lead as u32) << 8 | *trail as u32).filter(|code| self.has(*code)),
+                _ => None,
+            }
+        })
+    }
+
+    /// A character's glyph and the font it comes from: this font's own, else the big font's for one this lacks.
+    fn glyph_for(&self, c: char) -> Option<(Arc<Glyph>, &ShxFont)> {
+        let own = || {
+            let code = if self.big { self.big_code(c)? } else { c as u32 };
+            Some((self.glyph(code)?, self))
+        };
+        let in_big = || {
+            let big = self.big_font.as_deref()?;
+            Some((big.glyph(big.big_code(c)?)?, big))
+        };
+        if (c as u32) < 0x80 { own().or_else(in_big) } else { in_big().or_else(own) }
     }
 
     pub fn has(&self, code: u32) -> bool {
@@ -350,21 +406,24 @@ fn stand_ins(c: char) -> &'static [u32] {
 /// A line of text in an SHX font: its strokes from the baseline's left end, sized so capitals are `height` tall
 /// (squeezed or stretched by `width`), and how long it is. Characters the font lacks become '?'.
 pub fn line_strokes(font: &ShxFont, line: &str, height: f64, width: f64) -> (Vec<Vec<Point>>, f64) {
-    let scale = height / font.above;
     let mut strokes = vec![];
+    // Where the next character starts, in drawing units: a big font's characters are sized to its own height.
     let mut origin = pt(0.0, 0.0);
     for c in line.chars() {
-        let glyph =
-            font.glyph(c as u32).or_else(|| stand_ins(c).iter().find_map(|code| font.glyph(*code))).or_else(|| font.glyph('?' as u32));
-        let Some(glyph) = glyph else {
-            origin.x += height * 0.6 / scale;
+        let found = font
+            .glyph_for(c)
+            .or_else(|| stand_ins(c).iter().find_map(|code| Some((font.glyph(*code)?, font))))
+            .or_else(|| Some((font.glyph('?' as u32)?, font)));
+        let Some((glyph, from)) = found else {
+            origin.x += height * 0.6 * width;
             continue;
         };
-        let place = |p: Point| pt((origin.x + p.x) * scale * width, (origin.y + p.y) * scale);
+        let scale = height / from.above;
+        let place = |p: Point| pt(origin.x + p.x * scale * width, origin.y + p.y * scale);
         strokes.extend(glyph.strokes.iter().map(|s| s.iter().map(|p| place(*p)).collect::<Vec<Point>>()));
-        origin = origin + glyph.advance;
+        origin = origin + pt(glyph.advance.x * scale * width, glyph.advance.y * scale);
     }
-    (strokes, origin.x * scale * width)
+    (strokes, origin.x)
 }
 
 /// A piece of text in an SHX font, as strokes in drawing units: each line aligned and turned as the text says.
@@ -477,11 +536,35 @@ fn load(file: &str) -> Option<Arc<ShxFont>> {
     read
 }
 
+/// A text font with a big font beside it, read once for the pair.
+fn load_with_big(file: &str, big: &str) -> Option<Arc<ShxFont>> {
+    let key = format!("{file},{big}");
+    if let Some(known) = cache().lock().ok()?.get(&key) {
+        return known.clone();
+    }
+    let main = find(file).and_then(|path| std::fs::read(path).ok()).and_then(|bytes| ShxFont::parse(&bytes));
+    let paired = main.map(|mut font| {
+        font.big_font = load(big);
+        Arc::new(font)
+    });
+    cache().lock().ok()?.insert(key, paired.clone());
+    paired
+}
+
 /// The SHX font a drawing's text asks for, read once. A named .shx file that is nowhere to be found is replaced
 /// by simplex.shx, as AutoCAD does with FONTALT. A bare name like "txt" counts only when that file is there, since
 /// it may as well be a TrueType family. None when the text is not in an SHX font, or no font file is found.
 pub fn text_font(name: &str) -> Option<Arc<ShxFont>> {
-    let file = name.trim().to_lowercase();
+    let lower = name.trim().to_lowercase();
+    // A style's main font and its big font, as "txt.shx,gbcbig.shx".
+    if let Some((file, big)) = lower.split_once(',') {
+        let (file, big) = (shx_name(file), shx_name(big));
+        if big.is_empty() {
+            return text_font(&file);
+        }
+        return load_with_big(&file, &big).or_else(|| load_with_big("simplex.shx", &big));
+    }
+    let file = lower;
     if file.ends_with(".shx") {
         load(&file).or_else(|| load("simplex.shx"))
     } else if !file.is_empty() && !file.contains('.') {
@@ -491,9 +574,54 @@ pub fn text_font(name: &str) -> Option<Arc<ShxFont>> {
     }
 }
 
+/// A font file's name with ".shx" on the end, as styles name big fonts with or without it.
+fn shx_name(name: &str) -> String {
+    let name = name.trim().to_lowercase();
+    if name.is_empty() || name.ends_with(".shx") { name } else { format!("{name}.shx") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A big font with one character, 中 (D6D0 in GBK): a square of vectors, and an advance of 10. Its own height is 10.
+    fn tiny_big_font() -> Vec<u8> {
+        let mut bytes = b"AutoCAD-86 bigfont 1.0\r\n\x1a".to_vec();
+        let info: Vec<u8> = b"Tiny big\0".iter().copied().chain([10u8, 0, 2, 10, 0]).collect();
+        // 中: pen down, 8 east, 8 north, 8 west, 8 south; pen up, 10 east.
+        let square: Vec<u8> = b"\0".iter().copied().chain([1u8, 0x80, 0x84, 0x88, 0x8C, 2, 0xA0, 0]).collect();
+        let index_at = bytes.len() + 6 + 4;
+        let data_at = index_at + 2 * 8;
+        bytes.extend(0u16.to_le_bytes()); // the header's own length, unused
+        bytes.extend(2u16.to_le_bytes()); // two characters, font information included
+        bytes.extend(1u16.to_le_bytes()); // one range of lead bytes
+        bytes.extend([0x81u8, 0x00, 0xFE, 0x00]);
+        assert_eq!(bytes.len(), index_at);
+        for (code, definition, at) in [(0u16, &info, data_at), (0xD6D0, &square, data_at + info.len())] {
+            bytes.extend(code.to_le_bytes());
+            bytes.extend((definition.len() as u16).to_le_bytes());
+            bytes.extend((at as u32).to_le_bytes());
+        }
+        bytes.extend(&info);
+        bytes.extend(&square);
+        bytes
+    }
+
+    #[test]
+    fn a_big_font_gives_the_asian_characters_its_main_font_lacks() {
+        let big = ShxFont::parse(&tiny_big_font()).unwrap();
+        assert!(big.big && big.has(0xD6D0));
+        assert_eq!(big.big_code('中'), Some(0xD6D0), "found through the GBK code page");
+        let mut font = ShxFont::parse(&tiny_unifont()).unwrap();
+        font.big_font = Some(Arc::new(big));
+        // "L中": the L at half size (4 tall in a font 8 tall), then 中 at 4 / 10 of its size.
+        let (strokes, width) = line_strokes(&font, "L中", 4.0, 1.0);
+        assert_eq!(strokes.len(), 2);
+        assert!((width - (3.0 + 4.0)).abs() < 1e-9, "6 * 0.5 then 10 * 0.4: {width}");
+        let top = strokes[1].iter().map(|p| p.y).fold(0.0, f64::max);
+        assert!((top - 3.2).abs() < 1e-9, "the square is 8 of 10 tall at 0.4: {top}");
+        assert_eq!(shx_name("GBCBIG"), "gbcbig.shx");
+    }
 
     /// A unifont with one character: an 'L' of vectors, then a pen-up move on to the next character.
     fn tiny_unifont() -> Vec<u8> {

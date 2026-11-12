@@ -45,11 +45,16 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - `OOPS`: brings back the objects the last `ERASE` or `BLOCK` took out, as one undo step, and forgets them. Delete
   does the same erase as `ERASE`.
 - Modify: `ERASE`, `MOVE`, `COPY`, `ROTATE`, `SCALE`, `MIRROR`, `OFFSET`, `TRIM`, `EXTEND`, `FILLET` (`F`;
-  two lines, or two segments of a polyline that meet; Polyline rounds every corner), `CHAMFER`
+  lines, arcs and circles, or two segments of a polyline that meet; parallel lines get a half circle; Polyline
+  rounds every corner), `CHAMFER`
   (`CHA`), `LENGTHEN` (`LEN`), `ALIGN` (`AL`), `PEDIT` (`PE`), `DIVIDE` (`DIV`), `MEASURE` (`ME`), `DRAWORDER` (`DR`), `STRETCH` (`S`), `ARRAY` (`AR`; rectangular and polar), `BREAK` (`BR`), `JOIN` (`J`), `EXPLODE` (`X`),
   `MATCHPROP` (`MA`), `OVERKILL` (`OV`; opens Delete Duplicate Objects with Tolerance, Ignore properties, Optimize
   polylines, Partial overlap and End to end options; deletes duplicates, combines overlapping lines and arcs, and tidies
   polylines), `-OVERKILL` (the same with command line options)
+- As in AutoCAD: `PLINE` draws arcs with Arc (carrying on from the segment before, or through a Second pt) and goes
+  back to lines with Line; `ROTATE` and `SCALE` take Copy and Reference; `OFFSET` makes a spline beside an ellipse
+  or a spline; `JOIN` joins lines in one straight line across the gaps between them; `AREA` and `LIST` measure whole
+  ellipses.
 - Blocks: `INSERT` (`I`, asks for attribute values), `BLOCK` (`B`); attributes edited with `TEXTEDIT` (`ED`)
 - Groups: `GROUP` (`G`; named or unnamed `*A1`, with a description), `UNGROUP`, `GROUPEDIT` (add, remove, rename),
   `PICKSTYLE` or Ctrl+Shift+A for group selection; groups load from and save to DXF
@@ -78,7 +83,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   block or group, then asks `Fix any errors detected? [Yes/No] <N>:`. Yes fixes it all as one undo step; blocks are
   only reported, to be fixed in the block editor. `RECOVER` opens a damaged DXF or DWG (DWG through the ODA
   converter), skipping the lines and objects it cannot read, fixes what `AUDIT` would, and reports what it skipped.
-- Images (`IMAGEATTACH`, `IM`), external references (`XATTACH`, `XREF`) and the block editor (`BEDIT`, `BCLOSE`);
+- Images (`IMAGEATTACH`, `IM`), external references (`XATTACH`, `XREF`; `REFEDIT` edits a selected one in place in
+  the block editor, and `REFCLOSE` saves the changes into its drawing and reloads it) and the block editor
+  (`BEDIT`, `BCLOSE`);
   tables (`TABLE`, `TABLEDIT` or double-click a cell) are AutoCAD tables, read from and saved to files; attribute
   definitions (`ATTDEF`) for blocks; images print in PDFs. Dynamic input takes a length and angle (Tab between
   them) or a distance along the cursor.
@@ -108,7 +115,9 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - SHX fonts (romans.shx, simplex.shx, txt.shx, isocp.shx, gothice.shx…) drawn from the font's own strokes, on
   screen and in PDFs, sized as AutoCAD sizes them. They are read from the drawing's folder, AutoCAD's `Fonts`
   folders (`C:\Program Files\Autodesk\*\Fonts`, also seen from WSL under `/mnt/c`) and `LINEWRIGHT_FONT_DIRS`.
-  A missing SHX font is replaced by simplex.shx, as AutoCAD does. Asian big fonts are not read yet.
+  A missing SHX font is replaced by simplex.shx, as AutoCAD does. Asian big fonts (gbcbig.shx, extfont.shx,
+  chineset.shx, whgtxt.shx…) named beside a style's font draw the Chinese, Japanese and Korean characters it
+  lacks, found through their GBK, Shift-JIS, Big5 or Korean code page.
 - DWG open and save through the free ODA File Converter, found on the `PATH`, in its default install folder,
   or through `LINEWRIGHT_ODA=/path/to/ODAFileConverter`.
 - PDF plotting at a scale (`1:50`) or fit to the page; on a layout, `PLOT` prints its sheet at 1:1.
@@ -123,10 +132,13 @@ OpenGL driver). File dialogs use the XDG desktop portal.
 - Plot style tables (.ctb): `PLOT` picks one per page setup, and with it whether objects' lineweights print.
   Pens give each color its plotted color, grayscale, screening and lineweight. Tables are read from AutoCAD's
   `Plotters\Plot Styles` folders (or `LINEWRIGHT_PLOT_STYLES`); acad, monochrome and grayscale.ctb work
-  without AutoCAD. Named plot styles (.stb) are not read yet.
+  without AutoCAD. Named plot style tables (.stb) work too, for drawings that use named plot styles: each
+  object prints with its own style, or its layer's when it is ByLayer, kept as they are when saving; acad.stb and
+  monochrome.stb work without AutoCAD.
 - Layouts: Model and layout tabs under the drawing (right-click to rename or delete, + to add), `LAYOUT` (`LO`;
   New/Rename/Delete/Set/?), `MVIEW` (`MV`) for viewports onto model space at a scale (set it in Properties), each
-  space with its own undo. Layouts, paper space and viewports load from and save to DXF.
+  space with its own undo. Deleting or renaming a layout undoes like any other change: `U` brings a deleted layout
+  back in its place, with what was on it and its own undo history. Layouts, paper space and viewports load from and save to DXF.
 - Working through viewports: `MSPACE` (`MS`), double-clicking inside a viewport, or the status bar's Paper/Model
   button opens model space through it with the layout still on screen; draw and edit there, and zooming and
   panning change that viewport's view. Click another viewport to work through it; `PSPACE` (`PS`) or
