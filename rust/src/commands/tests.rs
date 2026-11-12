@@ -23,6 +23,8 @@ struct FakeHost {
     frame_mode: Option<u8>,
     /// The linetype scales commands set, in order.
     scales: Vec<ScaleSetting>,
+    /// The blocks ATTSYNC asked to sync.
+    synced: Vec<crate::model::entities::BlockRef>,
 }
 
 impl FakeHost {
@@ -93,6 +95,9 @@ impl Host for FakeHost {
     }
     fn extent(&self) -> Option<Bounds> {
         self.entities.iter().map(entity_extent).reduce(Bounds::union)
+    }
+    fn sync_attributes(&mut self, block: crate::model::entities::BlockRef) {
+        self.synced.push(block);
     }
 }
 
@@ -1228,4 +1233,138 @@ fn cal_evaluates_an_expression() {
         assert!(!session.active());
         assert_eq!(host.reports.last().unwrap(), result, "{expression}");
     }
+}
+
+/// A block DOOR of a square with corners 0,0 and 1,1 on layer 0, and a NUMBER attribute, inserted at 10,10 at
+/// twice its size on layer WALLS with the value D1.
+fn door() -> (crate::model::entities::BlockRef, Entity) {
+    use crate::model::entities::{Attribute, BlockDef, BlockRef, text};
+    let square = polyline_from(&[pt(0.0, 0.0), pt(1.0, 0.0), pt(1.0, 1.0), pt(0.0, 1.0)], true);
+    let number = Attribute {
+        tag: "NUMBER".into(),
+        prompt: "Door number".into(),
+        layer: "0".into(),
+        color: 256,
+        text: text(pt(0.0, 2.0), "?", 0.5, 0.0).shape,
+        invisible: false,
+    };
+    let block = BlockRef(std::sync::Arc::new(BlockDef {
+        name: "DOOR".into(),
+        base: pt(0.0, 0.0),
+        entities: vec![square],
+        attribute_defs: vec![number.clone()],
+        xref: None,
+    }));
+    let placed = crate::model::attributes::synced(
+        &Entity::new(Shape::Insert {
+            block: block.clone(),
+            position: pt(10.0, 10.0),
+            scale_x: 2.0,
+            scale_y: 2.0,
+            rotation: 0.0,
+            attributes: vec![],
+        }),
+        &block,
+    );
+    let mut insert = placed;
+    if let Shape::Insert { attributes, .. } = &mut insert.shape {
+        attributes[0].text = crate::model::attributes::with_value(&attributes[0].text, "D1");
+    }
+    insert.layer = "WALLS".into();
+    (block, insert)
+}
+
+#[test]
+fn copybase_copies_by_the_point_chosen_and_pasteorig_puts_back_in_place() {
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let round = circle(pt(5.0, 5.0), 1.0);
+    let mut host = FakeHost::with(vec![round.clone()]);
+    let mut session = start_with("COPYBASE", &mut host, vec![round], defaults.clone());
+    typed(&mut session, &mut host, &["5,5"]);
+    assert!(!session.active(), "the selection is used once the base point is given");
+    assert_eq!(defaults.borrow().clipboard_base, pt(5.0, 5.0));
+    let mut session = start_with("PASTECLIP", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["0,0"]);
+    assert_eq!(host.shapes()[1], Shape::Circle { center: pt(0.0, 0.0), radius: 1.0 }, "pasted by its base point");
+    start_with("PASTEORIG", &mut host, vec![], defaults);
+    assert_eq!(host.shapes()[2], Shape::Circle { center: pt(5.0, 5.0), radius: 1.0 });
+    assert_ne!(host.entities[2].id, host.entities[0].id, "a copy, not the original");
+}
+
+#[test]
+fn pasteblock_pastes_the_clipboard_as_one_new_block() {
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let objects = vec![circle(pt(5.0, 5.0), 1.0), line(pt(4.0, 4.0), pt(6.0, 6.0))];
+    let mut host = FakeHost::with(objects.clone());
+    start_with("COPYCLIP", &mut host, objects, defaults.clone());
+    let mut session = start_with("PASTEBLOCK", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["20,0"]);
+    let Shape::Insert { block, position, .. } = &host.entities[2].shape else { panic!("an insert") };
+    assert!(block.0.name.starts_with("A$C") && block.0.name.len() == 11, "{}", block.0.name);
+    assert_eq!((block.0.entities.len(), block.0.base, *position), (2, pt(4.0, 4.0), pt(20.0, 0.0)));
+    assert!(defaults.borrow().blocks.iter().any(|b| b.0.name == block.0.name), "the drawing knows the block");
+}
+
+#[test]
+fn ncopy_copies_an_object_out_of_a_block_as_it_shows() {
+    let (_, insert) = door();
+    let mut host = FakeHost::with(vec![insert.clone()]);
+    let mut session = start("NCOPY", &mut host, vec![]);
+    session.submit_pick(insert, pt(11.0, 10.0), false, &mut host);
+    assert_eq!(host.reports[0], "1 found (Polyline).");
+    typed(&mut session, &mut host, &["", "0,0", "100,0"]);
+    assert!(!session.active());
+    let copy = &host.entities[1];
+    let Shape::Polyline { vertices, closed: true } = &copy.shape else { panic!("the square, {:?}", copy.shape) };
+    assert_eq!(vertices[0].point(), pt(110.0, 10.0), "placed as the insert shows it, then moved");
+    assert_eq!(vertices[2].point(), pt(112.0, 12.0), "at the insert's scale");
+    assert_eq!(copy.layer, "WALLS", "on layer 0 in the block, it shows on the insert's layer");
+    assert_eq!(host.entities.len(), 2, "the block is left as it is");
+}
+
+#[test]
+fn burst_keeps_attribute_values_as_text() {
+    let (_, insert) = door();
+    let mut host = FakeHost::with(vec![insert.clone()]);
+    start("BURST", &mut host, vec![insert]);
+    let kinds: Vec<&str> = host.entities.iter().map(|e| e.shape.kind()).collect();
+    assert_eq!(kinds, ["Polyline", "Text"]);
+    let Shape::Text { text, .. } = &host.entities[1].shape else { panic!("text") };
+    assert_eq!(text, "D1", "the value, not the tag");
+    assert_eq!(host.entities[0].layer, "WALLS", "what is on layer 0 in the block shows on the insert's layer");
+    assert_eq!(host.entities[1].layer, "0", "an attribute keeps its own layer");
+    host.retract();
+    assert_eq!(host.entities.len(), 1, "undone in one step");
+}
+
+#[test]
+fn attsync_syncs_a_picked_block_by_name_or_selection() {
+    let (block, insert) = door();
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    defaults.borrow_mut().blocks = vec![block];
+    let mut host = FakeHost::with(vec![insert.clone()]);
+    let mut session = start_with("ATTSYNC", &mut host, vec![], defaults.clone());
+    typed(&mut session, &mut host, &["?"]);
+    assert_eq!(host.reports[0], "Blocks with attributes: DOOR");
+    typed(&mut session, &mut host, &["N", "nope"]);
+    assert_eq!(host.reports[1], "There is no block called nope.");
+    typed(&mut session, &mut host, &["S"]);
+    session.submit_pick(insert, pt(10.0, 10.0), false, &mut host);
+    typed(&mut session, &mut host, &[""]);
+    assert!(!session.active());
+    assert_eq!(host.synced.iter().map(|b| b.0.name.as_str()).collect::<Vec<_>>(), ["DOOR"]);
+}
+
+#[test]
+fn eattedit_asks_for_a_block_with_attributes() {
+    let (_, insert) = door();
+    let plain = circle(pt(0.0, 0.0), 1.0);
+    let defaults = Rc::new(RefCell::new(Defaults::default()));
+    let mut host = FakeHost::with(vec![insert.clone(), plain.clone()]);
+    let mut session = start_with("EATTEDIT", &mut host, vec![], defaults.clone());
+    session.submit_pick(plain, pt(1.0, 0.0), false, &mut host);
+    assert_eq!(host.reports[0], "That is not a block reference.");
+    session.submit_pick(insert.clone(), pt(10.0, 10.0), false, &mut host);
+    assert!(!session.active());
+    assert_eq!(defaults.borrow().attribute_edit_request, Some(insert.id));
 }

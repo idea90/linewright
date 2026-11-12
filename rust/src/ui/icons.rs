@@ -271,7 +271,7 @@ fn shape(name: &str) -> Option<&'static str> {
         "MOVE" => {
             r##"<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/><rect x="10.2" y="10.2" width="3.6" height="3.6" fill="#4ea3f1" stroke="none"/>"##
         }
-        "COPY" => r##"<circle cx="8.5" cy="8.5" r="5"/><circle cx="15.5" cy="15.5" r="5" stroke="#4ea3f1"/>"##,
+        "COPY" | "NCOPY" => r##"<circle cx="8.5" cy="8.5" r="5"/><circle cx="15.5" cy="15.5" r="5" stroke="#4ea3f1"/>"##,
         "ROTATE" => {
             r##"<path d="M19 12a7 7 0 1 1-2.2-5.1"/><path d="M19.5 3.5V8H15"/><path d="M12 12 16.5 16.5" stroke="#4ea3f1"/><rect x="10.2" y="10.2" width="3.6" height="3.6" fill="#4ea3f1" stroke="none"/>"##
         }
@@ -300,7 +300,7 @@ fn shape(name: &str) -> Option<&'static str> {
         "OOPS" => {
             r##"<g transform="translate(-2 -2) scale(.8)"><g transform="rotate(-45 12 12)"><rect x="3" y="8" width="6.5" height="8" rx="1" fill="#e86a6a" stroke="#f4a3a3" stroke-width="1"/><path d="M9.5 8H20a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H9.5Z"/></g></g><path d="M21 17.5a4.5 4.5 0 1 1-1.3-3.2M20.3 11.8v2.9h-2.9" stroke="#5fbf5a"/>"##
         }
-        "EXPLODE" => {
+        "EXPLODE" | "BURST" => {
             r##"<path d="M3.5 8V3.5H8M16 3.5h4.5V8M20.5 16v4.5H16M8 20.5H3.5V16"/><path d="M12 4.5 12.77 10.15 15.18 8.82 13.85 11.23 19.5 12 13.85 12.77 15.18 15.18 12.77 13.85 12 19.5 11.23 13.85 8.82 15.18 10.15 12.77 4.5 12 10.15 11.23 8.82 8.82 11.23 10.15Z" fill="#f7c843" stroke="#d08a16" stroke-width=".8"/>"##
         }
         "JOIN" => r##"<path d="M3.5 18 10 11.5h10.5"/><rect x="8.2" y="9.7" width="3.6" height="3.6" fill="#4ea3f1" stroke="none"/>"##,
@@ -325,10 +325,10 @@ fn shape(name: &str) -> Option<&'static str> {
         "MATCHPROP" => {
             r##"<rect x="2.5" y="2.5" width="11" height="8.5" rx="1" fill="#4ea3f1" fill-opacity=".3" stroke="#4ea3f1"/><g transform="rotate(-45 15 15)" stroke-width="1"><rect x="13.8" y="16" width="2.4" height="8" rx="1" fill="#c49358" stroke="#8f6534"/><rect x="13" y="12.5" width="4" height="3.5" fill="#b9c2c6" stroke="#7d878c"/><path d="M13 12.5v-3c0-1.5 1-3 2-4 1 1 2 2.5 2 4v3Z" fill="#f5c04a" stroke="#a8740f"/></g>"##
         }
-        "COPYCLIP" => {
+        "COPYCLIP" | "COPYBASE" => {
             r##"<path d="M3.5 2.5h8l3 3V16h-11Z" fill="#b9c2c6" stroke="#7d878c" stroke-width="1"/><path d="M9.5 8h8l3 3v10.5h-11Z" fill="#f2f4f5" stroke="#8a9599" stroke-width="1"/><path d="M12 14h6M12 17h6" stroke="#8a9599" stroke-width="1"/>"##
         }
-        "PASTECLIP" => {
+        "PASTECLIP" | "PASTEORIG" | "PASTEBLOCK" => {
             r##"<rect x="3" y="4.5" width="13" height="17" rx="1.2" fill="#c8955a" stroke="#8f6534" stroke-width="1"/><rect x="6.5" y="2.5" width="6" height="4" rx="1" fill="#b9c2c6" stroke="#6d777b" stroke-width="1"/><path d="M10 10h7.5l3 3v8.5H10Z" fill="#f2f4f5" stroke="#8a9599" stroke-width="1"/><path d="M12.5 15.5h5.5M12.5 18.5h5.5" stroke="#8a9599" stroke-width="1"/>"##
         }
         "SELECTALL" => {
@@ -485,7 +485,7 @@ fn shape(name: &str) -> Option<&'static str> {
             r##"<path d="M2.5 8h11l4.5 4.5-4.5 4.5h-11Z"/><circle cx="13.5" cy="12.5" r="1.4" fill="#4ea3f1" stroke="none"/>"##,
             star!()
         ),
-        "ATTEDIT" | "EATTEDIT" => concat!(
+        "ATTEDIT" | "EATTEDIT" | "ATTSYNC" | "BATTMAN" => concat!(
             r##"<path d="M2.5 5h11l4.5 4.5-4.5 4.5h-11Z"/><circle cx="13.5" cy="9.5" r="1.4" fill="#4ea3f1" stroke="none"/>"##,
             pencil!()
         ),

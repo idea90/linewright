@@ -2278,6 +2278,115 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
                 app.dialog = None;
             }
         }
+        Dialog::Attributes(form) => {
+            let (mut accept, mut apply, mut cancel) = (false, false, false);
+            let modal = egui::Modal::new(Id::new("eattedit")).show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.label(RichText::new("Enhanced Attribute Editor").family(theme::heading()).size(16.0));
+                ui.label(RichText::new(format!("Block: {}", form.block)).color(theme::TEXT_DIM));
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    egui::Grid::new("eattedit_rows").num_columns(3).striped(true).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+                        ui.label(RichText::new("Tag").strong());
+                        ui.label(RichText::new("Prompt").strong());
+                        ui.label(RichText::new("Value").strong());
+                        ui.end_row();
+                        for (tag, prompt, value) in &mut form.rows {
+                            ui.label(tag.as_str());
+                            ui.label(RichText::new(prompt.as_str()).color(theme::TEXT_DIM));
+                            ui.add_sized([220.0, 22.0], TextEdit::singleline(value));
+                            ui.end_row();
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button("Apply").clicked();
+                    accept = ui.button("OK").clicked();
+                });
+            });
+            if accept || apply {
+                app.attributes_accepted(accept);
+            } else if cancel || modal.should_close() {
+                app.dialog = None;
+            }
+        }
+        Dialog::Battman(form) => {
+            let (mut accept, mut apply, mut cancel, mut switch_to) = (false, false, false, None);
+            let modal = egui::Modal::new(Id::new("battman")).show(ctx, |ui| {
+                ui.set_width(560.0);
+                ui.label(RichText::new("Block Attribute Manager").family(theme::heading()).size(16.0));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Block");
+                    egui::ComboBox::from_id_salt("battman_block").width(220.0).selected_text(form.block.as_str()).show_ui(ui, |ui| {
+                        for name in &form.blocks {
+                            if ui.selectable_label(*name == form.block, name.as_str()).clicked() && *name != form.block {
+                                switch_to = Some(name.clone());
+                            }
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+                let count = form.rows.len();
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    egui::Grid::new("battman_rows").num_columns(5).striped(true).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                        for title in ["", "Tag", "Prompt", "Default", "Invisible"] {
+                            ui.label(RichText::new(title).strong());
+                        }
+                        ui.end_row();
+                        for (index, row) in form.rows.iter_mut().enumerate() {
+                            ui.radio_value(&mut form.selected, index, "");
+                            ui.add_sized([110.0, 22.0], TextEdit::singleline(&mut row.tag));
+                            ui.add_sized([170.0, 22.0], TextEdit::singleline(&mut row.prompt));
+                            ui.add_sized([110.0, 22.0], TextEdit::singleline(&mut row.default));
+                            ui.checkbox(&mut row.invisible, "");
+                            ui.end_row();
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let at = form.selected.min(count.saturating_sub(1));
+                    if ui.add_enabled(count > 0 && at > 0, egui::Button::new("Move Up")).clicked() {
+                        form.rows.swap(at, at - 1);
+                        form.selected = at - 1;
+                    }
+                    if ui.add_enabled(count > 0 && at + 1 < count, egui::Button::new("Move Down")).clicked() {
+                        form.rows.swap(at, at + 1);
+                        form.selected = at + 1;
+                    }
+                    if ui
+                        .add_enabled(count > 1, egui::Button::new("Remove"))
+                        .on_hover_text("A block keeps at least one attribute here")
+                        .clicked()
+                    {
+                        form.rows.remove(at);
+                        form.selected = at.min(form.rows.len().saturating_sub(1));
+                    }
+                });
+                if !form.error.is_empty() {
+                    ui.label(RichText::new(form.error.as_str()).color(theme::ERROR));
+                }
+                ui.label(RichText::new("OK and Apply carry the changes to every insert of the block (ATTSYNC).").color(theme::TEXT_DIM));
+                ui.add_space(8.0);
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button("Apply").clicked();
+                    accept = ui.button("OK").clicked();
+                });
+            });
+            if let Some(name) = switch_to {
+                if let Some(form) = app.battman_form(Some(name)) {
+                    app.dialog = Some(Dialog::Battman(form));
+                }
+            } else if accept || apply {
+                app.battman_accepted(accept);
+            } else if cancel || modal.should_close() {
+                app.dialog = None;
+            }
+        }
         Dialog::Purge(form) => {
             let (mut purge, mut cancel) = (false, false);
             let modal = egui::Modal::new(Id::new("purge")).show(ctx, |ui| {

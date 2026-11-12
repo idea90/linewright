@@ -70,6 +70,31 @@ pub struct Drawing {
 }
 
 impl Drawing {
+    /// Redefine a block as given and bring the inserts of it in the space worked on into line with its attributes,
+    /// as one undo step for the inserts. Gives how many inserts there were.
+    pub fn sync_inserts(&mut self, block: &BlockRef) -> usize {
+        let name = block.0.name.to_uppercase();
+        self.document.blocks.insert(name.clone(), block.clone());
+        if !self.document.redefined_blocks.iter().any(|n| n.eq_ignore_ascii_case(&block.0.name)) {
+            self.document.redefined_blocks.push(block.0.name.clone());
+        }
+        let synced: Vec<Entity> = self
+            .document
+            .entities()
+            .iter()
+            .filter(|e| matches!(&e.shape, Shape::Insert { block: b, .. } if b.0.name.eq_ignore_ascii_case(&name)))
+            .map(|e| crate::model::attributes::synced(e, block))
+            .collect();
+        let count = synced.len();
+        if count > 0 {
+            let change = Change::modify(&self.document, synced);
+            self.push(change);
+        }
+        // Inserts elsewhere (other layouts, other blocks) take the new definition, keeping their values.
+        self.document.replace_block(block.clone());
+        count
+    }
+
     /// Whether everything is as saved, in every space.
     pub fn is_clean(&self) -> bool {
         self.undo.is_clean() && self.stashed_undo.values().all(UndoStack::is_clean) && !self.layouts_changed
@@ -139,6 +164,11 @@ impl Host for Drawing {
             ScaleSetting::Current(scale) => self.document.celtscale = scale,
         }
         self.note_change();
+    }
+
+    fn sync_attributes(&mut self, block: BlockRef) {
+        let count = self.sync_inserts(&block);
+        self.report(format!("ATTSYNC block {}: {count} insert(s) updated.", block.0.name));
     }
 
     fn draw_order(&mut self, objects: Vec<Entity>, placement: DrawOrder) {
@@ -666,7 +696,14 @@ impl Controller {
         let editable = match &entity.shape {
             Shape::Text { .. } | Shape::Dimension { .. } | Shape::Multileader { .. } => true,
             Shape::Annotation { kind, .. } => !matches!(kind, AnnotationKind::Leader { .. }),
-            Shape::Insert { attributes, .. } => !attributes.is_empty(),
+            Shape::Insert { attributes, .. } => {
+                // A block with attributes opens in the Enhanced Attribute Editor, as in AutoCAD.
+                if !attributes.is_empty() {
+                    self.selection.replace([entity.id]);
+                    self.defaults.borrow_mut().attribute_edit_request = Some(entity.id);
+                }
+                return;
+            }
             _ => false,
         };
         // Multiline text opens in the editor, as in AutoCAD; a single TEXT is edited on the command line.

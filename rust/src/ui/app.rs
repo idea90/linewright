@@ -225,6 +225,35 @@ pub struct FindForm {
 }
 
 /// PURGE: what nothing uses, each with whether to remove it.
+/// The Enhanced Attribute Editor (EATTEDIT): an insert's attributes, each as tag, prompt and the value typed.
+pub struct AttributeForm {
+    pub target: EntityId,
+    pub block: String,
+    pub rows: Vec<(String, String, String)>,
+}
+
+/// One attribute definition in the Block Attribute Manager: tag, prompt, default value, invisible.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefinitionRow {
+    /// The tag the definition had when the manager opened, which says which definition the row edits.
+    pub original: String,
+    pub tag: String,
+    pub prompt: String,
+    pub default: String,
+    pub invisible: bool,
+}
+
+/// The Block Attribute Manager (BATTMAN): a block's attribute definitions, to edit, reorder and remove, and then
+/// carry to every insert of the block.
+pub struct BattmanForm {
+    pub block: String,
+    /// Every block with attributes, to switch to.
+    pub blocks: Vec<String>,
+    pub rows: Vec<DefinitionRow>,
+    pub selected: usize,
+    pub error: String,
+}
+
 pub struct PurgeForm {
     pub layers: Vec<(String, bool)>,
     pub styles: Vec<(String, bool)>,
@@ -373,6 +402,8 @@ pub enum Dialog {
     Mtext(MtextForm),
     /// Drawing Recovery: the autosave copies left by earlier sessions, to open or delete.
     Recovery(Vec<Autosave>),
+    Attributes(AttributeForm),
+    Battman(BattmanForm),
 }
 
 /// A drawing being read in the background, with the lines to report once it is shown (what RECOVER skipped and fixed).
@@ -1164,6 +1195,127 @@ impl LinewrightApp {
 
     /// Purge: the ticked layers, dimension styles and blocks go. Layers and styles undo together; blocks are
     /// taken out of the file when it is saved.
+    /// The one block insert selected, with its block as the drawing now defines it.
+    fn selected_insert(&self) -> Option<(Entity, BlockRef)> {
+        let mut selected = self.controller.selected_in_place();
+        let entity = selected.next()?.clone();
+        if selected.next().is_some() {
+            return None;
+        }
+        let Shape::Insert { block, .. } = &entity.shape else { return None };
+        let block =
+            self.controller.blocks().into_iter().find(|b| b.0.name.eq_ignore_ascii_case(&block.0.name)).unwrap_or_else(|| block.clone());
+        Some((entity, block))
+    }
+
+    /// Open the Enhanced Attribute Editor on an insert with attributes.
+    pub fn open_attribute_editor(&mut self, id: EntityId) {
+        let Some(entity) = self.document().get(id) else { return };
+        let Shape::Insert { block, attributes, .. } = &entity.shape else { return };
+        if attributes.is_empty() {
+            return;
+        }
+        let rows = attributes
+            .iter()
+            .map(|a| {
+                let prompt = block
+                    .0
+                    .attribute_defs
+                    .iter()
+                    .find(|d| d.tag.eq_ignore_ascii_case(&a.tag))
+                    .map_or(a.prompt.clone(), |d| d.prompt.clone());
+                (a.tag.clone(), prompt, crate::model::attributes::value_of(a).to_string())
+            })
+            .collect();
+        self.dialog = Some(Dialog::Attributes(AttributeForm { target: id, block: block.0.name.clone(), rows }));
+    }
+
+    /// OK or Apply in the Enhanced Attribute Editor: the insert's attributes take the values typed.
+    pub fn attributes_accepted(&mut self, close: bool) {
+        let Some(Dialog::Attributes(form)) = &self.dialog else { return };
+        let Some(entity) = self.document().get(form.target).cloned() else { return };
+        let mut shape = entity.shape.clone();
+        if let Shape::Insert { attributes, .. } = &mut shape {
+            for (attribute, (_, _, value)) in attributes.iter_mut().zip(&form.rows) {
+                if crate::model::attributes::value_of(attribute) != value {
+                    attribute.text = crate::model::attributes::with_value(&attribute.text, value);
+                }
+            }
+        }
+        if shape != entity.shape {
+            let change = Change::modify(self.document(), vec![entity.with_shape(shape)]);
+            self.controller.push(change);
+        }
+        if close {
+            self.dialog = None;
+        }
+    }
+
+    /// The Block Attribute Manager's form for a block with attributes: the one given, or the first.
+    pub fn battman_form(&self, block: Option<String>) -> Option<BattmanForm> {
+        let blocks: Vec<BlockRef> = self.controller.blocks().into_iter().filter(|b| !b.0.attribute_defs.is_empty()).collect();
+        let block = block
+            .and_then(|name| blocks.iter().find(|b| b.0.name.eq_ignore_ascii_case(&name)).cloned())
+            .or_else(|| blocks.first().cloned())?;
+        let rows = block
+            .0
+            .attribute_defs
+            .iter()
+            .map(|d| DefinitionRow {
+                original: d.tag.clone(),
+                tag: d.tag.clone(),
+                prompt: d.prompt.clone(),
+                default: crate::model::attributes::value_of(d).to_string(),
+                invisible: d.invisible,
+            })
+            .collect();
+        let names = blocks.iter().map(|b| b.0.name.clone()).collect();
+        Some(BattmanForm { block: block.0.name.clone(), blocks: names, rows, selected: 0, error: String::new() })
+    }
+
+    /// OK or Apply in the Block Attribute Manager: the block takes the definitions as edited, and its inserts follow.
+    pub fn battman_accepted(&mut self, close: bool) {
+        let Some(Dialog::Battman(form)) = &mut self.dialog else { return };
+        let mut tags = HashSet::new();
+        for row in &form.rows {
+            let tag = row.tag.trim().to_uppercase();
+            if tag.is_empty() || tag.contains(char::is_whitespace) {
+                form.error = "A tag cannot be empty or have spaces.".into();
+                return;
+            }
+            if !tags.insert(tag.clone()) {
+                form.error = format!("Two attributes have the tag {tag}.");
+                return;
+            }
+        }
+        form.error.clear();
+        let (name, rows) = (form.block.clone(), form.rows.clone());
+        let Some(block) = self.controller.blocks().into_iter().find(|b| b.0.name.eq_ignore_ascii_case(&name)) else { return };
+        let definitions = rows
+            .iter()
+            .filter_map(|row| {
+                // Each row keeps the definition it came from, for its place and look.
+                let source = block.0.attribute_defs.iter().find(|d| d.tag.eq_ignore_ascii_case(&row.original))?;
+                Some(crate::model::entities::Attribute {
+                    tag: row.tag.trim().to_uppercase(),
+                    prompt: row.prompt.clone(),
+                    text: crate::model::attributes::with_value(&source.text, &row.default),
+                    invisible: row.invisible,
+                    ..source.clone()
+                })
+            })
+            .collect();
+        let redefined = BlockRef(std::sync::Arc::new(BlockDef { attribute_defs: definitions, ..(*block.0).clone() }));
+        let count = self.controller.drawing.sync_inserts(&redefined);
+        self.controller.after_change();
+        self.controller.drawing.print(format!("BATTMAN block {name}: {count} insert(s) updated."));
+        if close {
+            self.dialog = None;
+        } else if let Some(form) = self.battman_form(Some(name)) {
+            self.dialog = Some(Dialog::Battman(form));
+        }
+    }
+
     pub fn purge(&mut self) {
         let Some(Dialog::Purge(form)) = self.dialog.take() else { return };
         let chosen = |list: &[(String, bool)]| list.iter().filter(|(_, on)| *on).map(|(n, _)| n.clone()).collect::<Vec<_>>();
@@ -1701,6 +1853,13 @@ impl LinewrightApp {
                 let form = FindForm { find: String::new(), replace: String::new(), match_case: false, message: String::new() };
                 self.dialog = Some(Dialog::Find(form));
             }
+            Action::Command("BATTMAN") => {
+                let picked = self.selected_insert().map(|(_, block)| block.0.name.clone());
+                match self.battman_form(picked) {
+                    Some(form) => self.dialog = Some(Dialog::Battman(form)),
+                    None => self.dialog = Some(Dialog::Message("This drawing has no blocks with attributes.".into())),
+                }
+            }
             Action::Command("PURGE") => {
                 let document = self.document();
                 let unchecked = |names: Vec<String>| names.into_iter().map(|n| (n, true)).collect();
@@ -2159,6 +2318,14 @@ impl LinewrightApp {
         if self.input.is_empty() {
             let command = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
             ctx.input_mut(|input| {
+                // With Shift: copy with a base point, and paste as a block, as AutoCAD's Ctrl+Shift+C and Ctrl+Shift+V.
+                let shifted = |key| KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key);
+                let shift = input.modifiers.shift;
+                for (key, command) in [(Key::C, "COPYBASE"), (Key::V, "PASTEBLOCK")] {
+                    if input.consume_shortcut(&shifted(key)) {
+                        self.actions.push(Action::Input(command.into()));
+                    }
+                }
                 for (key, action) in [(Key::C, Action::Copy), (Key::X, Action::Cut), (Key::V, Action::Paste), (Key::A, Action::SelectAll)] {
                     if input.consume_shortcut(&command(key)) {
                         self.actions.push(action);
@@ -2167,7 +2334,7 @@ impl LinewrightApp {
                 // Text editing turns copy, cut and paste keys into events of their own.
                 input.events.retain(|e| match e {
                     egui::Event::Copy => {
-                        self.actions.push(Action::Copy);
+                        self.actions.push(if shift { Action::Input("COPYBASE".into()) } else { Action::Copy });
                         false
                     }
                     egui::Event::Cut => {
@@ -2175,7 +2342,7 @@ impl LinewrightApp {
                         false
                     }
                     egui::Event::Paste(_) => {
-                        self.actions.push(Action::Paste);
+                        self.actions.push(if shift { Action::Input("PASTEBLOCK".into()) } else { Action::Paste });
                         false
                     }
                     _ => true,
@@ -2355,6 +2522,10 @@ impl eframe::App for LinewrightApp {
         if let Some(id) = self.controller.edit_text_request.take() {
             self.open_text_editor(id);
         }
+        let attributes = self.controller.defaults.borrow_mut().attribute_edit_request.take();
+        if let Some(id) = attributes {
+            self.open_attribute_editor(id);
+        }
         let new_text = self.controller.defaults.borrow_mut().mtext_request.take();
         if let Some(position) = new_text {
             let document = self.document();
@@ -2435,6 +2606,7 @@ pub(crate) fn file_command(text: &str) -> Option<Action> {
         "IMAGEATTACH" | "IAT" | "IM" | "IMAGE" => Action::Command("IMAGEATTACH"),
         "FIND" => Action::Command("FIND"),
         "PURGE" | "PU" => Action::Command("PURGE"),
+        "BATTMAN" => Action::Command("BATTMAN"),
         "UNITS" | "UN" | "DDUNITS" => Action::Command("UNITS"),
         "LWEIGHT" | "LW" | "LINEWEIGHT" => Action::Command("LWEIGHT"),
         "STYLE" | "ST" | "DDSTYLE" => Action::Command("STYLE"),
@@ -2656,5 +2828,102 @@ mod dialog_tests {
         let offsets: Vec<f64> = form.styles[0].elements.iter().map(|e| e.offset).collect();
         assert_eq!(offsets, vec![-0.5, -0.8], "listed from the top one down");
         assert_eq!(form.element, 1, "the element picked stays picked");
+    }
+
+    /// A DOOR block with NUMBER and FIRE attributes, inserted twice with the numbers D1 and D2.
+    fn doors() -> Vec<Entity> {
+        use crate::model::attributes::{synced, with_value};
+        use crate::model::entities::{Attribute, BlockDef, polyline_from, text};
+        let definition = |tag: &str, value: &str, y: f64| Attribute {
+            tag: tag.into(),
+            prompt: format!("{tag}?"),
+            layer: "0".into(),
+            color: 256,
+            text: text(pt(0.0, y), value, 1.0, 0.0).shape,
+            invisible: false,
+        };
+        let square = polyline_from(&[pt(0.0, 0.0), pt(1.0, 0.0), pt(1.0, 1.0)], true);
+        let block = BlockRef(std::sync::Arc::new(BlockDef {
+            name: "DOOR".into(),
+            base: pt(0.0, 0.0),
+            entities: vec![square],
+            attribute_defs: vec![definition("NUMBER", "?", 2.0), definition("FIRE", "30", 3.0)],
+            xref: None,
+        }));
+        ["D1", "D2"]
+            .iter()
+            .enumerate()
+            .map(|(i, number)| {
+                let bare = Shape::Insert {
+                    block: block.clone(),
+                    position: pt(i as f64 * 10.0, 0.0),
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                    rotation: 0.0,
+                    attributes: vec![],
+                };
+                let mut insert = synced(&Entity::new(bare), &block);
+                if let Shape::Insert { attributes, .. } = &mut insert.shape {
+                    attributes[0].text = with_value(&attributes[0].text, number);
+                }
+                insert
+            })
+            .collect()
+    }
+
+    fn values(app: &LinewrightApp) -> Vec<Vec<(String, String)>> {
+        app.document()
+            .entities()
+            .iter()
+            .filter_map(|e| match &e.shape {
+                Shape::Insert { attributes, .. } => {
+                    Some(attributes.iter().map(|a| (a.tag.clone(), crate::model::attributes::value_of(a).to_string())).collect())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_attribute_editor_changes_one_insert_s_values_and_undoes() {
+        let entities = doors();
+        let first = entities[0].id;
+        let mut app = app_with(entities);
+        app.open_attribute_editor(first);
+        let Some(Dialog::Attributes(form)) = &mut app.dialog else { panic!("the editor opens") };
+        assert_eq!(form.rows[0], ("NUMBER".to_string(), "NUMBER?".to_string(), "D1".to_string()));
+        form.rows[0].2 = "D9".into();
+        app.attributes_accepted(true);
+        assert!(app.dialog.is_none());
+        assert_eq!(values(&app)[0][0].1, "D9");
+        assert_eq!(values(&app)[1][0].1, "D2", "the other insert is left");
+        app.controller.undo();
+        assert_eq!(values(&app)[0][0].1, "D1");
+    }
+
+    #[test]
+    fn the_block_attribute_manager_renames_reorders_and_removes_in_every_insert() {
+        let mut app = app_with(doors());
+        app.actions.push(Action::Command("BATTMAN"));
+        let ctx = app.egui_ctx.clone();
+        for action in std::mem::take(&mut app.actions) {
+            app.run(action, &ctx);
+        }
+        let Some(Dialog::Battman(form)) = &mut app.dialog else { panic!("the manager opens") };
+        assert_eq!((form.block.as_str(), form.rows.len()), ("DOOR", 2));
+        form.rows.swap(0, 1);
+        form.rows[1].tag = "no".into();
+        form.rows[0].default = "60".into();
+        app.battman_accepted(false);
+        let Some(Dialog::Battman(form)) = &app.dialog else { panic!("Apply keeps the manager open") };
+        assert_eq!(form.rows.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(), ["FIRE", "NO"]);
+        // Values are kept by tag: the renamed one starts again from its default, FIRE keeps 30.
+        assert_eq!(values(&app)[0], [("FIRE".into(), "30".into()), ("NO".into(), "?".into())]);
+        let Some(Dialog::Battman(form)) = &mut app.dialog else { panic!("still open") };
+        form.rows.remove(0);
+        form.rows[0].tag = "two words".into();
+        app.battman_accepted(true);
+        let Some(Dialog::Battman(form)) = &app.dialog else { panic!("a bad tag keeps the manager open") };
+        assert_eq!(form.error, "A tag cannot be empty or have spaces.");
     }
 }

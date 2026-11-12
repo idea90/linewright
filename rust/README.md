@@ -92,7 +92,14 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   the block editor, and `REFCLOSE` saves the changes into its drawing and reloads it) and the block editor
   (`BEDIT`, `BCLOSE`);
   tables (`TABLE`, `TABLEDIT` or double-click a cell) are AutoCAD tables, read from and saved to files; attribute
-  definitions (`ATTDEF`) for blocks; images print in PDFs. Dynamic input takes a length and angle (Tab between
+  definitions (`ATTDEF`) for blocks; images print in PDFs.
+- Attributes: double-click a block with attributes (or `EATTEDIT`) for the Enhanced Attribute Editor; `BATTMAN`
+  manages a block's attribute definitions (tag, prompt, default, invisible, order, remove) and carries them to every
+  insert; `ATTSYNC` (`?`, `Name`, `Select`) brings inserts in line with their block, keeping values by tag; `BURST`
+  explodes blocks keeping attribute values as text.
+- Clipboard and blocks: `COPYBASE` (Ctrl+Shift+C) copies by a chosen base point, `PASTEBLOCK` (Ctrl+Shift+V) pastes
+  the clipboard as one new block, `PASTEORIG` pastes at the original coordinates, `NCOPY` copies objects out of
+  blocks and external references as they show. Dynamic input takes a length and angle (Tab between
   them) or a distance along the cursor.
 - Points as `x,y`, `@dx,dy` or `@distance<angle`; `U`/`UNDO`, `REDO`, `ALL`.
 - Object snaps (endpoint, midpoint, center, intersection, perpendicular, node), grid snap, ortho and polar

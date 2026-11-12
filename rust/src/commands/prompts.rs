@@ -15,7 +15,7 @@ use super::parse::{parse_finite, parse_length, parse_number, parse_point};
 use crate::model::boundary::{Region, region_in_drawing};
 use crate::model::dimension::DimensionStyle;
 use crate::model::document::{DrawOrder, Layer, ObjectGroup};
-use crate::model::entities::Entity;
+use crate::model::entities::{BlockRef, Entity};
 use crate::model::geometry::Point;
 use crate::model::index::Bounds;
 
@@ -215,6 +215,9 @@ pub enum Step {
     WipeoutFrame(u8),
     /// Set one of the drawing's linetype scales.
     LinetypeScale(ScaleSetting),
+    /// Give every insert of the block the block's attributes as it now defines them (ATTSYNC): values are kept by
+    /// tag, new attributes take their defaults, and each is placed afresh. The block itself is redefined to this.
+    SyncAttributes(BlockRef),
 }
 
 /// A change to what the drawing area shows, as ZOOM asks.
@@ -256,6 +259,8 @@ pub trait Host {
     fn wipeout_frame(&mut self, _mode: u8) {}
     /// Set one of the drawing's linetype scales: LTSCALE, PSLTSCALE or CELTSCALE.
     fn linetype_scale(&mut self, _setting: ScaleSetting) {}
+    /// Redefine a block's attributes and bring every insert of it in line, as ATTSYNC does.
+    fn sync_attributes(&mut self, _block: BlockRef) {}
 }
 
 /// One of the drawing's linetype scales, as LTSCALE, PSLTSCALE and CELTSCALE set it.
@@ -511,5 +516,6 @@ fn perform(step: Step, host: &mut dyn Host) {
         Step::DrawOrder(objects, placement) => host.draw_order(objects, placement),
         Step::WipeoutFrame(mode) => host.wipeout_frame(mode),
         Step::LinetypeScale(setting) => host.linetype_scale(setting),
+        Step::SyncAttributes(block) => host.sync_attributes(block),
     }
 }
