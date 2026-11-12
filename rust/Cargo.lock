@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "linewright"
-version = "1.0.0-alpha.6.2"
+version = "1.0.0-alpha.6.3"
 dependencies = [
  "ar-reshaper",
  "eframe",
