@@ -69,7 +69,61 @@ pub struct Drawing {
     block_undo: Option<UndoStack>,
 }
 
+/// New text and dimensions in an annotative style are annotative: their sizes, as given, are on paper, drawn at the
+/// annotation scale. In a layout they are on paper already and stay as they are.
+pub fn annotated_if_styled(document: &Document, entity: &Entity) -> Entity {
+    if document.active_layout().is_some() || entity.attribute.is_some() {
+        return entity.clone();
+    }
+    let annotative = match &entity.shape {
+        Shape::Text { style, .. } => {
+            let name = if style.is_empty() { &document.current_text_style } else { style };
+            document.text_styles.iter().any(|s| s.name.eq_ignore_ascii_case(name) && s.annotative)
+        }
+        Shape::Dimension { look, .. } | Shape::Annotation { look, .. } => {
+            let name = if look.style.is_empty() { &document.current_dimension_style } else { &look.style };
+            document.dimension_styles.iter().any(|s| s.name.eq_ignore_ascii_case(name) && s.annotative)
+        }
+        _ => false,
+    };
+    if !annotative || entity.annotative {
+        return entity.clone();
+    }
+    let marked = Entity { annotative: true, ..entity.clone() };
+    crate::model::annotative::resized(&marked, document.annotation_scale.factor())
+}
+
 impl Drawing {
+    /// Make an annotation scale current (CANNOSCALE), adding it to the list if new, and resize the annotative objects
+    /// in model space to it. With model space open it undoes as one step; from a layout, model space is resized
+    /// in place.
+    pub fn set_annotation_scale(&mut self, scale: crate::model::annotative::AnnotationScale) {
+        use crate::model::annotative::resized;
+        let before = self.document.annotation_scale.clone();
+        if !self.document.annotation_scales.iter().any(|s| s.name == scale.name) {
+            self.document.annotation_scales.push(scale.clone());
+        }
+        if before == scale {
+            return;
+        }
+        let ratio = scale.factor() / before.factor();
+        let changed: Vec<Entity> = self.document.space_entities(None).iter().filter(|e| e.annotative).map(|e| resized(e, ratio)).collect();
+        let change = Change::AnnotationScale { before, after: scale };
+        if self.document.active_layout().is_none() && self.document.editing_block().is_none() {
+            let mut steps = vec![change];
+            if !changed.is_empty() {
+                steps.push(Change::modify(&self.document, changed));
+            }
+            self.push(Change::Group(steps));
+        } else {
+            let all: Vec<Entity> = self.document.space_entities(None).iter().map(|e| resized(e, ratio)).collect();
+            self.document.set_space_entities(None, all);
+            let Change::AnnotationScale { after, .. } = change else { unreachable!() };
+            self.document.annotation_scale = after;
+            self.note_change();
+        }
+    }
+
     /// Redefine a block as given and bring the inserts of it in the space worked on into line with its attributes,
     /// as one undo step for the inserts. Gives how many inserts there were.
     pub fn sync_inserts(&mut self, block: &BlockRef) -> usize {
@@ -198,6 +252,10 @@ impl Host for Drawing {
         self.note_change();
     }
 
+    fn annotation_scale(&mut self, scale: crate::model::annotative::AnnotationScale) {
+        self.set_annotation_scale(scale);
+    }
+
     fn sync_attributes(&mut self, block: BlockRef) {
         let count = self.sync_inserts(&block);
         self.report(format!("ATTSYNC block {}: {count} insert(s) updated.", block.0.name));
@@ -260,6 +318,7 @@ impl Host for Drawing {
             entity.linetype = self.document.current_linetype.clone();
             entity.lineweight = self.document.current_lineweight;
             entity.linetype_scale = self.document.celtscale;
+            *entity = annotated_if_styled(&self.document, entity);
         }
         self.add(entities);
     }
@@ -631,6 +690,8 @@ impl Controller {
             defaults.wipeout_frame = document.wipeout_frame;
             defaults.ucs = document.ucs;
             defaults.named_ucs = document.named_ucs.clone();
+            defaults.annotation_scale = document.annotation_scale.clone();
+            defaults.annotation_scales = document.annotation_scales.clone();
             defaults.ltscale = document.ltscale;
             defaults.psltscale = document.psltscale;
             defaults.celtscale = document.celtscale;
@@ -1486,5 +1547,51 @@ mod tests {
         assert_eq!(controller.document().layouts[sheet].name, "Plan");
         controller.undo();
         assert_eq!(controller.document().layouts[sheet].name, "Sheet", "a rename undoes too");
+    }
+
+    fn heights(controller: &Controller) -> Vec<f64> {
+        controller
+            .document()
+            .entities()
+            .iter()
+            .filter_map(|e| match e.shape {
+                Shape::Text { height, .. } => Some(height),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cannoscale_resizes_annotative_objects_and_undoes_with_them() {
+        let mut label = crate::model::entities::text(pt(0.0, 0.0), "A", 2.5, 0.0);
+        label.annotative = true;
+        let plain = crate::model::entities::text(pt(0.0, 10.0), "B", 2.5, 0.0);
+        let mut controller = controller_with(vec![label, plain]);
+        run(&mut controller, &["CANNOSCALE", "1:50"]);
+        assert_eq!(controller.document().annotation_scale.name, "1:50");
+        assert_eq!(heights(&controller), [125.0, 2.5], "only the annotative text follows");
+        run(&mut controller, &["CANNOSCALE", "1:100"]);
+        assert_eq!(heights(&controller), [250.0, 2.5]);
+        controller.undo();
+        assert_eq!((controller.document().annotation_scale.name.as_str(), heights(&controller)[0]), ("1:50", 125.0));
+        run(&mut controller, &["CANNOSCALE", "1:25"]);
+        assert!(controller.document().annotation_scales.iter().any(|s| s.name == "1:25"), "a typed scale joins the list");
+        assert_eq!(heights(&controller)[0], 62.5);
+    }
+
+    #[test]
+    fn new_text_and_dimensions_in_an_annotative_style_are_annotative() {
+        let mut controller = controller_with(vec![]);
+        run(&mut controller, &["CANNOSCALE", "1:20"]);
+        controller.drawing.document.text_styles[0].annotative = true;
+        controller.drawing.document.dimension_styles[0].annotative = true;
+        run(&mut controller, &["TEXT", "0,0", "2", "0", "Room"]);
+        let text = controller.document().entities()[0].clone();
+        assert!(text.annotative);
+        assert_eq!(heights(&controller), [40.0], "2 on paper is 40 at 1:20");
+        run(&mut controller, &["DIMLINEAR", "0,0", "100,0", "50,20"]);
+        let dimension = controller.document().entities()[1].clone();
+        let Shape::Dimension { look, .. } = &dimension.shape else { panic!("a dimension") };
+        assert!(dimension.annotative && (look.scale - 20.0).abs() < 1e-12, "{}", look.scale);
     }
 }

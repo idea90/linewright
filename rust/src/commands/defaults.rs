@@ -64,6 +64,9 @@ pub struct Defaults {
     /// The current UCS and the ones saved by name, as the window keeps them.
     pub ucs: crate::model::ucs::Ucs,
     pub named_ucs: Vec<(String, crate::model::ucs::Ucs)>,
+    /// The annotation scale and the scales offered, as the window keeps them.
+    pub annotation_scale: crate::model::annotative::AnnotationScale,
+    pub annotation_scales: Vec<crate::model::annotative::AnnotationScale>,
     /// EATTEDIT picked this insert, for the window to open the Enhanced Attribute Editor on.
     pub attribute_edit_request: Option<crate::model::entities::EntityId>,
     /// The multileader style new multileaders follow.
@@ -123,6 +126,8 @@ impl Default for Defaults {
             attribute_edit_request: None,
             ucs: crate::model::ucs::Ucs::WORLD,
             named_ucs: vec![],
+            annotation_scale: Default::default(),
+            annotation_scales: crate::model::annotative::standard_scales(),
             mleader_style: crate::model::multileader::MleaderStyle::standard(),
             chamfer_distances: (0.0, 0.0),
             wipeout_frame: 1,

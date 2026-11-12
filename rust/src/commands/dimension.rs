@@ -198,7 +198,8 @@ pub async fn style(io: Io, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>
             }
             let look = DimensionLook { style: name.clone(), text: String::new(), text_position: None, ..current };
             defaults.borrow_mut().dimension_look = look.clone();
-            io.step(Step::DimensionStyle { style: Some(DimensionStyle { name: name.clone(), look }), current: Some(name) });
+            let annotative = defaults.borrow().dimension_styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name) && s.annotative);
+            io.step(Step::DimensionStyle { style: Some(DimensionStyle { name: name.clone(), look, annotative }), current: Some(name) });
         }
         Some(answer) if answer.is(RESTORE) => {
             let prompt = Prompt::new(PromptKind::Text, "Enter a dimension style name, [?] or <select dimension>:")

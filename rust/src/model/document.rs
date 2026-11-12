@@ -170,14 +170,17 @@ pub struct Layout {
 pub struct TextStyleDef {
     pub name: String,
     pub font: String,
+    /// The height text takes, or 0 to ask; on paper for an annotative style.
     pub height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    /// Text in this style is annotative.
+    pub annotative: bool,
 }
 
 impl TextStyleDef {
     pub fn standard() -> TextStyleDef {
-        TextStyleDef { name: STANDARD_STYLE.into(), font: String::new(), height: 0.0, width_factor: 1.0, oblique: 0.0 }
+        TextStyleDef { name: STANDARD_STYLE.into(), font: String::new(), height: 0.0, width_factor: 1.0, oblique: 0.0, annotative: false }
     }
 }
 
@@ -314,6 +317,9 @@ pub struct Document {
     pub previous_ucs: Vec<crate::model::ucs::Ucs>,
     /// UCSICON: whether the UCS icon shows, and whether it sits at the UCS's origin when that is in view.
     pub ucs_icon: (bool, bool),
+    /// The annotation scale annotative objects in model space are drawn at (CANNOSCALE), and the scales offered.
+    pub annotation_scale: crate::model::annotative::AnnotationScale,
+    pub annotation_scales: Vec<crate::model::annotative::AnnotationScale>,
     /// Decimal places coordinates and lengths are shown with ($LUPREC).
     pub precision: usize,
     /// Blocks PURGE removed, which saving takes out of the file too.
@@ -399,6 +405,8 @@ impl Document {
             named_ucs: vec![],
             previous_ucs: vec![],
             ucs_icon: (true, true),
+            annotation_scale: Default::default(),
+            annotation_scales: crate::model::annotative::standard_scales(),
             precision: 4,
             purged_blocks: vec![],
             shown_only: vec![],
@@ -1092,7 +1100,7 @@ mod tests {
         document.add(wall);
         document.set_space_entities(Some(0), vec![sheet]);
         assert_eq!(document.unused_layers(), vec!["Spare".to_string()]);
-        document.dimension_styles.push(DimensionStyle { name: "Old".into(), look: DimensionLook::default() });
+        document.dimension_styles.push(DimensionStyle { name: "Old".into(), look: DimensionLook::default(), annotative: false });
         assert_eq!(document.unused_dimension_styles(), vec!["Old".to_string()]);
     }
 }

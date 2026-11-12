@@ -114,6 +114,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("PASTEBLOCK", "Paste as block"),
     ("NCOPY", "Copy nested objects"),
     ("UCS", "User coordinate system"),
+    ("CANNOSCALE", "Annotation scale"),
     ("UCSICON", "Show or hide the UCS icon"),
     ("REGION", "Region from closed objects"),
     ("UNION", "Join regions"),
@@ -373,6 +374,7 @@ pub fn create(name: &str, selected: Vec<Entity>, defaults: Rc<RefCell<Defaults>>
             "ZOOM" => Box::pin(inquiry::zoom_command(io)),
             "TEXTEDIT" => Box::pin(inquiry::textedit_command(io, selected)),
             "SAVETIME" => Box::pin(super::settings::savetime_command(io, defaults)),
+            "CANNOSCALE" => Box::pin(super::settings::cannoscale_command(io, defaults)),
             other => panic!("unknown command {other}"),
         }
     }

@@ -693,6 +693,24 @@ pub fn status_bar(app: &mut LinewrightApp, ctx: &egui::Context) {
             let places = app.document().precision;
             let coords = RichText::new(format!("{:.*}, {:.*}", places, point.x, places, point.y)).monospace().strong().color(theme::TEXT);
             ui.add_sized(vec2(COORDS_WIDTH, 22.0), egui::Label::new(coords));
+            // The annotation scale annotative objects are drawn at, as AutoCAD's status bar offers it.
+            if app.document().shown_layout().is_none() || app.document().through().is_some() {
+                let current = app.document().annotation_scale.name.clone();
+                let scales: Vec<String> = app.document().annotation_scales.iter().map(|s| s.name.clone()).collect();
+                egui::ComboBox::from_id_salt("annotation_scale")
+                    .width(70.0)
+                    .selected_text(RichText::new(&current).color(theme::TEXT_DIM))
+                    .show_ui(ui, |ui| {
+                        for name in scales {
+                            if ui.selectable_label(name == current, &name).clicked() && name != current {
+                                app.actions.push(Action::Input(format!("CANNOSCALE {name}")));
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Annotation scale (CANNOSCALE)");
+                ui.add_space(10.0);
+            }
             ui.label(RichText::new(format!("Layer {}", app.document().current_layer)).color(theme::TEXT_DIM));
             ui.add_space(14.0);
             ui.label(RichText::new(format!("Units {}", unit_names(app.document()).1)).color(theme::TEXT_DIM));
@@ -2521,6 +2539,9 @@ pub fn dialogs(app: &mut LinewrightApp, ctx: &egui::Context) {
                         ui.label("Oblique angle");
                         ui.add(egui::DragValue::new(&mut style.oblique).speed(0.5).range(-85.0..=85.0).max_decimals(2));
                         ui.end_row();
+                        ui.label("Annotative");
+                        ui.checkbox(&mut style.annotative, "").on_hover_text("Height is on paper, drawn at the annotation scale");
+                        ui.end_row();
                     });
                 });
                 if !form.error.is_empty() {
@@ -3065,6 +3086,7 @@ fn dimension_style_manager(ctx: &egui::Context, form: &mut StyleForm) -> (bool, 
                 let style = &mut form.styles[form.selected];
                 ui.label(RichText::new(format!("Modify: {}", style.name)).strong());
                 ui.add_space(4.0);
+                ui.checkbox(&mut style.annotative, "Annotative").on_hover_text("Sizes are on paper, drawn at the annotation scale");
                 let look = &mut style.look;
                 let size = |ui: &mut egui::Ui, value: &mut f64| {
                     ui.add(egui::DragValue::new(value).speed(0.01).range(0.0..=f64::MAX).max_decimals(6));

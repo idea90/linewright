@@ -115,6 +115,7 @@ rust/                the app (Cargo crate "linewright")
 | `model/dimension.rs`, `annotation.rs`, `multileader.rs` | Dimensions, leaders and multileaders: their styles and what they draw |
 | `model/mtext.rs`, `table.rs` | MTEXT formatting codes and layout; tables |
 | `model/properties.rs` | Rows of the Properties palette, and setting a property by typing a value |
+| `model/annotative.rs` | Annotation scales (CANNOSCALE) and resizing annotative objects to one |
 | `model/ucs.rs` | The user coordinate system: origin and X axis, points between UCS and world coordinates |
 | `model/region.rs` | Regions: loops of closed objects, their area, and UNION/SUBTRACT/INTERSECT (through `i_overlay`, arcs fitted back) |
 | `model/attributes.rs` | Block inserts' attributes kept in line with their block's definitions (ATTSYNC, BATTMAN, EATTEDIT) |

@@ -472,7 +472,11 @@ fn construction_lines_survive_and_stay_out_of_the_extent() {
 #[test]
 fn units_precision_and_purged_styles_reach_the_file() {
     let mut document = Document::with_entities(vec![line(pt(0.0, 0.0), pt(1.0, 0.0))]);
-    document.dimension_styles.push(crate::model::dimension::DimensionStyle { name: "Old".into(), look: DimensionLook::default() });
+    document.dimension_styles.push(crate::model::dimension::DimensionStyle {
+        name: "Old".into(),
+        look: DimensionLook::default(),
+        annotative: false,
+    });
     let with_old = round_trip(&document);
     assert!(with_old.dimension_style("Old").is_some());
     let mut purged = with_old;
@@ -743,6 +747,7 @@ fn text_styles_and_formatted_mtext_survive_a_round_trip() {
         height: 3.5,
         width_factor: 0.8,
         oblique: 15.0,
+        annotative: false,
     });
     document.current_text_style = "Notes".into();
     let raw = "Plain {\\fArial|b1|i0|c0|p0;bold}\\P{\\H2x;big} \\S1/2;";
@@ -1059,4 +1064,26 @@ fn the_ucs_and_named_ones_are_saved_and_read_back() {
     assert!((read.named_ucs[0].1.angle - 90.0).abs() < 1e-9);
     let again = dxf_from_document(&read);
     assert_eq!(again.table_entries("UCS").len(), 2, "saving again does not double them");
+}
+
+#[test]
+fn annotative_objects_and_styles_and_the_annotation_scale_are_saved() {
+    let mut document = Document::new();
+    document.annotation_scale = crate::model::annotative::AnnotationScale::new(1.0, 50.0);
+    document.text_styles[0].annotative = true;
+    let mut label = text(pt(0.0, 0.0), "Room", 125.0, 0.0);
+    label.annotative = true;
+    document.add(label);
+    document.add(text(pt(0.0, 10.0), "Plain", 2.5, 0.0));
+    let file = dxf_from_document(&document);
+    assert!(file.table_entries("APPID").into_iter().any(|i| file.groups[i].get(2) == Some("AcadAnnotative")));
+    let read = document_from_dxf(DxfFile::parse(&file.to_bytes()).unwrap());
+    assert_eq!(read.annotation_scale.name, "1:50");
+    assert!(read.text_styles.iter().find(|s| s.name.eq_ignore_ascii_case("Standard")).is_some_and(|s| s.annotative));
+    let marks: Vec<bool> = read.entities().iter().map(|e| e.annotative).collect();
+    assert_eq!(marks, [true, false]);
+    assert!(read.kept_xdata.is_empty(), "the mark is not kept as another program's data, so it is not written twice");
+    let again = dxf_from_document(&read);
+    let written = again.groups.iter().find(|g| g.kind() == "TEXT" && g.get(1) == Some("Room")).expect("the text");
+    assert_eq!(written.0.iter().filter(|p| p.code == 1001 && p.value == "AcadAnnotative").count(), 1);
 }

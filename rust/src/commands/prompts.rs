@@ -229,6 +229,8 @@ pub enum Step {
     LinetypeScale(ScaleSetting),
     /// Make a UCS current, go back to the one before, or save or delete one by name.
     Ucs(UcsRequest),
+    /// Set the annotation scale (CANNOSCALE), resizing annotative objects to it.
+    AnnotationScale(crate::model::annotative::AnnotationScale),
     /// Give every insert of the block the block's attributes as it now defines them (ATTSYNC): values are kept by
     /// tag, new attributes take their defaults, and each is placed afresh. The block itself is redefined to this.
     SyncAttributes(BlockRef),
@@ -294,6 +296,8 @@ pub trait Host {
     }
     /// Change the user coordinate system, as UCS does.
     fn ucs_request(&mut self, _request: UcsRequest) {}
+    /// Set the annotation scale, as CANNOSCALE does.
+    fn annotation_scale(&mut self, _scale: crate::model::annotative::AnnotationScale) {}
 }
 
 /// One of the drawing's linetype scales, as LTSCALE, PSLTSCALE and CELTSCALE set it.
@@ -560,5 +564,6 @@ fn perform(step: Step, host: &mut dyn Host) {
         Step::LinetypeScale(setting) => host.linetype_scale(setting),
         Step::SyncAttributes(block) => host.sync_attributes(block),
         Step::Ucs(request) => host.ucs_request(request),
+        Step::AnnotationScale(scale) => host.annotation_scale(scale),
     }
 }

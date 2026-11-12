@@ -406,6 +406,8 @@ pub struct Entity {
     pub shape: Shape,
     /// Set on text that is an attribute definition (ATTDEF), whose text is the tag.
     pub attribute: Option<AttributeInfo>,
+    /// Annotative: drawn at the annotation scale, so that its size on paper stays the same (see `annotative`).
+    pub annotative: bool,
 }
 
 /// What makes text an attribute definition: what INSERT asks, the value offered, and whether it shows.
@@ -459,6 +461,7 @@ impl Entity {
             lineweight: super::lineweight::BYLAYER,
             shape,
             attribute: None,
+            annotative: false,
         }
     }
 

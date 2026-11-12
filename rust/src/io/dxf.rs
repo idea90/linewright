@@ -993,7 +993,7 @@ impl DimensionStyles {
             .map(|name| {
                 let mut look = self.style_look(&name.to_lowercase(), vec![]);
                 look.style = name.clone();
-                DimensionStyle { name: name.clone(), look }
+                DimensionStyle { name: name.clone(), look, annotative: false }
             })
             .collect()
     }
@@ -1088,6 +1088,7 @@ fn read_text_styles(file: &DxfFile) -> Vec<TextStyleDef> {
                 height: entry.float(40).unwrap_or(0.0),
                 width_factor: entry.float(41).filter(|w| *w > 0.0).unwrap_or(1.0),
                 oblique: entry.float(50).unwrap_or(0.0),
+                annotative: is_annotative(entry),
                 name,
             })
         })
@@ -1150,6 +1151,7 @@ fn write_text_styles(file: &mut DxfFile, writer: &mut Writer, document: &Documen
             entry.set(3, file_name);
             entry.set(4, big.to_string());
         }
+        set_annotative(entry, style.annotative);
         writer.text_styles.insert(style.name.to_lowercase(), (style.name.clone(), style.font.clone()));
     }
     file.set_header("$TEXTSTYLE", 7, document.current_text_style.clone());
@@ -1259,6 +1261,47 @@ const AUTOCAD_APPLICATION: &str = "ACAD";
 const LINEWRIGHT_APPLICATION: &str = "LINEWRIGHT";
 const REGION_MARK: &str = "REGION";
 
+/// The application name AutoCAD files annotative objects and styles under.
+const ANNOTATIVE_APPLICATION: &str = "AcadAnnotative";
+
+/// Whether an entity, text style or dimension style is annotative: AutoCAD marks it with extended data whose
+/// second number is 1.
+fn is_annotative(group: &Group) -> bool {
+    let Some(start) =
+        group.0.iter().position(|p| p.code == XDATA_APPLICATION_CODE && p.value.trim().eq_ignore_ascii_case(ANNOTATIVE_APPLICATION))
+    else {
+        return false;
+    };
+    let numbers: Vec<&Pair> =
+        group.0[start + 1..].iter().take_while(|p| p.code != XDATA_APPLICATION_CODE).filter(|p| p.code == 1070).collect();
+    numbers.get(1).is_some_and(|p| p.value.trim() == "1")
+}
+
+/// The extended data that makes something annotative, as AutoCAD writes it.
+fn annotative_xdata() -> [Pair; 6] {
+    [
+        pair(XDATA_APPLICATION_CODE, ANNOTATIVE_APPLICATION),
+        pair(1000, "AnnotativeData"),
+        pair(1002, "{"),
+        pair(1070, 1),
+        pair(1070, 1),
+        pair(1002, "}"),
+    ]
+}
+
+/// Mark or unmark a table entry (a text or dimension style) as annotative, leaving its other extended data.
+fn set_annotative(group: &mut Group, annotative: bool) {
+    if let Some(start) =
+        group.0.iter().position(|p| p.code == XDATA_APPLICATION_CODE && p.value.trim().eq_ignore_ascii_case(ANNOTATIVE_APPLICATION))
+    {
+        let end = group.0[start + 1..].iter().position(|p| p.code == XDATA_APPLICATION_CODE).map_or(group.0.len(), |n| start + 1 + n);
+        group.0.drain(start..end);
+    }
+    if annotative {
+        group.0.extend(annotative_xdata());
+    }
+}
+
 /// The number of the region a polyline is a loop of, from Linewright's extended data on it.
 fn region_mark(group: &Group) -> Option<i64> {
     let start =
@@ -1333,7 +1376,8 @@ fn keep_foreign_xdata(document: &mut Document, id: EntityId, group: &Group) {
     for pair in &group.0[start..] {
         if pair.code == XDATA_APPLICATION_CODE {
             let name = pair.value.trim();
-            foreign = !name.eq_ignore_ascii_case(AUTOCAD_APPLICATION) && !name.eq_ignore_ascii_case(LINEWRIGHT_APPLICATION);
+            foreign =
+                ![AUTOCAD_APPLICATION, LINEWRIGHT_APPLICATION, ANNOTATIVE_APPLICATION].iter().any(|own| name.eq_ignore_ascii_case(own));
         }
         if foreign {
             kept.push(pair.clone());
@@ -1369,6 +1413,14 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
     document.model_plot = model_plot_settings(&file);
     document.wipeout_frame = wipeout_frame_mode(&file).unwrap_or(1);
     document.named_plot_styles = header_int("$PSTYLEMODE") == Some(0);
+    if let Some(scale) =
+        file.header("$CANNOSCALE").and_then(|name| crate::model::annotative::parse_scale(name, &document.annotation_scales))
+    {
+        if !document.annotation_scales.contains(&scale) {
+            document.annotation_scales.push(scale.clone());
+        }
+        document.annotation_scale = scale;
+    }
     let x_axis = file.header_point("$UCSXDIR").filter(|x| x.length() > 1e-12);
     document.ucs =
         Ucs { origin: file.header_point("$UCSORG").unwrap_or_default(), angle: x_axis.map_or(0.0, |x| x.y.atan2(x.x).to_degrees()) };
@@ -1397,6 +1449,13 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
         document.current_dimension_style =
             styles.iter().find(|s| Some(s.name.to_lowercase()) == current).unwrap_or(&styles[0]).name.clone();
         document.dimension_styles = styles;
+        for style in &mut document.dimension_styles {
+            style.annotative = file
+                .table_entries("DIMSTYLE")
+                .into_iter()
+                .find(|&i| file.groups[i].get(2).is_some_and(|n| n.trim().eq_ignore_ascii_case(&style.name)))
+                .is_some_and(|i| is_annotative(&file.groups[i]));
+        }
     }
     let text_styles = read_text_styles(&file);
     if !text_styles.is_empty() {
@@ -1456,6 +1515,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                         handles.insert(handle.trim().to_uppercase(), entity.id);
                     }
                     keep_entity_extras(&mut document, entity.id, &run[0]);
+                    entity.annotative = is_annotative(&run[0]);
                     if let Some(number) = region_mark(&run[0]) {
                         region_marks.insert(entity.id, number);
                     }
@@ -1521,6 +1581,7 @@ pub fn document_from_dxf(mut file: DxfFile) -> Document {
                             handles.insert(handle.trim().to_uppercase(), entity.id);
                         }
                         keep_entity_extras(&mut document, entity.id, &run[0]);
+                        entity.annotative = is_annotative(&run[0]);
                         if let Some(number) = region_mark(&run[0]) {
                             region_marks.insert(entity.id, number);
                         }
@@ -1943,6 +2004,8 @@ struct Writer {
     wipeouts: bool,
     /// How many regions were written, each numbered in the extended data of its loops.
     regions: i64,
+    /// Whether anything annotative was written, whose application must be registered.
+    annotative: bool,
     /// The file's multiline styles' handles by lower-case name.
     mline_styles: HashMap<String, String>,
     /// The table style tables are written with: its handle, and the text height to make it with when the file
@@ -2059,7 +2122,13 @@ impl Writer {
     fn entity(&mut self, entity: &Entity, linetype: &str, dimension_style: &str, owner: &str) -> Vec<Group> {
         let outer = std::mem::replace(&mut self.lineweight, entity.lineweight);
         let outer_scale = std::mem::replace(&mut self.linetype_scale, entity.linetype_scale);
-        let groups = self.entity_groups(entity, linetype, dimension_style, owner);
+        let mut groups = self.entity_groups(entity, linetype, dimension_style, owner);
+        if entity.annotative
+            && let Some(first) = groups.first_mut()
+        {
+            first.0.extend(annotative_xdata());
+            self.annotative = true;
+        }
         self.lineweight = outer;
         self.linetype_scale = outer_scale;
         groups
@@ -3011,6 +3080,7 @@ fn write_dimension_styles(file: &mut DxfFile, writer: &mut Writer, document: &Do
         };
         let look = &style.look;
         let entry = &mut file.groups[at];
+        set_annotative(entry, style.annotative);
         let tick_size = if look.arrowhead == Arrowhead::Tick { look.arrow_size } else { 0.0 };
         for (code, value) in [
             (DIMSCALE, look.scale),
@@ -4010,6 +4080,7 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         image_reactors: vec![],
         wipeouts: false,
         regions: 0,
+        annotative: false,
         mline_styles: HashMap::new(),
         table_style: None,
         lineweight: lineweight::BYLAYER,
@@ -4170,6 +4241,13 @@ pub fn dxf_from_document(document: &Document) -> DxfFile {
         register_application(&mut file, &mut writer, LINEWRIGHT_APPLICATION);
     }
     write_ucs(&mut file, &mut writer, document);
+    let styles_annotative = document.text_styles.iter().any(|s| s.annotative) || document.dimension_styles.iter().any(|s| s.annotative);
+    if writer.annotative || styles_annotative {
+        register_application(&mut file, &mut writer, ANNOTATIVE_APPLICATION);
+    }
+    if writer.modern {
+        file.set_header("$CANNOSCALE", 2, document.annotation_scale.name.clone());
+    }
     if writer.modern {
         write_wipeout_variables(&mut file, &mut writer, document);
     }

@@ -1623,6 +1623,7 @@ impl LinewrightApp {
                 entity.linetype = document.current_linetype.clone();
                 entity.lineweight = document.current_lineweight;
                 entity.linetype_scale = document.celtscale;
+                let entity = super::controller::annotated_if_styled(document, &entity);
                 self.controller.push(Change::Add(vec![entity]));
             }
             None => {}

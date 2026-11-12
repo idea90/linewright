@@ -60,6 +60,9 @@ fn look_rows(look: &DimensionLook, measures: bool) -> Vec<Property> {
 /// The geometry rows of an object, editable or for information.
 pub fn properties(entity: &Entity) -> Vec<Property> {
     let mut rows = vec![];
+    if crate::model::annotative::can_be_annotative(&entity.shape) {
+        rows.push(text_field("Annotative", if entity.annotative { "Yes" } else { "No" }));
+    }
     match &entity.shape {
         Shape::Line { start, end } => {
             rows.extend(point_fields("Start", *start));
@@ -265,6 +268,10 @@ pub fn set_property(entity: &Entity, name: &str, typed: &str) -> Result<Entity, 
     // The General section's linetype scale applies to any kind of object.
     if name == "Linetype scale" {
         return Ok(Entity { linetype_scale: positive()?, ..entity.clone() });
+    }
+    if name == "Annotative" && crate::model::annotative::can_be_annotative(&entity.shape) {
+        let annotative = matches!(typed.to_lowercase().as_str(), "yes" | "y" | "true" | "1");
+        return Ok(Entity { annotative, ..entity.clone() });
     }
     let mut shape = entity.shape.clone();
     let mut resize: Option<(usize, usize)> = None;

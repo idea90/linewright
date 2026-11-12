@@ -271,11 +271,13 @@ impl DimensionLook {
 pub struct DimensionStyle {
     pub name: String,
     pub look: DimensionLook,
+    /// Dimensions in this style are annotative: their sizes are on paper, drawn at the annotation scale.
+    pub annotative: bool,
 }
 
 impl DimensionStyle {
     pub fn standard() -> DimensionStyle {
-        DimensionStyle { name: STANDARD_STYLE.into(), look: DimensionLook::default() }
+        DimensionStyle { name: STANDARD_STYLE.into(), look: DimensionLook::default(), annotative: false }
     }
 }
 

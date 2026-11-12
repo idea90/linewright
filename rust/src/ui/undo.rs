@@ -54,6 +54,11 @@ pub enum Change {
         before: String,
         after: String,
     },
+    /// The annotation scale (CANNOSCALE), set together with the annotative objects resized for it.
+    AnnotationScale {
+        before: crate::model::annotative::AnnotationScale,
+        after: crate::model::annotative::AnnotationScale,
+    },
     Group(Vec<Change>),
 }
 
@@ -136,6 +141,7 @@ impl Change {
                 }
             }
             Change::LayoutRenamed { before, after } => rename_layout(document, before, after),
+            Change::AnnotationScale { after, .. } => document.annotation_scale = after.clone(),
             Change::Group(changes) => {
                 for change in changes.iter_mut() {
                     change.redo(document);
@@ -173,6 +179,7 @@ impl Change {
                 }
             }
             Change::LayoutRenamed { before, after } => rename_layout(document, after, before),
+            Change::AnnotationScale { before, .. } => document.annotation_scale = before.clone(),
             Change::Group(changes) => {
                 for change in changes.iter_mut().rev() {
                     change.undo(document);

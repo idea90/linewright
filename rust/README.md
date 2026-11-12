@@ -97,6 +97,13 @@ OpenGL driver). File dialogs use the XDG desktop portal.
   manages a block's attribute definitions (tag, prompt, default, invisible, order, remove) and carries them to every
   insert; `ATTSYNC` (`?`, `Name`, `Select`) brings inserts in line with their block, keeping values by tag; `BURST`
   explodes blocks keeping attribute values as text.
+- Annotative scaling: text, dimensions, leaders, multileaders and pattern hatches can be annotative (the
+  Properties palette's Annotative row, or an annotative text or dimension style, ticked in the Text Style and
+  Dimension Style dialogs). Their sizes are on paper, drawn in model space at the annotation scale: `CANNOSCALE` or
+  the scale on the status bar (1:1 to 1:100 and 2:1 to 100:1, or any typed as 1:25) resizes them all, undoably.
+  Annotative objects and styles, and `CANNOSCALE`, are kept in DXF files as AutoCAD marks them. Each annotative
+  object has one size, the current scale's: viewports at other scales show it at that size too, where AutoCAD keeps
+  a size for each scale an object supports.
 - Regions: `REGION` (`REG`) turns closed objects, and lines, arcs and polylines that close a loop end to end, into
   regions; `UNION` (`UNI`), `SUBTRACT` (`SU`) and `INTERSECT` (`IN`) combine them, keeping arcs as arcs. `LIST`,
   `AREA` and the Properties palette give a region's area (holes taken out) and perimeter; `EXPLODE` turns it back
